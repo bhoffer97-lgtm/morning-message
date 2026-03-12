@@ -1,6 +1,7 @@
+import { useFocusEffect } from "@react-navigation/native";
 import { LinearGradient } from "expo-linear-gradient";
-import { useEffect, useRef, useState } from "react";
-import { Alert, Animated, ImageBackground, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Text, TextInput, TouchableWithoutFeedback, View } from "react-native";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Alert, Animated, Dimensions, ImageBackground, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Text, TextInput, TouchableWithoutFeedback, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import Swipeable from "react-native-gesture-handler/ReanimatedSwipeable";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -22,13 +23,13 @@ function getEntryTypeStyles(type: string) {
       };
     case "gratitude":
       return {
-        badgeBackground: "#fff4db",
-        badgeText: "#b7791f",
+        badgeBackground: "#ffeaea",
+        badgeText: "#d64545",
       };
     case "affirmation":
       return {
-        badgeBackground: "#f3e8ff",
-        badgeText: "#7c3aed",
+        badgeBackground: "#fff6cc",
+        badgeText: "#d4a000",
       };
     case "goal":
       return {
@@ -58,8 +59,8 @@ function getEntryTypeIcon(type: string) {
 }
 
 export default function HomeScreen() {
-  const [message, setMessage] = useState<string | null>(null);
-  const [verseRef, setVerseRef] = useState<string | null>(null);
+  const [dailyMessages, setDailyMessages] = useState<any[]>([]);
+  const [currentMessageIndex, setCurrentMessageIndex] = useState(0);
   const [verseText, setVerseText] = useState<string | null>(null);
   const [showVerseModal, setShowVerseModal] = useState(false);
   const [activeEntries, setActiveEntries] = useState<any[]>([]);
@@ -74,14 +75,21 @@ export default function HomeScreen() {
   const [showCompletedAffirmations, setShowCompletedAffirmations] = useState(false);
   const [showCompletedGoals, setShowCompletedGoals] = useState(false);
   const [newPrayer, setNewPrayer] = useState("");
+  const [searchText, setSearchText] = useState("");
+  const [showSearch, setShowSearch] = useState(false);
   const [selectedEntryType, setSelectedEntryType] = useState("prayer");
   const [showTypePicker, setShowTypePicker] = useState(false);
   const [updatingPrayerId, setUpdatingPrayerId] = useState<string | null>(null);
   const [isSavingPrayer, setIsSavingPrayer] = useState(false);
   const [isAIWorking, setIsAIWorking] = useState(false);
+  const [showAnswerNoteModal, setShowAnswerNoteModal] = useState(false);
+  const [answerNoteText, setAnswerNoteText] = useState("");
+  const [entryToCompleteId, setEntryToCompleteId] = useState<string | null>(null);
   const scrollViewRef = useRef<ScrollView | null>(null);
+  const messageScrollRef = useRef<ScrollView | null>(null);
   const currentSectionY = useRef(0);
   const inputRef = useRef<TextInput | null>(null);
+  const searchInputRef = useRef<TextInput | null>(null);
   const textFadeAnim = useRef(new Animated.Value(1)).current;
   const textScaleAnim = useRef(new Animated.Value(1)).current;
   const messageFadeAnim = useRef(new Animated.Value(0)).current;
@@ -92,58 +100,85 @@ export default function HomeScreen() {
   const [backgroundImage] = useState(
     morningImages[Math.floor(Math.random() * morningImages.length)]
   );
+  const messageCardWidth = Dimensions.get("window").width - 48;
 
-  const currentPrayers = activeEntries.filter((entry) => entry.type === "prayer");
-  const currentGratitude = activeEntries.filter((entry) => entry.type === "gratitude");
-  const currentAffirmations = activeEntries.filter((entry) => entry.type === "affirmation");
-  const currentGoals = activeEntries.filter((entry) => entry.type === "goal");
+  const filteredActiveEntries = activeEntries.filter((entry) =>
+    entry.content?.toLowerCase().includes(searchText.toLowerCase())
+  );
+
+  const currentPrayers = filteredActiveEntries.filter((entry) => entry.type === "prayer");
+  const currentGratitude = filteredActiveEntries.filter((entry) => entry.type === "gratitude");
+  const currentAffirmations = filteredActiveEntries.filter((entry) => entry.type === "affirmation");
+  const currentGoals = filteredActiveEntries.filter((entry) => entry.type === "goal");
 
   const completedPrayers = answeredPrayers.filter((entry) => entry.type === "prayer");
   const completedGratitude = answeredPrayers.filter((entry) => entry.type === "gratitude");
   const completedAffirmations = answeredPrayers.filter((entry) => entry.type === "affirmation");
   const completedGoals = answeredPrayers.filter((entry) => entry.type === "goal");
+  const currentDailyMessage = dailyMessages[currentMessageIndex] ?? null;
 
-  async function loadMessage() {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+ async function loadMessage() {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
-    if (!user) {
-      console.log("No user found for daily message load");
-      return false;
-    }
-
-    const today = new Date().toISOString().split("T")[0];
-
-    const { data, error } = await supabase
-      .from("daily_messages")
-      .select("message_text, verse_reference")
-      .eq("user_id", user.id)
-      .eq("message_date", today)
-      .maybeSingle();
-
-    console.log("daily message result:", data, error);
-
-    if (error) {
-      console.log("Daily message load error:", error.message);
-      return false;
-    }
-
-if (data) {
-  setMessage(data.message_text);
-  setVerseRef(data.verse_reference);
-
-  Animated.timing(messageFadeAnim, {
-    toValue: 1,
-    duration: 700,
-    useNativeDriver: true,
-  }).start();
-
-  return true;
-}
-
+  if (!user) {
+    console.log("No user found for daily message load");
     return false;
   }
+
+  const today = new Date();
+  const twoDaysAgo = new Date();
+  twoDaysAgo.setDate(today.getDate() - 2);
+
+  const todayString = today.toISOString().split("T")[0];
+  const twoDaysAgoString = twoDaysAgo.toISOString().split("T")[0];
+
+  const { data, error } = await supabase
+    .from("daily_messages")
+    .select("id, message_text, verse_reference, verse_query, message_date")
+    .eq("user_id", user.id)
+    .gte("message_date", twoDaysAgoString)
+    .lte("message_date", todayString)
+    .order("message_date", { ascending: false });
+
+  console.log("daily messages result:", data, error);
+
+  if (error) {
+    console.log("Daily message load error:", error.message);
+    return false;
+  }
+
+  if (data && data.length > 0) {
+    setDailyMessages(
+      data.map((item) => ({
+        ...item,
+        message: item.message_text,
+      }))
+    );
+
+    setCurrentMessageIndex(0);
+
+    requestAnimationFrame(() => {
+      messageScrollRef.current?.scrollTo({
+        x: 0,
+        animated: false,
+      });
+    });
+
+    messageFadeAnim.setValue(0);
+    Animated.timing(messageFadeAnim, {
+      toValue: 1,
+      duration: 700,
+      useNativeDriver: true,
+    }).start();
+
+    const hasToday = data.some((item) => item.message_date === todayString);
+    return hasToday;
+  }
+
+  return false;
+}
 async function generateDailyMessage() {
   try {
     const {
@@ -152,9 +187,21 @@ async function generateDailyMessage() {
 
     console.log("Generating daily message...");
 
+    const { data: activeContextEntries, error: activeContextError } = await supabase
+      .from("entries")
+      .select("type, content")
+      .eq("status", "active")
+      .order("created_at", { ascending: false })
+      .limit(8);
+
+    if (activeContextError) {
+      console.log("Load active entries for daily message error:", activeContextError.message);
+    }
+
     const { data, error } = await supabase.functions.invoke("generate-entry", {
       body: {
         mode: "daily",
+        activeEntries: activeContextEntries ?? [],
       },
       headers: session?.access_token
         ? {
@@ -171,16 +218,9 @@ async function generateDailyMessage() {
       return;
     }
 
- if (data?.message) {
-  setMessage(data.message);
-  setVerseRef(data.verse_reference);
-
-  Animated.timing(messageFadeAnim, {
-    toValue: 1,
-    duration: 700,
-    useNativeDriver: true,
-  }).start();
-}
+    if (data?.message) {
+      await loadMessage();
+    }
   } catch (err) {
     console.log("Unexpected daily generation error:", err);
   }
@@ -211,20 +251,26 @@ async function generateDailyMessage() {
   }
 }
 async function loadVerse(reference: string) {
+  console.log("Loading verse for reference:", reference);
+
   const { data, error } = await supabase
     .from("bible_verses")
     .select("verse_text")
     .eq("reference", reference)
     .maybeSingle();
 
+  console.log("Verse query result:", data, error);
+
   if (error) {
     console.log("Verse load error:", error.message);
     return;
   }
 
-  if (data) {
+  if (data?.verse_text) {
     setVerseText(data.verse_text);
     setShowVerseModal(true);
+  } else {
+    console.log("No verse found for reference:", reference);
   }
 }
 
@@ -269,20 +315,36 @@ setTimeout(() => {
 };
 
 const markEntryCompleted = async (id: string) => {
-  setUpdatingPrayerId(id);
+  setEntryToCompleteId(id);
+  setAnswerNoteText("");
+  setShowAnswerNoteModal(true);
+};
+const saveAnswerNote = async () => {
+  if (!entryToCompleteId) return;
+
+  setUpdatingPrayerId(entryToCompleteId);
 
   const { error } = await supabase
     .from("entries")
-    .update({ status: "answered", answered_at: new Date() })
-    .eq("id", id);
+    .update({
+      status: "answered",
+      answered_at: new Date(),
+      answer_notes: answerNoteText.trim() || null,
+    })
+    .eq("id", entryToCompleteId);
 
   if (error) {
-    console.log("Error marking prayer answered:", error.message);
+    console.log("Error saving answer note:", error.message);
     setUpdatingPrayerId(null);
     return;
   }
 
+  setShowAnswerNoteModal(false);
+  setEntryToCompleteId(null);
+  setAnswerNoteText("");
+
   await loadPrayers();
+
   setUpdatingPrayerId(null);
 };
 const restoreEntry = async (id: string) => {
@@ -673,7 +735,7 @@ if (error) {
     ])
   ).start();
 }
-  useEffect(() => {
+    useEffect(() => {
     async function initialize() {
       const { data } = await supabase.auth.getSession();
 
@@ -695,6 +757,12 @@ if (error) {
 
 // Removed auto-focus so the screen does not jump on app open.
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadPrayers();
+    }, [])
+  );
 return (
   <GestureHandlerRootView style={{ flex: 1 }}>
     <SafeAreaView style={{ flex: 1, backgroundColor: "white" }}>
@@ -715,77 +783,148 @@ return (
  <ImageBackground
   source={backgroundImage}
   imageStyle={{ borderRadius: 16 }}
-style={{
-  borderRadius: 16,
-  overflow: "hidden",
-  marginBottom: 24,
-  minHeight: 220,
-  justifyContent: "flex-end",
-}}
->
-<LinearGradient
-  colors={["rgba(0,0,0,0.15)", "rgba(0,0,0,0.45)"]}
   style={{
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 18,
+    borderRadius: 16,
+    overflow: "hidden",
+    marginBottom: 24,
+    minHeight: 240,
+    justifyContent: "flex-end",
   }}
 >
-{message ? (
-  <Animated.Text
+  <LinearGradient
+    colors={["rgba(0,0,0,0.15)", "rgba(0,0,0,0.45)"]}
     style={{
-      fontSize: 18,
-      textAlign: "center",
-      color: "white",
-      lineHeight: 26,
-      marginBottom: 10,
-      fontWeight: "500",
-      maxWidth: 320,
-      opacity: messageFadeAnim,
+      flex: 1,
+      justifyContent: "center",
+      alignItems: "center",
+      paddingVertical: 18,
     }}
   >
-    {message}
-  </Animated.Text>
-) : (
-  <Text
-    style={{
-      fontSize: 18,
-      textAlign: "center",
-      color: "white",
-      lineHeight: 26,
-      marginBottom: 10,
-      fontWeight: "500",
-      maxWidth: 320,
-      opacity: 0.7,
-    }}
-  >
-    Preparing your morning message…
-  </Text>
-)}
+    {dailyMessages.length > 0 ? (
+      <>
+        <ScrollView
+          ref={messageScrollRef}
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          onMomentumScrollEnd={(event) => {
+            const screenWidth = event.nativeEvent.layoutMeasurement.width;
+            const index = Math.round(event.nativeEvent.contentOffset.x / screenWidth);
+            setCurrentMessageIndex(index);
+          }}
+          style={{ width: "100%" }}
+          contentContainerStyle={{ alignItems: "stretch" }}
+        >
+          {dailyMessages.map((item, index) => (
+            <View
+              key={item.id ?? `${item.message_date}-${index}`}
+              style={{
+              width: messageCardWidth,
+              paddingHorizontal: 18,
+              justifyContent: "center",
+              alignItems: "center",
+            }}
+          >
+              <Animated.Text
+                style={{
+                  fontSize: 18,
+                  textAlign: "center",
+                  color: "white",
+                  lineHeight: 26,
+                  marginBottom: 10,
+                  fontWeight: "500",
+                  opacity: messageFadeAnim,
+                }}
+              >
+                {item.message}
+              </Animated.Text>
 
-    <Text
+              <Text
+                style={{
+                  fontSize: 12,
+                  color: "rgba(255,255,255,0.78)",
+                  marginBottom: 8,
+                  textAlign: "center",
+                }}
+              >
+                {new Date(item.message_date).toLocaleDateString()}
+              </Text>
+
+              <Pressable
+  hitSlop={12}
+  onPress={() => {
+    if (item.verse_reference) {
+      loadVerse(item.verse_reference);
+    }
+  }}
+  style={{
+    marginTop: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  }}
+>
+  <Text
     style={{
       fontSize: 13,
       color: "rgba(255,255,255,0.92)",
-      marginTop: 6,
       textAlign: "center",
       letterSpacing: 0.3,
       textDecorationLine: "underline",
       fontWeight: "600",
     }}
-onPress={() => {
-  if (verseRef) {
-    loadVerse(verseRef);
-  }
-}}
   >
-    {verseRef ? `Read ${verseRef}` : "Read Psalm 46:10"}
+    {item.verse_reference ? `Read ${item.verse_reference}` : " "}
   </Text>
-</LinearGradient>
+</Pressable>
+            </View>
+          ))}
+        </ScrollView>
+
+        <View
+          style={{
+            flexDirection: "row",
+            justifyContent: "center",
+            alignItems: "center",
+            marginTop: 10,
+            gap: 8,
+          }}
+        >
+          {dailyMessages.map((_, index) => (
+            <View
+              key={index}
+              style={{
+                width: index === currentMessageIndex ? 18 : 7,
+                height: 7,
+                borderRadius: 999,
+                backgroundColor:
+                  index === currentMessageIndex
+                    ? "rgba(255,255,255,0.95)"
+                    : "rgba(255,255,255,0.45)",
+              }}
+            />
+          ))}
+        </View>
+      </>
+    ) : (
+      <Text
+        style={{
+          fontSize: 18,
+          textAlign: "center",
+          color: "white",
+          lineHeight: 26,
+          marginBottom: 10,
+          fontWeight: "500",
+          maxWidth: 320,
+          opacity: 0.7,
+          paddingHorizontal: 18,
+        }}
+      >
+        Preparing your morning message…
+      </Text>
+    )}
+  </LinearGradient>
 </ImageBackground>
  
-
  <Animated.View
   style={{
     borderWidth: 1,
@@ -860,7 +999,7 @@ onPress={() => {
 )}
   </Pressable>
 </Animated.View>
-<View style={{ marginBottom: 20 }}>
+<View style={{ marginBottom: 14 }}>
   <Pressable
     disabled={!newPrayer.trim() || isSavingPrayer}
     onPress={() => setShowTypePicker(true)}
@@ -884,21 +1023,79 @@ onPress={() => {
   </Pressable>
 </View>
 
+{showSearch && (
+  <View style={{ marginBottom: 20 }}>
+    <View style={{ flexDirection: "row", alignItems: "center" }}>
+      <View style={{ flex: 1, marginRight: 8 }}>
+        <TextInput
+          ref={searchInputRef}
+          placeholder="Search entries..."
+          value={searchText}
+          onChangeText={setSearchText}
+          onFocus={() => {
+            setTimeout(() => {
+              scrollViewRef.current?.scrollTo({ y: 260, animated: true });
+            }, 250);
+          }}
+          style={{
+            backgroundColor: "white",
+            borderWidth: 1,
+            borderColor: "#d8d8d8",
+            borderRadius: 10,
+            paddingHorizontal: 12,
+            paddingVertical: 12,
+            fontSize: 15,
+            color: "black",
+          }}
+        />
+      </View>
 
-{currentPrayers.length > 0 && (
-  <View style={{ marginBottom: 12 }}>
-    <Pressable onPress={() => setShowCurrentPrayers(!showCurrentPrayers)}>
-      <Text
+      <Pressable
+        onPress={() => {
+          setShowSearch(false);
+          setSearchText("");
+          Keyboard.dismiss();
+        }}
         style={{
-          fontSize: 16,
-          fontWeight: "600",
-          marginBottom: 10,
-          color: "black",
+          paddingHorizontal: 8,
+          paddingVertical: 8,
         }}
       >
-        Prayers ({currentPrayers.length}) {showCurrentPrayers ? "▾" : "▸"}
-      </Text>
+        <Text style={{ fontSize: 14, color: "#666" }}>Close</Text>
+      </Pressable>
+    </View>
+  </View>
+)}
+
+
+{currentPrayers.length > 0 && (
+<View style={{ marginTop: 10, marginBottom: 12 }}>
+    <View
+  style={{
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 10,
+  }}
+>
+  <Pressable onPress={() => setShowCurrentPrayers(!showCurrentPrayers)}>
+    <Text
+      style={{
+        fontSize: 16,
+        fontWeight: "600",
+        color: "black",
+      }}
+    >
+      🙏 Prayers ({currentPrayers.length}) {showCurrentPrayers ? "▾" : "▸"}
+    </Text>
+  </Pressable>
+
+  {!showSearch && (
+    <Pressable onPress={() => setShowSearch(true)}>
+      <Text style={{ fontSize: 14, color: "#666" }}>Search</Text>
     </Pressable>
+  )}
+</View>
 
     {showCurrentPrayers &&
       currentPrayers.map((p) => (
@@ -913,26 +1110,20 @@ onPress={() => {
               padding: 14,
               borderRadius: 10,
               marginBottom: 10,
-              flexDirection: "row",
-              justifyContent: "space-between",
-              alignItems: "center",
-              gap: 12,
+              borderLeftWidth: 4,
+              borderLeftColor: getEntryTypeStyles(p.type).badgeText,
             }}
           >
-            <View style={{ flex: 1, flexDirection: "row", alignItems: "flex-start" }}>
-              <Text
-                style={{
-                  fontSize: 18,
-                  marginRight: 8,
-                  color: getEntryTypeStyles(p.type).badgeText,
-                }}
-              >
-                {getEntryTypeIcon(p.type)}
-              </Text>
+            <View style={{ flex: 1 }}>
+               <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 16, color: "black" }}>
+                  {p.content}
+                </Text>
 
-              <Text style={{ fontSize: 16, color: "black", flex: 1 }}>
-                {p.content}
-              </Text>
+                <Text style={{ fontSize: 11, color: "#6a6a6a", marginTop: 8 }}>
+                  Added {p.created_at ? new Date(p.created_at).toLocaleDateString() : ""}
+                </Text>
+              </View>
             </View>
           </View>
         </Swipeable>
@@ -951,7 +1142,7 @@ onPress={() => {
           color: "black",
         }}
       >
-        Gratitude ({currentGratitude.length}) {showCurrentGratitude ? "▾" : "▸"}
+        ❤️ Gratitude ({currentGratitude.length}) {showCurrentGratitude ? "▾" : "▸"}
       </Text>
     </Pressable>
 
@@ -963,31 +1154,25 @@ onPress={() => {
           overshootRight={false}
         >
           <View
-            style={{
-              backgroundColor: "#f7f7f7",
-              padding: 14,
-              borderRadius: 10,
-              marginBottom: 10,
-              flexDirection: "row",
-              justifyContent: "space-between",
-              alignItems: "center",
-              gap: 12,
-            }}
+              style={{
+                backgroundColor: "#f7f7f7",
+                padding: 14,
+                borderRadius: 10,
+                marginBottom: 10,
+                borderLeftWidth: 4,
+                borderLeftColor: getEntryTypeStyles(p.type).badgeText,
+              }}
           >
-            <View style={{ flex: 1, flexDirection: "row", alignItems: "flex-start" }}>
-              <Text
-                style={{
-                  fontSize: 18,
-                  marginRight: 8,
-                  color: getEntryTypeStyles(p.type).badgeText,
-                }}
-              >
-                {getEntryTypeIcon(p.type)}
-              </Text>
+            <View style={{ flex: 1 }}>
+               <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 16, color: "black" }}>
+                  {p.content}
+                </Text>
 
-              <Text style={{ fontSize: 16, color: "black", flex: 1 }}>
-                {p.content}
-              </Text>
+                <Text style={{ fontSize: 11, color: "#6a6a6a", marginTop: 8 }}>
+                  Added {p.created_at ? new Date(p.created_at).toLocaleDateString() : ""}
+                </Text>
+              </View>
             </View>
           </View>
         </Swipeable>
@@ -1006,7 +1191,7 @@ onPress={() => {
           color: "black",
         }}
       >
-        Affirmations ({currentAffirmations.length}) {showCurrentAffirmations ? "▾" : "▸"}
+        ✨ Affirmations ({currentAffirmations.length}) {showCurrentAffirmations ? "▾" : "▸"}
       </Text>
     </Pressable>
 
@@ -1018,31 +1203,25 @@ onPress={() => {
           overshootRight={false}
         >
           <View
-            style={{
-              backgroundColor: "#f7f7f7",
-              padding: 14,
-              borderRadius: 10,
-              marginBottom: 10,
-              flexDirection: "row",
-              justifyContent: "space-between",
-              alignItems: "center",
-              gap: 12,
-            }}
+              style={{
+                backgroundColor: "#f7f7f7",
+                padding: 14,
+                borderRadius: 10,
+                marginBottom: 10,
+                borderLeftWidth: 4,
+                borderLeftColor: getEntryTypeStyles(p.type).badgeText,
+              }}
           >
-            <View style={{ flex: 1, flexDirection: "row", alignItems: "flex-start" }}>
-              <Text
-                style={{
-                  fontSize: 18,
-                  marginRight: 8,
-                  color: getEntryTypeStyles(p.type).badgeText,
-                }}
-              >
-                {getEntryTypeIcon(p.type)}
-              </Text>
+            <View style={{ flex: 1 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 16, color: "black" }}>
+                  {p.content}
+                </Text>
 
-              <Text style={{ fontSize: 16, color: "black", flex: 1 }}>
-                {p.content}
-              </Text>
+                <Text style={{ fontSize: 11, color: "#6a6a6a", marginTop: 8 }}>
+                  Added {p.created_at ? new Date(p.created_at).toLocaleDateString() : ""}
+                </Text>
+              </View>
             </View>
           </View>
         </Swipeable>
@@ -1061,7 +1240,7 @@ onPress={() => {
           color: "black",
         }}
       >
-        Goals ({currentGoals.length}) {showCurrentGoals ? "▾" : "▸"}
+        🎯 Goals ({currentGoals.length}) {showCurrentGoals ? "▾" : "▸"}
       </Text>
     </Pressable>
 
@@ -1078,402 +1257,24 @@ onPress={() => {
               padding: 14,
               borderRadius: 10,
               marginBottom: 10,
-              flexDirection: "row",
-              justifyContent: "space-between",
-              alignItems: "center",
-              gap: 12,
+              borderLeftWidth: 4,
+              borderLeftColor: getEntryTypeStyles(p.type).badgeText,
             }}
           >
-            <View style={{ flex: 1, flexDirection: "row", alignItems: "flex-start" }}>
-              <Text
-                style={{
-                  fontSize: 18,
-                  marginRight: 8,
-                  color: getEntryTypeStyles(p.type).badgeText,
-                }}
-              >
-                {getEntryTypeIcon(p.type)}
-              </Text>
+            <View style={{ flex: 1 }}>
+            <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 16, color: "black" }}>
+                  {p.content}
+                </Text>
 
-              <Text style={{ fontSize: 16, color: "black", flex: 1 }}>
-                {p.content}
-              </Text>
+                <Text style={{ fontSize: 11, color: "#6a6a6a", marginTop: 8 }}>
+                  Added {p.created_at ? new Date(p.created_at).toLocaleDateString() : ""}
+                </Text>
+              </View>
             </View>
           </View>
         </Swipeable>
       ))}
-  </View>
-)}
-
-{answeredPrayers.length > 0 && (
-  <View style={{ marginTop: 24 }}>
-    <Pressable onPress={() => setShowAnswered(!showAnswered)}>
-      <Text
-        style={{
-          fontSize: 18,
-          fontWeight: "600",
-          marginBottom: 12,
-          color: "black",
-        }}
-      >
-        Completed ({answeredPrayers.length}) {showAnswered ? "▴" : "▾"}
-      </Text>
-    </Pressable>
-
-    {showAnswered && (
-      <>
-        {completedPrayers.length > 0 && (
-          <View style={{ marginBottom: 12 }}>
-            <Pressable onPress={() => setShowCompletedPrayers(!showCompletedPrayers)}>
-              <Text
-                style={{
-                  fontSize: 16,
-                  fontWeight: "600",
-                  marginBottom: 10,
-                  color: "black",
-                }}
-              >
-                Prayers ({completedPrayers.length}) {showCompletedPrayers ? "▾" : "▸"}
-              </Text>
-            </Pressable>
-
-                        {showCompletedPrayers &&
-              completedPrayers.map((p) => (
-                <Swipeable
-                  key={p.id}
-                  renderRightActions={() => renderCompletedRightActions(p.id)}
-                  overshootRight={false}
-                >
-                  <View
-                    style={{
-                      backgroundColor: "#eef6ee",
-                      padding: 14,
-                      borderRadius: 10,
-                      marginBottom: 10,
-                      borderLeftWidth: 4,
-                      borderLeftColor: "#6aa56a",
-                    }}
-                  >
-                    <View
-                      style={{
-                        flexDirection: "row",
-                        justifyContent: "space-between",
-                        alignItems: "flex-start",
-                        gap: 12,
-                      }}
-                    >
-                      <View style={{ flex: 1, flexDirection: "row", alignItems: "flex-start" }}>
-                        <Text
-                          style={{
-                            fontSize: 18,
-                            marginRight: 8,
-                            color: getEntryTypeStyles(p.type).badgeText,
-                          }}
-                        >
-                          {getEntryTypeIcon(p.type)}
-                        </Text>
-
-                        <View style={{ flex: 1 }}>
-                          <Text style={{ fontSize: 16, color: "black" }}>
-                            {p.content}
-                          </Text>
-
-                          <Text style={{ fontSize: 11, color: "#6a6a6a", marginTop: 8 }}>
-                            Answered {p.answered_at ? new Date(p.answered_at).toLocaleDateString() : ""}
-                          </Text>
-
-                          {p.answered_at && p.created_at && (() => {
-                            const days = Math.ceil(
-                              (new Date(p.answered_at).getTime() - new Date(p.created_at).getTime()) /
-                                (1000 * 60 * 60 * 24)
-                            );
-
-                            return (
-                              <Text style={{ fontSize: 11, color: "#6a6a6a" }}>
-                                Answered in {days} {days === 1 ? "day" : "days"}
-                              </Text>
-                            );
-                          })()}
-                        </View>
-                      </View>
-
-                      <Pressable
-                        onPress={() => restoreEntry(p.id)}
-                        style={{
-                          alignItems: "center",
-                          justifyContent: "center",
-                        }}
-                      >
-                        <View
-                          style={{
-                            width: 24,
-                            height: 24,
-                            borderRadius: 12,
-                            borderWidth: 2,
-                            borderColor: "#6aa56a",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            marginBottom: 4,
-                          }}
-                        >
-                          <Text style={{ color: "#6aa56a", fontSize: 14, fontWeight: "700" }}>
-                            ↺
-                          </Text>
-                        </View>
-
-                        <Text style={{ fontSize: 11, color: "#666" }}>Restore</Text>
-                      </Pressable>
-                    </View>
-                  </View>
-                </Swipeable>
-              ))}
-          </View>
-        )}
-
-        {completedGratitude.length > 0 && (
-          <View style={{ marginBottom: 12 }}>
-            <Pressable onPress={() => setShowCompletedGratitude(!showCompletedGratitude)}>
-              <Text
-                style={{
-                  fontSize: 16,
-                  fontWeight: "600",
-                  marginBottom: 10,
-                  color: "black",
-                }}
-              >
-                Gratitude ({completedGratitude.length}) {showCompletedGratitude ? "▾" : "▸"}
-              </Text>
-            </Pressable>
-
-                        {showCompletedGratitude &&
-              completedGratitude.map((p) => (
-                <Swipeable
-                  key={p.id}
-                  renderRightActions={() => renderCompletedRightActions(p.id)}
-                  overshootRight={false}
-                >
-                  <View
-                    style={{
-                      backgroundColor: "#eef6ee",
-                      padding: 14,
-                      borderRadius: 10,
-                      marginBottom: 10,
-                      borderLeftWidth: 4,
-                      borderLeftColor: "#6aa56a",
-                    }}
-                  >
-                    <View
-                      style={{
-                        flexDirection: "row",
-                        justifyContent: "space-between",
-                        alignItems: "flex-start",
-                        gap: 12,
-                      }}
-                    >
-                      <View style={{ flex: 1, flexDirection: "row", alignItems: "flex-start" }}>
-                        <Text
-                          style={{
-                            fontSize: 18,
-                            marginRight: 8,
-                            color: getEntryTypeStyles(p.type).badgeText,
-                          }}
-                        >
-                          {getEntryTypeIcon(p.type)}
-                        </Text>
-
-                        <View style={{ flex: 1 }}>
-                          <Text style={{ fontSize: 16, color: "black" }}>
-                            {p.content}
-                          </Text>
-
-                          <Text style={{ fontSize: 11, color: "#6a6a6a", marginTop: 8 }}>
-                            Archived {p.answered_at ? new Date(p.answered_at).toLocaleDateString() : ""}
-                          </Text>
-
-                          {p.answered_at && p.created_at && (() => {
-                            const days = Math.ceil(
-                              (new Date(p.answered_at).getTime() - new Date(p.created_at).getTime()) /
-                                (1000 * 60 * 60 * 24)
-                            );
-
-                            return (
-                              <Text style={{ fontSize: 11, color: "#6a6a6a" }}>
-                                Thankful for {days} {days === 1 ? "day" : "days"}
-                              </Text>
-                            );
-                          })()}
-                        </View>
-                      </View>
-                    </View>
-                  </View>
-                </Swipeable>
-              ))}
-          </View>
-        )}
-
-        {completedAffirmations.length > 0 && (
-          <View style={{ marginBottom: 12 }}>
-            <Pressable onPress={() => setShowCompletedAffirmations(!showCompletedAffirmations)}>
-              <Text
-                style={{
-                  fontSize: 16,
-                  fontWeight: "600",
-                  marginBottom: 10,
-                  color: "black",
-                }}
-              >
-                Affirmations ({completedAffirmations.length}) {showCompletedAffirmations ? "▾" : "▸"}
-              </Text>
-            </Pressable>
-
-                        {showCompletedAffirmations &&
-              completedAffirmations.map((p) => (
-                <Swipeable
-                  key={p.id}
-                  renderRightActions={() => renderCompletedRightActions(p.id)}
-                  overshootRight={false}
-                >
-                  <View
-                    style={{
-                      backgroundColor: "#eef6ee",
-                      padding: 14,
-                      borderRadius: 10,
-                      marginBottom: 10,
-                      borderLeftWidth: 4,
-                      borderLeftColor: "#6aa56a",
-                    }}
-                  >
-                    <View
-                      style={{
-                        flexDirection: "row",
-                        justifyContent: "space-between",
-                        alignItems: "flex-start",
-                        gap: 12,
-                      }}
-                    >
-                      <View style={{ flex: 1, flexDirection: "row", alignItems: "flex-start" }}>
-                        <Text
-                          style={{
-                            fontSize: 18,
-                            marginRight: 8,
-                            color: getEntryTypeStyles(p.type).badgeText,
-                          }}
-                        >
-                          {getEntryTypeIcon(p.type)}
-                        </Text>
-
-                        <View style={{ flex: 1 }}>
-                          <Text style={{ fontSize: 16, color: "black" }}>
-                            {p.content}
-                          </Text>
-
-                          <Text style={{ fontSize: 11, color: "#6a6a6a", marginTop: 8 }}>
-                            Archived {p.answered_at ? new Date(p.answered_at).toLocaleDateString() : ""}
-                          </Text>
-
-                          {p.answered_at && p.created_at && (() => {
-                            const days = Math.ceil(
-                              (new Date(p.answered_at).getTime() - new Date(p.created_at).getTime()) /
-                                (1000 * 60 * 60 * 24)
-                            );
-
-                            return (
-                              <Text style={{ fontSize: 11, color: "#6a6a6a" }}>
-                                Affirmed for {days} {days === 1 ? "day" : "days"}
-                              </Text>
-                            );
-                          })()}
-                        </View>
-                      </View>
-                    </View>
-                  </View>
-                </Swipeable>
-              ))}
-          </View>
-        )}
-
-        {completedGoals.length > 0 && (
-          <View style={{ marginBottom: 12 }}>
-            <Pressable onPress={() => setShowCompletedGoals(!showCompletedGoals)}>
-              <Text
-                style={{
-                  fontSize: 16,
-                  fontWeight: "600",
-                  marginBottom: 10,
-                  color: "black",
-                }}
-              >
-                Goals ({completedGoals.length}) {showCompletedGoals ? "▾" : "▸"}
-              </Text>
-            </Pressable>
-
-                        {showCompletedGoals &&
-              completedGoals.map((p) => (
-                <Swipeable
-                  key={p.id}
-                  renderRightActions={() => renderCompletedRightActions(p.id)}
-                  overshootRight={false}
-                >
-                  <View
-                    style={{
-                      backgroundColor: "#eef6ee",
-                      padding: 14,
-                      borderRadius: 10,
-                      marginBottom: 10,
-                      borderLeftWidth: 4,
-                      borderLeftColor: "#6aa56a",
-                    }}
-                  >
-                    <View
-                      style={{
-                        flexDirection: "row",
-                        justifyContent: "space-between",
-                        alignItems: "flex-start",
-                        gap: 12,
-                      }}
-                    >
-                      <View style={{ flex: 1, flexDirection: "row", alignItems: "flex-start" }}>
-                        <Text
-                          style={{
-                            fontSize: 18,
-                            marginRight: 8,
-                            color: getEntryTypeStyles(p.type).badgeText,
-                          }}
-                        >
-                          {getEntryTypeIcon(p.type)}
-                        </Text>
-
-                        <View style={{ flex: 1 }}>
-                          <Text style={{ fontSize: 16, color: "black" }}>
-                            {p.content}
-                          </Text>
-
-                          <Text style={{ fontSize: 11, color: "#6a6a6a", marginTop: 8 }}>
-                            Completed {p.answered_at ? new Date(p.answered_at).toLocaleDateString() : ""}
-                          </Text>
-
-                          {p.answered_at && p.created_at && (() => {
-                            const days = Math.ceil(
-                              (new Date(p.answered_at).getTime() - new Date(p.created_at).getTime()) /
-                                (1000 * 60 * 60 * 24)
-                            );
-
-                            return (
-                              <Text style={{ fontSize: 11, color: "#6a6a6a" }}>
-                                Worked on for {days} {days === 1 ? "day" : "days"}
-                              </Text>
-                            );
-                          })()}
-                        </View>
-                      </View>
-                    </View>
-                  </View>
-                </Swipeable>
-              ))}
-          </View>
-        )}
-      </>
-    )}
   </View>
 )}
 
@@ -1546,6 +1347,105 @@ style={{
   </Pressable>
 </Modal>
 <Modal
+  visible={showAnswerNoteModal}
+  transparent
+  animationType="slide"
+>
+  <Pressable
+    onPress={() => {
+      setShowAnswerNoteModal(false);
+      setEntryToCompleteId(null);
+      setAnswerNoteText("");
+    }}
+    style={{
+      flex: 1,
+      backgroundColor: "rgba(0,0,0,0.35)",
+      justifyContent: "flex-end",
+    }}
+  >
+    <Pressable
+      onPress={() => {}}
+      style={{
+        backgroundColor: "white",
+        borderTopLeftRadius: 20,
+        borderTopRightRadius: 20,
+        padding: 24,
+        paddingBottom: 18,
+      }}
+    >
+      <TextInput
+        placeholder="Add a note for future reference..."
+        placeholderTextColor="#888"
+        value={answerNoteText}
+        onChangeText={setAnswerNoteText}
+        multiline
+        style={{
+          borderWidth: 1,
+          borderColor: "#d6d6d6",
+          borderRadius: 10,
+          padding: 14,
+          minHeight: 125,
+          textAlignVertical: "top",
+          marginBottom: 16,
+        }}
+      />
+
+      <View>
+        <Pressable
+          onPress={saveAnswerNote}
+          style={{
+            backgroundColor: "#2e6cff",
+            borderRadius: 10,
+            paddingVertical: 14,
+            marginBottom: 10,
+          }}
+        >
+          <Text
+            style={{
+              color: "white",
+              textAlign: "center",
+              fontSize: 16,
+              fontWeight: "600",
+            }}
+          >
+            Save
+          </Text>
+        </Pressable>
+
+        <Pressable
+          onPress={async () => {
+            if (!entryToCompleteId) return;
+
+            await supabase
+              .from("entries")
+              .update({
+                status: "answered",
+                answered_at: new Date(),
+              })
+              .eq("id", entryToCompleteId);
+
+            setShowAnswerNoteModal(false);
+            setEntryToCompleteId(null);
+            setAnswerNoteText("");
+            await loadPrayers();
+          }}
+          style={{ paddingVertical: 8 }}
+        >
+          <Text
+            style={{
+              textAlign: "center",
+              color: "#666",
+              fontSize: 14,
+            }}
+          >
+            Skip
+          </Text>
+        </Pressable>
+      </View>
+    </Pressable>
+  </Pressable>
+</Modal>
+<Modal
   visible={showVerseModal}
   transparent
   animationType="slide"
@@ -1568,14 +1468,14 @@ style={{
         paddingBottom: 40,
       }}
     >
-      <Text
+            <Text
         style={{
           fontSize: 18,
           fontWeight: "600",
           marginBottom: 12,
         }}
       >
-        {verseRef} (NET)
+        {currentDailyMessage?.verse_reference ? `${currentDailyMessage.verse_reference} (NET)` : "Verse (NET)"}
       </Text>
 
       <Text
