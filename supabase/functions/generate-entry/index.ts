@@ -162,30 +162,54 @@ ${text || ""}
 }
 
 function buildDailyPrompt(
-  messageStyle: MessageStyle,
-  recentEntries: Array<{ type: string; content: string }>
+  style: MessageStyle,
+  entries: { type: string; content: string }[],
+  recentlyUsedVerses: string[],
+  count: number = 1
 ) {
   const subtleContext =
-    recentEntries.length > 0
-      ? recentEntries
+    entries.length > 0
+      ? entries
           .map((entry, index) => `${index + 1}. (${entry.type}) ${entry.content}`)
           .join("\n")
       : "No recent entries provided.";
 
-  const styleInstruction =
-    messageStyle === "verse"
+  const recentlyUsedText =
+    recentlyUsedVerses.length > 0
+      ? recentlyUsedVerses.join(", ")
+      : "none";
+
+  const availableVerses = curatedVerses.filter(
+    (verse) => !recentlyUsedVerses.includes(verse)
+  );
+
+  const verseOptionsToUse =
+    availableVerses.length > 0 ? availableVerses : curatedVerses;
+
+  const singleInstruction =
+    style === "verse"
       ? `
 Choose ONE verse from the curated list below.
 
 Do not invent a verse.
 Do not choose a verse outside this list.
+Choose a verse that has not been used recently if possible.
+Avoid repeating verses from the recent list provided.
 
-Curated verse options:
-${curatedVerses.join(", ")}
+Recently used verses to avoid:
+${recentlyUsedText}
+
+Curated verse options you may choose from:
+${verseOptionsToUse.join(", ")}
 
 After choosing the verse, write 1–2 short sentences that naturally reflect the meaning of that verse.
 
 The reflection should sound like a thoughtful, encouraging explanation of the verse for today.
+Build the message from the meaning of the verse, not from generic inspirational language.
+Explain the comfort, promise, instruction, or encouragement in the verse in simple everyday language.
+Do not write like a greeting card, slogan, or motivational poster.
+Avoid filler phrases like "embrace today," "on this journey," "step into your purpose," or other vague inspirational language.
+Make the message specific enough that it clearly fits the chosen verse.
 
 Avoid vague motivational language.
 Use clear, natural English.
@@ -197,9 +221,10 @@ Return:
 
 The message should feel hopeful, grounded, and Christian.
 `
-      : messageStyle === "inspirational"
+      : style === "inspirational"
       ? `
 Create one short daily encouragement with no Bible verse and no explicit Christian wording.
+
 Return:
 - a motivational, encouraging message of 1-2 short sentences
 - verse_reference as null
@@ -208,13 +233,104 @@ Return:
 The message should feel hopeful, calm, uplifting, and broadly inspirational.
 `
       : `
+Choose ONE verse from the curated list below when a verse fits naturally.
+
+Do not invent a verse.
+Do not choose a verse outside this list.
+Choose a verse that has not been used recently if possible.
+Avoid repeating verses from the recent list provided.
+
+Recently used verses to avoid:
+${recentlyUsedText}
+
+Curated verse options you may choose from:
+${verseOptionsToUse.join(", ")}
+
 Create one short daily encouragement that blends inspirational tone with gentle Christian grounding.
 Most days this may include a Bible verse reference, but keep it subtle and warm rather than preachy.
+
+If you include a verse, write 1–2 short sentences that naturally reflect the meaning of that verse.
+Build the message from the meaning of the verse, not from generic inspirational language.
+Explain the comfort, promise, instruction, or encouragement in the verse in simple everyday language.
+Do not write like a greeting card, slogan, or motivational poster.
+Avoid filler phrases like "embrace today," "on this journey," "step into your purpose," or other vague inspirational language.
+Make the message specific enough that it clearly fits the chosen verse.
+
 Return:
 - a motivational, encouraging message of 1-2 short sentences
 - a Bible verse reference when it fits naturally, otherwise null
 - a short verse query matching the reference when a verse is included, otherwise null
 `;
+
+  const multiInstruction =
+    style === "inspirational"
+      ? `
+Create exactly ${count} distinct daily encouragement messages.
+
+Important:
+- Make them feel meaningfully different from each other in tone, angle, or emphasis.
+- Keep all of them calm, hopeful, polished, and concise.
+- Do not use Bible verses.
+- Set verse_reference to null.
+- Set verse_query to null.
+`
+      : `
+Create exactly ${count} distinct daily encouragement messages.
+
+Important:
+- Make them feel meaningfully different from each other in tone, angle, or emphasis.
+- If verses are used, use different verse references across the messages.
+- Prefer verses from the curated list below.
+- Do not invent a verse.
+- Do not choose a verse outside this list.
+- Choose verses that have not been used recently if possible.
+- Avoid repeating verses from the recent list provided.
+
+Recently used verses to avoid:
+${recentlyUsedText}
+
+Curated verse options you may choose from:
+${verseOptionsToUse.join(", ")}
+
+For each message:
+- Keep it to 1–2 short sentences.
+- Build it from the meaning of the verse when a verse is included.
+- Keep the wording natural, grounded, warm, and specific.
+- Avoid generic motivational filler.
+- Keep the Christian tone gentle, subtle, and not preachy.
+`;
+
+  const returnShape =
+    count === 1
+      ? `Return valid JSON only in this exact shape:
+{
+  "message": "string",
+  "verse_reference": "string or null",
+  "verse_query": "string or null"
+}`
+      : `Return valid JSON only in this exact shape:
+{
+  "messages": [
+    {
+      "message_index": 1,
+      "message": "string",
+      "verse_reference": "string or null",
+      "verse_query": "string or null"
+    },
+    {
+      "message_index": 2,
+      "message": "string",
+      "verse_reference": "string or null",
+      "verse_query": "string or null"
+    },
+    {
+      "message_index": 3,
+      "message": "string",
+      "verse_reference": "string or null",
+      "verse_query": "string or null"
+    }
+  ]
+}`;
 
   return `
 You are creating a daily morning message for a private app called Morning Message.
@@ -251,17 +367,12 @@ Use the user's recent entries only as subtle background influence for tone and t
 Do not reuse their exact wording.
 Do not mention specific details from the entries.
 
-${styleInstruction}
+${count === 1 ? singleInstruction : multiInstruction}
 
 Recent entries for subtle inspiration:
 ${subtleContext}
 
-Return valid JSON only in this exact shape:
-{
-  "message": "string",
-  "verse_reference": "string or null",
-  "verse_query": "string or null"
-}
+${returnShape}
 `;
 }
 
@@ -304,6 +415,7 @@ serve(async (req) => {
     const mode = body?.mode ?? "write";
     const type = (body?.type ?? "prayer") as EntryType;
     const text = body?.text ?? "";
+    const activeEntries = Array.isArray(body?.activeEntries) ? body.activeEntries : [];
 
     if (mode === "write") {
       const sentenceLimit = countIntendedSentences(text);
@@ -342,26 +454,31 @@ serve(async (req) => {
       });
     }
 
-    if (mode === "daily") {
+        if (mode === "daily") {
       const today = new Date().toISOString().split("T")[0];
 
-      const { data: existingMessage, error: existingError } = await supabase
+      const { data: existingMessages, error: existingError } = await supabase
         .from("daily_messages")
-        .select("message_text, verse_reference, verse_query")
+        .select("id, message_index, message_text, verse_reference, verse_query, is_primary")
         .eq("user_id", user.id)
         .eq("message_date", today)
-        .maybeSingle();
+        .order("message_index", { ascending: true });
 
       if (existingError) {
-        console.log("Existing daily message lookup error:", existingError.message);
+        console.log("Existing daily messages lookup error:", existingError.message);
       }
 
-      if (existingMessage) {
+      if (existingMessages && existingMessages.length === 3) {
         return new Response(
           JSON.stringify({
-            message: existingMessage.message_text,
-            verse_reference: existingMessage.verse_reference,
-            verse_query: existingMessage.verse_query,
+            messages: existingMessages.map((item) => ({
+              id: item.id,
+              message_index: item.message_index,
+              message: item.message_text,
+              verse_reference: item.verse_reference,
+              verse_query: item.verse_query,
+              is_primary: item.is_primary,
+            })),
           }),
           {
             headers: { "Content-Type": "application/json" },
@@ -382,19 +499,38 @@ serve(async (req) => {
         messageStyle = profileData.message_style as MessageStyle;
       }
 
-      const { data: recentEntries, error: entriesError } = await supabase
-        .from("entries")
-        .select("type, content")
-        .eq("user_id", user.id)
-        .eq("status", "active")
-        .order("created_at", { ascending: false })
-        .limit(8);
+      const recentEntries = activeEntries
+        .filter(
+          (entry) =>
+            entry &&
+            typeof entry.type === "string" &&
+            typeof entry.content === "string" &&
+            entry.content.trim().length > 0
+        )
+        .slice(0, 8);
 
-      if (entriesError) {
-        console.log("Recent entries lookup error:", entriesError.message);
+      const { data: recentMessages, error: recentMessagesError } = await supabase
+        .from("daily_messages")
+        .select("verse_reference")
+        .eq("user_id", user.id)
+        .not("verse_reference", "is", null)
+        .order("message_date", { ascending: false })
+        .limit(60);
+
+      if (recentMessagesError) {
+        console.log("Recent daily messages lookup error:", recentMessagesError.message);
       }
 
-      const prompt = buildDailyPrompt(messageStyle, recentEntries ?? []);
+      const recentlyUsedVerses = (recentMessages ?? [])
+        .map((item) => item.verse_reference)
+        .filter(Boolean);
+
+      const prompt = buildDailyPrompt(
+        messageStyle,
+        recentEntries,
+        recentlyUsedVerses,
+        3
+      );
 
       const response = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
@@ -416,7 +552,7 @@ serve(async (req) => {
             },
           ],
           temperature: 0.8,
-          max_tokens: 220,
+          max_tokens: 500,
           response_format: {
             type: "json_object",
           },
@@ -431,34 +567,121 @@ serve(async (req) => {
         parsed = JSON.parse(rawContent);
       } catch {
         parsed = {
-          message:
-            "Take a steady breath and begin again with quiet confidence. Even small steps matter when they are taken with purpose and hope.",
-          verse_reference: "Joshua 1:9",
-          verse_query: "Joshua 1:9",
+          messages: [
+            {
+              message_index: 1,
+              message:
+                "Take a steady breath and begin again with quiet confidence. Even small steps matter when they are taken with purpose and hope.",
+              verse_reference: "Psalm 46:10",
+              verse_query: "Psalm 46:10",
+            },
+            {
+              message_index: 2,
+              message:
+                "You do not need to carry everything at once today. Faithfulness often looks like one clear step at a time.",
+              verse_reference: "Proverbs 3:5-6",
+              verse_query: "Proverbs 3:5-6",
+            },
+            {
+              message_index: 3,
+              message:
+                "Strength is often given in the middle of the day, not before it begins. Keep moving forward with a steady heart.",
+              verse_reference: "Isaiah 41:10",
+              verse_query: "Isaiah 41:10",
+            },
+          ],
         };
       }
 
-      const message = parsed?.message?.trim() ?? "";
-      const verseReference = parsed?.verse_reference ?? null;
-      const verseQuery = parsed?.verse_query ?? null;
+      const normalizedMessages = Array.isArray(parsed?.messages)
+        ? parsed.messages
+            .filter(
+              (item: any) =>
+                item &&
+                typeof item.message === "string" &&
+                item.message.trim().length > 0
+            )
+            .slice(0, 3)
+            .map((item: any, index: number) => ({
+              message_index: index + 1,
+              message_text: item.message.trim(),
+              verse_reference:
+                typeof item.verse_reference === "string" && item.verse_reference.trim().length > 0
+                  ? item.verse_reference.trim()
+                  : null,
+              verse_query:
+                typeof item.verse_query === "string" && item.verse_query.trim().length > 0
+                  ? item.verse_query.trim()
+                  : null,
+              is_primary: index === 0,
+            }))
+        : [];
 
-      const { error: insertError } = await supabase.from("daily_messages").insert({
-        user_id: user.id,
-        message_date: today,
-        message_text: message,
-        verse_reference: verseReference,
-        verse_query: verseQuery,
-      });
+      const fallbackMessages = [
+        {
+          message_index: 1,
+          message_text:
+            "Take a steady breath and begin again with quiet confidence. Even small steps matter when they are taken with purpose and hope.",
+          verse_reference: "Psalm 46:10",
+          verse_query: "Psalm 46:10",
+          is_primary: true,
+        },
+        {
+          message_index: 2,
+          message_text:
+            "You do not need to carry everything at once today. Faithfulness often looks like one clear step at a time.",
+          verse_reference: "Proverbs 3:5-6",
+          verse_query: "Proverbs 3:5-6",
+          is_primary: false,
+        },
+        {
+          message_index: 3,
+          message_text:
+            "Strength is often given in the middle of the day, not before it begins. Keep moving forward with a steady heart.",
+          verse_reference: "Isaiah 41:10",
+          verse_query: "Isaiah 41:10",
+          is_primary: false,
+        },
+      ];
+
+      const messagesToSave =
+        normalizedMessages.length === 3 ? normalizedMessages : fallbackMessages;
+
+      const { error: deleteError } = await supabase
+        .from("daily_messages")
+        .delete()
+        .eq("user_id", user.id)
+        .eq("message_date", today);
+
+      if (deleteError) {
+        console.log("Daily messages delete error:", deleteError.message);
+      }
+
+      const { error: insertError } = await supabase.from("daily_messages").insert(
+        messagesToSave.map((item) => ({
+          user_id: user.id,
+          message_date: today,
+          message_text: item.message_text,
+          verse_reference: item.verse_reference,
+          verse_query: item.verse_query,
+          message_index: item.message_index,
+          is_primary: item.is_primary,
+        }))
+      );
 
       if (insertError) {
-        console.log("Daily message insert error:", insertError.message);
+        console.log("Daily messages insert error:", insertError.message);
       }
 
       return new Response(
         JSON.stringify({
-          message,
-          verse_reference: verseReference,
-          verse_query: verseQuery,
+          messages: messagesToSave.map((item) => ({
+            message_index: item.message_index,
+            message: item.message_text,
+            verse_reference: item.verse_reference,
+            verse_query: item.verse_query,
+            is_primary: item.is_primary,
+          })),
         }),
         {
           headers: { "Content-Type": "application/json" },
