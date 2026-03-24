@@ -3,6 +3,7 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import {
   Alert,
   ImageBackground,
+  Modal,
   Pressable,
   ScrollView,
   Text,
@@ -59,6 +60,7 @@ export default function CompletedScreen() {
   const [answeredEntries, setAnsweredEntries] = useState<any[]>([]);
   const [searchText, setSearchText] = useState("");
   const [selectedCadence, setSelectedCadence] = useState<CadenceFilter>("all");
+  const [showCadenceMenu, setShowCadenceMenu] = useState(false);
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const scrollViewRef = useRef<ScrollView | null>(null);
 
@@ -176,9 +178,10 @@ export default function CompletedScreen() {
     );
   };
 
-  useFocusEffect(
+   useFocusEffect(
     useCallback(() => {
       loadCompletedEntries();
+      scrollViewRef.current?.scrollTo({ y: 0, animated: false });
     }, [])
   );
 
@@ -207,140 +210,113 @@ export default function CompletedScreen() {
 
   const hasSearch = searchText.trim().length > 0;
 
-  const cadencePills = [
-    { key: "all" as CadenceFilter, label: "All" },
-    { key: "daily" as CadenceFilter, label: "Daily" },
-    { key: "weekly" as CadenceFilter, label: "Wkly" },
-    { key: "monthly" as CadenceFilter, label: "Mthly" },
-    { key: "yearly" as CadenceFilter, label: "Yrly" },
-  ];
-
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <ImageBackground source={completedHeaderImage} style={{ flex: 1 }} resizeMode="cover">
-        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.30)" }}>
-          <SafeAreaView style={{ flex: 1, backgroundColor: "transparent" }}>
-            <ScrollView
-  ref={scrollViewRef}
-  keyboardShouldPersistTaps="handled"
-  stickyHeaderIndices={[0]}
-  contentContainerStyle={{
-    paddingBottom: 40,
-    flexGrow: 1,
-  }}
->
-  <View
-    style={{
-      paddingHorizontal: 20,
-      paddingTop: 10,
-      paddingBottom: 10,
-      backgroundColor: "rgba(0,0,0,0.28)",
-    }}
-  >
-    <View
-      style={{
-        minHeight: isSearchFocused ? 90 : 150,
-        justifyContent: "center",
-        alignItems: "center",
-        marginBottom: 14,
-        paddingHorizontal: 12,
-      }}
-    >
-      <Text
-        style={{
-          fontSize: 28,
-          fontWeight: "700",
-          color: "white",
-          textAlign: "center",
-          textShadowColor: "rgba(0,0,0,0.35)",
-          textShadowOffset: { width: 0, height: 1 },
-          textShadowRadius: 6,
-          letterSpacing: 0.3,
-        }}
-      >
-        Take time to reflect
-      </Text>
-    </View>
+  <GestureHandlerRootView style={{ flex: 1 }}>
+    <ImageBackground source={completedHeaderImage} style={{ flex: 1 }} resizeMode="cover">
+      <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.30)" }}>
+        <SafeAreaView style={{ flex: 1, backgroundColor: "transparent" }}>
 
-    <View style={{ marginBottom: 14 }}>
-      <TextInput
-        placeholder="Search archived entries..."
-        placeholderTextColor="rgba(0,0,0,0.45)"
-        value={searchText}
-        onChangeText={setSearchText}
-        onFocus={() => {
-          setIsSearchFocused(true);
-          setTimeout(() => {
-            scrollViewRef.current?.scrollTo({
-              y: 0,
-              animated: true,
-            });
-          }, 150);
-        }}
-        onBlur={() => {
-          setIsSearchFocused(false);
-        }}
-        style={{
-          backgroundColor: "rgba(255,255,255,0.95)",
-          borderWidth: 1,
-          borderColor: "rgba(255,255,255,0.35)",
-          borderRadius: 14,
-          paddingHorizontal: 14,
-          paddingVertical: 12,
-          fontSize: 15,
-          color: "black",
-        }}
-      />
-    </View>
-
-   <ScrollView
-    horizontal
-    showsHorizontalScrollIndicator={false}
-    contentContainerStyle={{
-    gap: 8,
-    paddingRight: 4,
-    alignItems: "center",
-    justifyContent: "center",
-    flexGrow: 1,
-  }}
-  style={{ marginBottom: 8 }}
->
-
-
-      {cadencePills.map((pill) => {
-        const isSelected = selectedCadence === pill.key;
-
-        return (
-          <Pressable
-            key={pill.key}
-            onPress={() => setSelectedCadence(pill.key)}
+          {/* ===== FIXED HEADER ===== */}
+          <View
             style={{
-            backgroundColor: isSelected ? "#3b6df6" : "rgba(255,255,255,0.88)",
-            paddingHorizontal: 13,
-            paddingVertical: 9,
-            borderRadius: 999,
-            alignSelf: "center",
-          }}
-
-          >
-            <Text
-              style={{
-              color: isSelected ? "white" : "#2d2d2d",
-              fontSize: 14,
-              fontWeight: "700",
+              position: "absolute",
+              top: 0,
+              left: 0,
+              right: 0,
+              zIndex: 20,
+              paddingHorizontal: 20,
+              paddingTop: 100,
+              paddingBottom: 28,
+              backgroundColor: "rgba(0,0,0,0.25)",
             }}
+          >
+            {/* Title */}
+           <View
+            style={{
+              marginTop: 10,
+              marginBottom: 48,
+              alignItems: "center",
+            }}
+          >
+              <Text
+                style={{
+                  fontSize: 28,
+                  fontWeight: "700",
+                  color: "white",
+                  textAlign: "center",
+                  textShadowColor: "rgba(0,0,0,0.35)",
+                  textShadowOffset: { width: 0, height: 1 },
+                  textShadowRadius: 6,
+                }}
+              >
+                Take time to reflect
+              </Text>
+            </View>
 
+            {/* Search + Dropdown Row */}
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 10,
+              }}
             >
-              {pill.label}
-            </Text>
-          </Pressable>
-        );
-      })}
-    </ScrollView>
-  </View>
+              {/* Search */}
+              <TextInput
+                placeholder="Search..."
+                placeholderTextColor="rgba(0,0,0,0.45)"
+                value={searchText}
+                onChangeText={setSearchText}
+                onFocus={() => setIsSearchFocused(true)}
+                onBlur={() => setIsSearchFocused(false)}
+                style={{
+                  flex: 1,
+                  backgroundColor: "rgba(255,255,255,0.92)",
+                  borderRadius: 14,
+                  paddingHorizontal: 14,
+                  paddingVertical: 12,
+                  fontSize: 15,
+                  color: "black",
+                }}
+              />
 
-  <View style={{ paddingHorizontal: 20, paddingTop: 10 }}>
+              {/* Dropdown */}
+              <Pressable
+                onPress={() => setShowCadenceMenu(true)}
+                style={{
+                  paddingVertical: 12,
+                  paddingHorizontal: 14,
+                  borderRadius: 12,
+                  backgroundColor: "#f3f4f6",
+                  justifyContent: "center",
+                }}
+              >
+                <Text style={{ fontSize: 14, fontWeight: "600", color: "#333" }}>
+                  {selectedCadence === "all"
+                    ? "All"
+                    : selectedCadence === "daily"
+                    ? "Daily"
+                    : selectedCadence === "weekly"
+                    ? "Weekly"
+                    : selectedCadence === "monthly"
+                    ? "Monthly"
+                    : "Yearly"} ▼
+                </Text>
+              </Pressable>
+            </View>
+          </View>
 
+          {/* ===== SCROLLABLE CONTENT ===== */}
+          <ScrollView
+            ref={scrollViewRef}
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={{
+              paddingTop: 240,
+              paddingHorizontal: 20,
+              paddingBottom: 20,
+            }}
+          >
+            <View style={{ paddingTop: 6 }}>
 
               {filteredEntries.map((entry) => {
                 const reminderGroup = Array.isArray(entry.reminder_groups)
@@ -358,14 +334,13 @@ export default function CompletedScreen() {
                   >
                     <View
                       style={{
-                      backgroundColor: "rgba(255,255,255,0.88)",
-                      borderRadius: 18,
-                      padding: 16,
-                      marginBottom: 12,
-                      borderLeftWidth: 4,
-                      borderLeftColor: "#3b6df6",
-                    }}
-
+                        backgroundColor: "rgba(255,255,255,0.88)",
+                        borderRadius: 18,
+                        padding: 16,
+                        marginBottom: 12,
+                        borderLeftWidth: 4,
+                        borderLeftColor: "#3b6df6",
+                      }}
                     >
                       {hasTitle ? (
                         <Text
@@ -411,7 +386,6 @@ export default function CompletedScreen() {
                           marginTop: 10,
                           fontSize: 13,
                           color: "#6a6a6a",
-                          lineHeight: 18,
                         }}
                       >
                         {cadenceLabel} • {getArchivedText(entry.answered_at, entry.created_at)}
@@ -421,52 +395,102 @@ export default function CompletedScreen() {
                 );
               })}
 
-                    {filteredEntries.length === 0 && (
-                    <View
-                      style={{
-                        marginTop: 28,
-                        alignItems: "center",
-                        justifyContent: "center",
-                        paddingHorizontal: 20,
-                        backgroundColor: "rgba(255,255,255,0.16)",
-                        borderRadius: 18,
-                        paddingVertical: 28,
-                      }}
-                    >
-                      <Text
-                        style={{
-                          fontSize: 16,
-                          color: "rgba(255,255,255,0.94)",
-                          textAlign: "center",
-                          fontWeight: "600",
-                          marginBottom: 6,
-                        }}
-                      >
-                        {hasSearch || selectedCadence !== "all"
-                          ? "No archived entries found"
-                          : "No archived entries yet"}
-                      </Text>
+              {filteredEntries.length === 0 && (
+                <View
+                  style={{
+                    marginTop: 28,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    paddingHorizontal: 20,
+                    backgroundColor: "rgba(255,255,255,0.16)",
+                    borderRadius: 18,
+                    paddingVertical: 28,
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 16,
+                      color: "rgba(255,255,255,0.94)",
+                      textAlign: "center",
+                      fontWeight: "600",
+                      marginBottom: 6,
+                    }}
+                  >
+                    {hasSearch || selectedCadence !== "all"
+                      ? "No archived entries found"
+                      : "No archived entries yet"}
+                  </Text>
 
-                      <Text
-                        style={{
-                          fontSize: 13,
-                          color: "rgba(255,255,255,0.78)",
-                          textAlign: "center",
-                          lineHeight: 19,
-                        }}
-                      >
-                        {hasSearch || selectedCadence !== "all"
-                          ? "Try a different search or cadence filter."
-                          : "Archived items will appear here newest to oldest."}
-                      </Text>
-                    </View>
-                  )}
+                  <Text
+                    style={{
+                      fontSize: 13,
+                      color: "rgba(255,255,255,0.78)",
+                      textAlign: "center",
+                    }}
+                  >
+                    {hasSearch || selectedCadence !== "all"
+                      ? "Try a different search or cadence filter."
+                      : "Archived items will appear here newest to oldest."}
+                  </Text>
                 </View>
-              </ScrollView>
+              )}
+            </View>
+          </ScrollView>
 
-          </SafeAreaView>
-        </View>
-      </ImageBackground>
-    </GestureHandlerRootView>
-  );
+          {/* ===== DROPDOWN MODAL (UNCHANGED) ===== */}
+          <Modal visible={showCadenceMenu} transparent animationType="fade">
+            <Pressable
+              onPress={() => setShowCadenceMenu(false)}
+              style={{
+                flex: 1,
+                backgroundColor: "rgba(0,0,0,0.2)",
+                justifyContent: "center",
+                padding: 40,
+              }}
+            >
+              <View
+                style={{
+                  backgroundColor: "white",
+                  borderRadius: 12,
+                  paddingVertical: 8,
+                }}
+              >
+                {(["all", "daily", "weekly", "monthly", "yearly"] as const).map(
+                  (option) => {
+                    const labelMap = {
+                      all: "All",
+                      daily: "Daily",
+                      weekly: "Weekly",
+                      monthly: "Monthly",
+                      yearly: "Yearly",
+                    };
+
+                    return (
+                      <Pressable
+                        key={option}
+                        onPress={() => {
+                          setSelectedCadence(option);
+                          setShowCadenceMenu(false);
+                        }}
+                        style={{
+                          paddingVertical: 12,
+                          paddingHorizontal: 16,
+                        }}
+                      >
+                        <Text style={{ fontSize: 15, color: "#333" }}>
+                          {labelMap[option]}
+                        </Text>
+                      </Pressable>
+                    );
+                  }
+                )}
+              </View>
+            </Pressable>
+          </Modal>
+
+        </SafeAreaView>
+      </View>
+    </ImageBackground>
+  </GestureHandlerRootView>
+);
 }

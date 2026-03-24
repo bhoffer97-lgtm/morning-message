@@ -12,10 +12,10 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  StyleSheet,
   Text,
   TextInput,
-  TouchableWithoutFeedback,
-  View,
+  View
 } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import Swipeable from "react-native-gesture-handler/ReanimatedSwipeable";
@@ -398,7 +398,7 @@ export default function HomeScreen() {
   const [currentMessageIndex, setCurrentMessageIndex] = useState(0);
   const [verseText, setVerseText] = useState<string | null>(null);
   const [showVerseModal, setShowVerseModal] = useState(false);
-
+  const [showCadenceMenu, setShowCadenceMenu] = useState(false);
   const [activeEntries, setActiveEntries] = useState<Entry[]>([]);
   const [reminderGroups, setReminderGroups] = useState<ReminderGroup[]>([]);
   const [selectedCadenceFilter, setSelectedCadenceFilter] = useState<
@@ -415,20 +415,25 @@ export default function HomeScreen() {
   const [selectedSaveCadence, setSelectedSaveCadence] = useState<
     "daily" | "weekly" | "monthly" | "yearly"
   >("daily");
-  const [showSaveEntryModal, setShowSaveEntryModal] = useState(false);
-
+    const [showSaveEntryModal, setShowSaveEntryModal] = useState(false);
+  const [scrollY, setScrollY] = useState(0);
+  const [messageSectionHeight, setMessageSectionHeight] = useState(0);
+  const [headerSectionHeight, setHeaderSectionHeight] = useState(0);
 
   const [updatingPrayerId, setUpdatingPrayerId] = useState<string | null>(null);
   const [isSavingPrayer, setIsSavingPrayer] = useState(false);
   const [isAIWorking, setIsAIWorking] = useState(false);
+  const [isRegeneratingMessage, setIsRegeneratingMessage] = useState(false);
   const [showAnswerNoteModal, setShowAnswerNoteModal] = useState(false);
   const [answerNoteText, setAnswerNoteText] = useState("");
   const [entryToCompleteId, setEntryToCompleteId] = useState<string | null>(null);
+  const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
 
   const scrollViewRef = useRef<ScrollView | null>(null);
   const messageScrollRef = useRef<ScrollView | null>(null);
   const inputRef = useRef<TextInput | null>(null);
   const searchInputRef = useRef<TextInput | null>(null);
+  const hasAutoScrolledSearchRef = useRef(false);
 
   const textFadeAnim = useRef(new Animated.Value(1)).current;
   const textScaleAnim = useRef(new Animated.Value(1)).current;
@@ -441,8 +446,19 @@ export default function HomeScreen() {
     morningImages[Math.floor(Math.random() * morningImages.length)]
   );
 
-  const messageCardWidth = Dimensions.get("window").width - 48;
-  const currentDailyMessage = dailyMessages[currentMessageIndex] ?? null;
+const messageCardWidth = Dimensions.get("window").width - 40;
+const currentDailyMessage = dailyMessages[currentMessageIndex] ?? null;
+const showReturnButton = showSearch || selectedCadenceFilter !== "all";
+
+const hasActiveSearch = searchText.trim().length > 0;
+const hasActiveFilter = selectedCadenceFilter !== "all";
+const shouldPinFloatingHeader = hasActiveSearch || hasActiveFilter;
+
+const showFloatingHeader =
+  (messageSectionHeight > 0 &&
+    headerSectionHeight > 0 &&
+    scrollY >= Math.max(140, messageSectionHeight - 40)) ||
+  shouldPinFloatingHeader;
 
     function resetSaveEntryState() {
     setShowSaveEntryModal(false);
@@ -525,13 +541,17 @@ export default function HomeScreen() {
     return false;
   }
 
-  async function generateDailyMessage() {
+    async function generateDailyMessage(forceRegenerate = false) {
     try {
+      if (forceRegenerate) {
+        setIsRegeneratingMessage(true);
+      }
+
       const {
         data: { session },
       } = await supabase.auth.getSession();
 
-      console.log("Generating daily message...");
+      console.log("Generating daily message...", { forceRegenerate });
 
       const { data: activeContextEntries, error: activeContextError } = await supabase
         .from("entries")
@@ -548,6 +568,7 @@ export default function HomeScreen() {
         body: {
           mode: "daily",
           activeEntries: activeContextEntries ?? [],
+          forceRegenerate,
         },
         headers: session?.access_token
           ? {
@@ -561,14 +582,16 @@ export default function HomeScreen() {
 
       if (error) {
         console.log("Daily message generation error:", error);
+        Alert.alert("Could not regenerate", "Please try again.");
         return;
       }
 
-      if (data?.message) {
-        await loadMessage();
-      }
+      await loadMessage();
     } catch (err) {
       console.log("Unexpected daily generation error:", err);
+      Alert.alert("Could not regenerate", "Please try again.");
+    } finally {
+      setIsRegeneratingMessage(false);
     }
   }
 
@@ -779,13 +802,13 @@ export default function HomeScreen() {
     );
   };
 
-  const handleAIHelp = async () => {
-    if (isAIWorking) return;
+ const handleAIHelp = async () => {
+  if (isAIWorking) return;
 
-    setIsAIWorking(true);
-    startAIDotsAnimation();
+  setIsAIWorking(true);
+  startAIDotsAnimation();
 
-    try {
+  try {
       const {
         data: { session },
       } = await supabase.auth.getSession();
@@ -910,7 +933,25 @@ export default function HomeScreen() {
       ])
     ).start();
   }
+  useEffect(() => {
+    const showEvent =
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent =
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
 
+    const showSub = Keyboard.addListener(showEvent, () => {
+      setIsKeyboardVisible(true);
+    });
+
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setIsKeyboardVisible(false);
+    });
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
   useEffect(() => {
     async function initialize() {
       const { data } = await supabase.auth.getSession();
@@ -933,12 +974,57 @@ export default function HomeScreen() {
     initialize();
   }, []);
 
-  useFocusEffect(
+   useFocusEffect(
     useCallback(() => {
       loadEntries();
       loadReminderGroups();
+
+      // Reset scroll to top when screen is focused
+      requestAnimationFrame(() => {
+        scrollViewRef.current?.scrollTo({ y: 0, animated: false });
+      });
     }, [])
   );
+
+  useEffect(() => {
+  if (selectedCadenceFilter === "all") return;
+
+  const targetY = Math.max(140, messageSectionHeight - 40);
+
+  requestAnimationFrame(() => {
+    scrollViewRef.current?.scrollTo({
+      y: targetY,
+      animated: true,
+    });
+  });
+}, [selectedCadenceFilter, messageSectionHeight]);
+
+      useEffect(() => {
+        const query = searchText.trim();
+
+        if (!showSearch) {
+          hasAutoScrolledSearchRef.current = false;
+          return;
+        }
+
+        if (!query) {
+          hasAutoScrolledSearchRef.current = false;
+          return;
+        }
+
+        if (hasAutoScrolledSearchRef.current) return;
+
+        const targetY = Math.max(140, messageSectionHeight - 40);
+
+        hasAutoScrolledSearchRef.current = true;
+
+        requestAnimationFrame(() => {
+          scrollViewRef.current?.scrollTo({
+            y: targetY,
+            animated: true,
+          });
+        });
+      }, [searchText, showSearch, messageSectionHeight]);
 
   const filteredActiveEntries = useMemo(() => {
     const query = searchText.toLowerCase();
@@ -967,581 +1053,747 @@ export default function HomeScreen() {
     return grouped;
   }, [filteredActiveEntries]);
 
-   const upcomingEntries = useMemo<UpcomingEntry[]>(() => {
-    const now = new Date();
-    const oneWeekOut = new Date();
-    oneWeekOut.setDate(oneWeekOut.getDate() + 7);
+const ungroupedEntries = useMemo(() => {
+  return filteredActiveEntries.filter((entry) => !entry.reminder_group_id);
+}, [filteredActiveEntries]);
 
-    return reminderGroups
-      .filter((group) => {
-        const nextRun = getNextRunFromGroup(group);
-        const cadenceMatches =
-          selectedCadenceFilter === "all" || group.cadence === selectedCadenceFilter;
+const upcomingEntries = useMemo<UpcomingEntry[]>(() => {
+  const now = new Date();
 
-        return !!nextRun && nextRun >= now && nextRun <= oneWeekOut && cadenceMatches;
-      })
-      .flatMap((group) => {
-        const items = entriesByGroupId[group.id] ?? [];
-        const nextRun = getNextRunFromGroup(group);
+  const groupedItems = reminderGroups
+    .filter((group) => {
+      const nextRun = getNextRunFromGroup(group);
+      const cadenceMatches =
+        selectedCadenceFilter === "all" || group.cadence === selectedCadenceFilter;
 
-        return items.map((entry) => ({
+      return !!nextRun && nextRun >= now && cadenceMatches;
+    })
+    .flatMap((group) => {
+      const items = entriesByGroupId[group.id] ?? [];
+      const nextRun = getNextRunFromGroup(group);
+
+      return items.map((entry) => ({
+        ...entry,
+        cadence: group.cadence,
+        next_run_at: nextRun,
+        reminder_group_name: group.name,
+      }));
+    });
+
+  const ungroupedItems =
+    selectedCadenceFilter === "all"
+      ? (ungroupedEntries ?? []).map((entry) => ({
           ...entry,
-          cadence: group.cadence,
-          next_run_at: nextRun,
-          reminder_group_name: group.name,
-        }));
-      })
-      .sort((a, b) => {
-        const aTime = a.next_run_at ? a.next_run_at.getTime() : 0;
-        const bTime = b.next_run_at ? b.next_run_at.getTime() : 0;
-        return aTime - bTime;
-      });
-  }, [reminderGroups, entriesByGroupId, selectedCadenceFilter]);
+          cadence: "daily" as const,
+          next_run_at: null,
+          reminder_group_name: "Ungrouped",
+        }))
+      : [];
 
+  return [...groupedItems, ...ungroupedItems].sort((a, b) => {
+    if (!a.next_run_at && !b.next_run_at) {
+      const aCreated = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const bCreated = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return bCreated - aCreated;
+    }
 
-  const ungroupedEntries = useMemo(() => {
-    return filteredActiveEntries.filter((entry) => !entry.reminder_group_id);
-  }, [filteredActiveEntries]);
+    if (!a.next_run_at) return 1;
+    if (!b.next_run_at) return -1;
+
+    return a.next_run_at.getTime() - b.next_run_at.getTime();
+  });
+}, [reminderGroups, entriesByGroupId, selectedCadenceFilter, ungroupedEntries]);
    const saveModalReminderGroups = useMemo(() => {
     return reminderGroups.filter((group) => group.cadence === selectedSaveCadence);
   }, [reminderGroups, selectedSaveCadence]);
-
+  function renderHomeHeaderContent(isFloating = false) {
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <SafeAreaView style={{ flex: 1, backgroundColor: "white" }}>
-        <KeyboardAvoidingView
-          style={{ flex: 1 }}
-          behavior={Platform.OS === "ios" ? "padding" : "height"}
-        >
-          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-            <ScrollView
-              ref={scrollViewRef}
-              keyboardShouldPersistTaps="handled"
-              contentContainerStyle={{
-                padding: 24,
-                flexGrow: 1,
+    <>
+      {!isFloating && (
+        <>
+          <Animated.View
+            style={{
+              backgroundColor: "rgba(255,255,255,0.92)",
+              borderRadius: 14,
+              borderWidth: 1,
+              borderColor: "#e5e7eb",
+              shadowColor: "#000",
+              shadowOpacity: 0.06,
+              shadowRadius: 8,
+              shadowOffset: { width: 0, height: 3 },
+              elevation: 2,
+              marginBottom: 14,
+              opacity: textFadeAnim,
+              transform: [{ scale: textScaleAnim }],
+            }}
+          >
+ {isFloating ? (
+  <Pressable
+    onPress={() => {
+      scrollViewRef.current?.scrollTo({ y: 260, animated: true });
+
+      setTimeout(() => {
+        inputRef.current?.focus();
+      }, 300);
+    }}
+    style={{
+      padding: 12,
+      paddingRight: 40,
+      minHeight: 100,
+      justifyContent: "flex-start",
+    }}
+  >
+    <Text
+      style={{
+        color: newPrayer.trim() ? "black" : "#999",
+        lineHeight: 22,
+      }}
+      numberOfLines={4}
+    >
+      {newPrayer.trim()
+        ? newPrayer
+        : "Write what’s on your mind… we’ll turn it into a prayer, goal, or affirmation."}
+    </Text>
+  </Pressable>
+) : (
+  <TextInput
+    ref={inputRef}
+    placeholder="Write what’s on your mind… we’ll turn it into a prayer, goal, or affirmation."
+    value={newPrayer}
+    onChangeText={setNewPrayer}
+    multiline
+    style={{
+      padding: 12,
+      paddingRight: 40,
+      paddingBottom: 34,
+      minHeight: 100,
+      textAlignVertical: "top",
+    }}
+  />
+)}
+
+{!!newPrayer.trim() && !isFloating && (
+  <Pressable
+    onPress={() => {
+      setNewPrayer("");
+      inputRef.current?.focus();
+    }}
+    hitSlop={10}
+    style={{
+      position: "absolute",
+      right: 10,
+      bottom: 10,
+      padding: 2,
+    }}
+  >
+    <Text style={{ fontSize: 16, color: "#777", fontWeight: "600" }}>×</Text>
+  </Pressable>
+)}
+
+<Pressable
+  onPress={handleAIHelp}
+  style={{
+    position: "absolute",
+    right: 10,
+    top: 10,
+    padding: 6,
+  }}
+>
+            {isAIWorking ? (
+              <View style={{ flexDirection: "row", gap: 3 }}>
+                <Animated.View
+                  style={{
+                    width: 4,
+                    height: 4,
+                    borderRadius: 2,
+                    backgroundColor: "#2e6cff",
+                    opacity: dotAnim1,
+                  }}
+                />
+                <Animated.View
+                  style={{
+                    width: 4,
+                    height: 4,
+                    borderRadius: 2,
+                    backgroundColor: "#2e6cff",
+                    opacity: dotAnim2,
+                  }}
+                />
+                <Animated.View
+                  style={{
+                    width: 4,
+                    height: 4,
+                    borderRadius: 2,
+                    backgroundColor: "#2e6cff",
+                    opacity: dotAnim3,
+                  }}
+                />
+              </View>
+            ) : (
+              <Text style={{ fontSize: 16 }}>✨</Text>
+            )}
+          </Pressable>
+        </Animated.View>
+
+         <View style={{ marginBottom: 16 }}>
+          <Pressable
+            disabled={!newPrayer.trim() || isSavingPrayer}
+            onPress={openSaveEntryModal}
+            style={{
+              backgroundColor:
+                !newPrayer.trim() || isSavingPrayer
+                  ? "rgba(120,120,120,0.55)"
+                  : "rgba(40,40,40,0.95)",
+              borderRadius: 12,
+              paddingVertical: 13,
+              opacity: isSavingPrayer ? 0.7 : 1,
+            }}
+          >
+            <Text
+              style={{
+                color: "white",
+                textAlign: "center",
+                fontSize: 16,
+                fontWeight: "600",
               }}
             >
-              <ImageBackground
-                source={backgroundImage}
-                imageStyle={{ borderRadius: 16 }}
-                style={{
-                  borderRadius: 16,
-                  overflow: "hidden",
-                  marginBottom: 24,
-                  minHeight: 240,
-                  justifyContent: "flex-end",
-                }}
-              >
-                <LinearGradient
-                  colors={["rgba(0,0,0,0.15)", "rgba(0,0,0,0.45)"]}
-                  style={{
-                    flex: 1,
-                    justifyContent: "center",
-                    alignItems: "center",
-                    paddingVertical: 18,
-                  }}
-                >
-                  {dailyMessages.length > 0 ? (
-                    <>
-                      <ScrollView
-                        ref={messageScrollRef}
-                        horizontal
-                        pagingEnabled
-                        showsHorizontalScrollIndicator={false}
-                        onMomentumScrollEnd={(event) => {
-                          const screenWidth = event.nativeEvent.layoutMeasurement.width;
-                          const index = Math.round(
-                            event.nativeEvent.contentOffset.x / screenWidth
-                          );
-                          setCurrentMessageIndex(index);
-                        }}
-                        style={{ width: "100%" }}
-                        contentContainerStyle={{ alignItems: "stretch" }}
-                      >
-                        {dailyMessages.map((item, index) => (
-                          <View
-                            key={item.id ?? `${item.message_date}-${index}`}
-                            style={{
-                              width: messageCardWidth,
-                              paddingHorizontal: 18,
-                              justifyContent: "center",
-                              alignItems: "center",
-                            }}
-                          >
-                            <Animated.Text
-                              style={{
-                                fontSize: 18,
-                                textAlign: "center",
-                                color: "white",
-                                lineHeight: 26,
-                                marginBottom: 10,
-                                fontWeight: "500",
-                                opacity: messageFadeAnim,
-                              }}
-                            >
-                              {item.message}
-                            </Animated.Text>
+              {isSavingPrayer ? "Saving..." : "Save"}
+            </Text>
+          </Pressable>
+        </View>
+        </>
+      )}
 
-                            <Text
-                              style={{
-                                fontSize: 12,
-                                color: "rgba(255,255,255,0.78)",
-                                marginBottom: 8,
-                                textAlign: "center",
-                              }}
-                            >
-                              {new Date(item.message_date).toLocaleDateString()}
-                            </Text>
+      {isFloating && (
+        <View
+          style={{
+            marginBottom: 22,
+            backgroundColor: "rgba(255,255,255,0.6)",
+            borderRadius: 14,
+            padding: 12,
+            borderWidth: 1,
+            borderColor: "rgba(255,255,255,0.4)",
+          }}
+        >
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              marginBottom: 12,
+            }}
+          >
+            <Pressable
+              onPress={() => setShowCadenceMenu(true)}
+              style={{
+                paddingVertical: 9,
+                paddingHorizontal: 13,
+                borderRadius: 10,
+                backgroundColor: "rgba(40,40,40,0.85)",
+                marginRight: 12,
+              }}
+            >
+              <Text style={{ fontSize: 14, fontWeight: "600", color: "white" }}>
+                {selectedCadenceFilter === "all"
+                  ? "All"
+                  : selectedCadenceFilter === "daily"
+                  ? "Daily"
+                  : selectedCadenceFilter === "weekly"
+                  ? "Weekly"
+                  : selectedCadenceFilter === "monthly"
+                  ? "Monthly"
+                  : "Yearly"} ▼
+              </Text>
+            </Pressable>
 
-                            <Pressable
-                              hitSlop={12}
-                              onPress={() => {
-                                if (item.verse_reference) {
-                                  loadVerse(item.verse_reference);
-                                }
-                              }}
-                              style={{
-                                marginTop: 6,
-                                paddingVertical: 8,
-                                paddingHorizontal: 12,
-                              }}
-                            >
-                              <Text
-                                style={{
-                                  fontSize: 13,
-                                  color: "rgba(255,255,255,0.92)",
-                                  textAlign: "center",
-                                  letterSpacing: 0.3,
-                                  textDecorationLine: "underline",
-                                  fontWeight: "600",
-                                }}
-                              >
-                                {item.verse_reference ? `Read ${item.verse_reference}` : " "}
-                              </Text>
-                            </Pressable>
-                          </View>
-                        ))}
-                      </ScrollView>
+ {!showReturnButton ? (
+  <Pressable
+    onPress={() => {
+      setShowSearch(true);
 
-                      <View
-                        style={{
-                          flexDirection: "row",
-                          justifyContent: "center",
-                          alignItems: "center",
-                          marginTop: 10,
-                          gap: 8,
-                        }}
-                      >
-                        {dailyMessages.map((_, index) => (
-                          <View
-                            key={index}
-                            style={{
-                              width: index === currentMessageIndex ? 18 : 7,
-                              height: 7,
-                              borderRadius: 999,
-                              backgroundColor:
-                                index === currentMessageIndex
-                                  ? "rgba(255,255,255,0.95)"
-                                  : "rgba(255,255,255,0.45)",
-                            }}
-                          />
-                        ))}
-                      </View>
-                    </>
-                  ) : (
-                    <Text
-                      style={{
-                        fontSize: 18,
-                        textAlign: "center",
-                        color: "white",
-                        lineHeight: 26,
-                        marginBottom: 10,
-                        fontWeight: "500",
-                        maxWidth: 320,
-                        opacity: 0.7,
-                        paddingHorizontal: 18,
-                      }}
-                    >
-                      Preparing your morning message…
-                    </Text>
-                  )}
-                </LinearGradient>
-              </ImageBackground>
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          searchInputRef.current?.focus();
+        }, 50);
+      });
+    }}
+    style={{
+      flex: 1,
+      borderRadius: 10,
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+      backgroundColor: "rgba(255,255,255,0.92)",
+      borderWidth: 1,
+      borderColor: "#e5e7eb",
+    }}
+  >
+    <Text style={{ fontSize: 14, color: "#666" }}>Search</Text>
+  </Pressable>
+) : (
+  <Pressable
+    onPress={() => {
+      setShowSearch(false);
+      setSearchText("");
+      setSelectedCadenceFilter("all");
+      Keyboard.dismiss();
 
-              <Animated.View
-                style={{
-                  borderWidth: 1,
-                  borderColor: "#ccc",
-                  borderRadius: 10,
-                  marginBottom: 16,
-                  backgroundColor: "white",
-                  opacity: textFadeAnim,
-                  transform: [{ scale: textScaleAnim }],
-                }}
-              >
+      requestAnimationFrame(() => {
+        scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+      });
+    }}
+    style={{
+      flex: 1,
+      borderRadius: 10,
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+      backgroundColor: "rgba(255,255,255,0.92)",
+      borderWidth: 1,
+      borderColor: "#e5e7eb",
+    }}
+  >
+    <Text style={{ fontSize: 14, color: "#666" }}>Close/Return</Text>
+  </Pressable>
+)}
+          </View>
+
+            {showSearch && (
+              <View style={{ marginBottom: 14, position: "relative" }}>
                 <TextInput
-                  ref={inputRef}
-                  placeholder="Write what’s on your mind… we’ll turn it into a prayer, goal, or affirmation."
-                  value={newPrayer}
-                  onChangeText={setNewPrayer}
-                  onFocus={() => {
-                    setTimeout(() => {
-                      scrollViewRef.current?.scrollTo({ y: 260, animated: true });
-                    }, 250);
-                  }}
-                  multiline
+                  ref={searchInputRef}
+                  placeholder="Search entries..."
+                  value={searchText}
+                  onChangeText={setSearchText}
                   style={{
-                    padding: 12,
-                    paddingRight: 40,
-                    minHeight: 100,
-                    textAlignVertical: "top",
+                    backgroundColor: "white",
+                    borderWidth: 1,
+                    borderColor: "#d8d8d8",
+                    borderRadius: 10,
+                    paddingHorizontal: 12,
+                    paddingRight: 44,
+                    paddingVertical: 12,
+                    fontSize: 15,
+                    color: "black",
                   }}
                 />
 
-                <Pressable
-                  onPress={handleAIHelp}
-                  style={{
-                    position: "absolute",
-                    right: 10,
-                    top: 10,
-                    padding: 6,
-                  }}
-                >
-                  {isAIWorking ? (
-                    <View style={{ flexDirection: "row", gap: 3 }}>
-                      <Animated.View
-                        style={{
-                          width: 4,
-                          height: 4,
-                          borderRadius: 2,
-                          backgroundColor: "#2e6cff",
-                          opacity: dotAnim1,
-                        }}
-                      />
-                      <Animated.View
-                        style={{
-                          width: 4,
-                          height: 4,
-                          borderRadius: 2,
-                          backgroundColor: "#2e6cff",
-                          opacity: dotAnim2,
-                        }}
-                      />
-                      <Animated.View
-                        style={{
-                          width: 4,
-                          height: 4,
-                          borderRadius: 2,
-                          backgroundColor: "#2e6cff",
-                          opacity: dotAnim3,
-                        }}
-                      />
-                    </View>
-                  ) : (
-                    <Text style={{ fontSize: 16 }}>✨</Text>
-                  )}
-                </Pressable>
-              </Animated.View>
-
-              <View style={{ marginBottom: 20 }}>
-                <Pressable
-                  disabled={!newPrayer.trim() || isSavingPrayer}
-                  onPress={openSaveEntryModal}
-                  style={{
-                    backgroundColor:
-                      !newPrayer.trim() || isSavingPrayer ? "#bfc8d8" : "#2e6cff",
-                    borderRadius: 10,
-                    paddingVertical: 14,
-                    opacity: isSavingPrayer ? 0.7 : 1,
-                  }}
-                >
-                  <Text
+                {!!searchText.trim() && (
+                  <Pressable
+                    onPress={() => {
+                      setSearchText("");
+                      searchInputRef.current?.focus();
+                    }}
+                    hitSlop={10}
                     style={{
-                      color: "white",
-                      textAlign: "center",
-                      fontSize: 16,
-                      fontWeight: "600",
+                      position: "absolute",
+                      right: 12,
+                      top: 12,
+                      padding: 2,
                     }}
                   >
-                    {isSavingPrayer ? "Saving..." : "Save"}
-                  </Text>
-                </Pressable>
+                    <Text style={{ fontSize: 16, color: "#777", fontWeight: "600" }}>×</Text>
+                  </Pressable>
+                )}
               </View>
+            )}
+        </View>
+      )}
+      </>
+    );
+  }
+  return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
+ <ImageBackground
+  source={backgroundImage}
+  resizeMode="cover"
+  style={{ flex: 1 }}
+>
+  <SafeAreaView style={{ flex: 1, backgroundColor: "transparent" }}>
 
-              <View style={{ marginBottom: 22 }}>
+ <LinearGradient
+  pointerEvents="none"
+  colors={[
+    "rgba(255,255,255,0.10)",
+    "rgba(255,255,255,0.24)",
+    "rgba(255,255,255,0.48)",
+  ]}
+  style={{
+    ...StyleSheet.absoluteFillObject,
+  }}
+/>
+   <KeyboardAvoidingView
+  style={{ flex: 1 }}
+  behavior={Platform.OS === "ios" ? "padding" : "height"}
+>
+  <View style={{ flex: 1 }}>
+<ScrollView
+  ref={scrollViewRef}
+  keyboardShouldPersistTaps="handled"
+  showsVerticalScrollIndicator={false}
+  onScroll={(event) => {
+    setScrollY(event.nativeEvent.contentOffset.y);
+  }}
+  scrollEventThrottle={16}
+  contentContainerStyle={{ paddingBottom: 120 }}
+>
+  {!showFloatingHeader && (
+    <View
+      onLayout={(event) => {
+        setMessageSectionHeight(event.nativeEvent.layout.height + 24);
+      }}
+      style={{
+        marginBottom: 24,
+        marginHorizontal: 20,
+        minHeight: 240,
+        justifyContent: "center",
+        backgroundColor: "rgba(255,255,255,0.32)",
+        borderRadius: 18,
+        borderWidth: 1,
+        borderColor: "rgba(255,255,255,0.38)",
+        overflow: "hidden",
+        paddingVertical: 18,
+      }}
+    >
+          {dailyMessages.length > 0 ? (
+          <>
+            <ScrollView
+              ref={messageScrollRef}
+              horizontal
+              pagingEnabled
+              showsHorizontalScrollIndicator={false}
+              onMomentumScrollEnd={(event) => {
+                const screenWidth = event.nativeEvent.layoutMeasurement.width;
+                const index = Math.round(
+                  event.nativeEvent.contentOffset.x / screenWidth
+                );
+                setCurrentMessageIndex(index);
+              }}
+              style={{ width: "100%" }}
+              contentContainerStyle={{ alignItems: "stretch" }}
+            >
+              {dailyMessages.map((item, index) => (
+                <View
+                  key={item.id ?? `${item.message_date}-${index}`}
+                  style={{
+                    width: messageCardWidth,
+                    paddingHorizontal: 18,
+                    justifyContent: "center",
+                    alignItems: "center",
+                  }}
+                >
+                  <Animated.Text
+                    style={{
+                      fontSize: 18,
+                      textAlign: "center",
+                      color: "#111",
+                      lineHeight: 26,
+                      marginBottom: 10,
+                      fontWeight: "500",
+                      opacity: messageFadeAnim,
+                    }}
+                  >
+                    {item.message}
+                  </Animated.Text>
+
+                  <Text
+                    style={{
+                      fontSize: 12,
+                      color: "#444",
+                      marginBottom: 8,
+                      textAlign: "center",
+                    }}
+                  >
+                    {new Date(item.message_date).toLocaleDateString()}
+                  </Text>
+
+                  <Pressable
+                    hitSlop={12}
+                    onPress={() => {
+                      if (item.verse_reference) {
+                        loadVerse(item.verse_reference);
+                      }
+                    }}
+                    style={{
+                      marginTop: 6,
+                      paddingVertical: 8,
+                      paddingHorizontal: 12,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 13,
+                        color: "#111",
+                        textAlign: "center",
+                        letterSpacing: 0.3,
+                        textDecorationLine: "underline",
+                        fontWeight: "600",
+                      }}
+                    >
+                      {item.verse_reference ? `Read ${item.verse_reference}` : " "}
+                    </Text>
+                  </Pressable>
+                </View>
+              ))}
+            </ScrollView>
+
+            <View
+              style={{
+                flexDirection: "row",
+                justifyContent: "center",
+                alignItems: "center",
+                marginTop: 10,
+                gap: 8,
+              }}
+            >
+              {dailyMessages.map((_, index) => (
+                <View
+                  key={index}
+                  style={{
+                    width: index === currentMessageIndex ? 18 : 7,
+                    height: 7,
+                    borderRadius: 999,
+                    backgroundColor:
+                      index === currentMessageIndex
+                        ? "rgba(17,17,17,0.9)"
+                        : "rgba(17,17,17,0.3)",
+                  }}
+                />
+              ))}
+            </View>
+
+            <Pressable
+              onPress={() => generateDailyMessage(true)}
+              disabled={isRegeneratingMessage}
+              style={{
+                alignSelf: "center",
+                marginTop: 14,
+                paddingVertical: 8,
+                paddingHorizontal: 14,
+                borderRadius: 999,
+                backgroundColor: "rgba(255,255,255,0.72)",
+                borderWidth: 1,
+                borderColor: "rgba(17,17,17,0.12)",
+                opacity: isRegeneratingMessage ? 0.7 : 1,
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 13,
+                  fontWeight: "600",
+                  color: "#111",
+                }}
+              >
+                {isRegeneratingMessage ? "Regenerating..." : "Regenerate"}
+              </Text>
+            </Pressable>
+          </>
+        ) : (
+          <Text
+            style={{
+              fontSize: 18,
+              textAlign: "center",
+              color: "#111",
+              lineHeight: 26,
+              marginBottom: 10,
+              fontWeight: "500",
+              maxWidth: 320,
+              opacity: 0.7,
+              paddingHorizontal: 18,
+            }}
+          >
+            Preparing your morning message…
+          </Text>
+        )}
+   
+
+           </View>
+      )}
+
+      <View
+        onLayout={(event) => {
+          setHeaderSectionHeight(event.nativeEvent.layout.height);
+        }}
+        style={{
+          paddingHorizontal: 20,
+          paddingTop: 10,
+          paddingBottom: 14,
+          opacity: showFloatingHeader ? 0 : 1,
+        }}
+        pointerEvents={showFloatingHeader ? "none" : "auto"}
+      >
+        {renderHomeHeaderContent(false)}
+      </View>
+
+      <View style={{ paddingHorizontal: 20, marginTop: 10, paddingBottom: 10 }}>
+        {upcomingEntries.length === 0 ? (
+          <View
+            style={{
+              backgroundColor: "rgba(255,255,255,0.92)",
+              borderRadius: 14,
+              padding: 14,
+              borderWidth: 1,
+              borderColor: "#e5e7eb",
+              shadowColor: "#000",
+              shadowOpacity: 0.06,
+              shadowRadius: 8,
+              shadowOffset: { width: 0, height: 3 },
+              elevation: 2,
+            }}
+          >
+            <Text style={{ fontSize: 14, color: "#666" }}>
+              No entries for this filter yet.
+            </Text>
+          </View>
+        ) : (
+          <>
+            {upcomingEntries.map((entry) => (
+              <Swipeable
+                key={entry.id}
+                renderRightActions={() =>
+                  renderCurrentRightActions(entry.type, entry.id)
+                }
+                overshootRight={false}
+              >
                 <View
                   style={{
-                    flexDirection: "row",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    marginBottom: 12,
+                    backgroundColor: "rgba(255,255,255,0.92)",
+                    borderRadius: 14,
+                    padding: 14,
+                    marginBottom: 10,
+                    borderWidth: 1,
+                    borderColor: "#e5e7eb",
+                    shadowColor: "#000",
+                    shadowOpacity: 0.06,
+                    shadowRadius: 8,
+                    shadowOffset: { width: 0, height: 3 },
+                    elevation: 2,
                   }}
                 >
-                  <Text
-                    style={{
-                      fontSize: 20,
-                      fontWeight: "700",
-                      color: "black",
-                    }}
-                  >
-                    Coming Up
-                  </Text>
-
-                  {!showSearch ? (
-                    <Pressable onPress={() => setShowSearch(true)}>
-                      <Text style={{ fontSize: 14, color: "#666" }}>Search</Text>
-                    </Pressable>
-                  ) : (
-                    <Pressable
-                      onPress={() => {
-                        setShowSearch(false);
-                        setSearchText("");
-                        Keyboard.dismiss();
-                      }}
-                    >
-                      <Text style={{ fontSize: 14, color: "#666" }}>Close</Text>
-                    </Pressable>
-                  )}
-                </View>
-
-                {showSearch && (
-                  <View style={{ marginBottom: 14 }}>
-                    <TextInput
-                      ref={searchInputRef}
-                      placeholder="Search entries..."
-                      value={searchText}
-                      onChangeText={setSearchText}
-                      onFocus={() => {
-                        setTimeout(() => {
-                          scrollViewRef.current?.scrollTo({ y: 260, animated: true });
-                        }, 250);
-                      }}
+                  {!!entry.title && (
+                    <Text
                       style={{
-                        backgroundColor: "white",
-                        borderWidth: 1,
-                        borderColor: "#d8d8d8",
-                        borderRadius: 10,
-                        paddingHorizontal: 12,
-                        paddingVertical: 12,
                         fontSize: 15,
+                        fontWeight: "700",
                         color: "black",
+                        marginBottom: 6,
                       }}
-                    />
-                  </View>
-                )}
-
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={{ paddingRight: 4, marginBottom: 14 }}
-                >
-                  {(["all", "daily", "weekly", "monthly", "yearly"] as const).map((filter) => {
-                    const selected = selectedCadenceFilter === filter;
-                    const labelMap = {
-                      all: "All",
-                      daily: "Daily",
-                      weekly: "Wkly",
-                      monthly: "Mthly",
-                      yearly: "Yrly",
-                    } as const;
-                    const label = labelMap[filter];
-
-
-                    return (
-                      <Pressable
-                        key={filter}
-                        onPress={() => setSelectedCadenceFilter(filter)}
-                        style={{
-                          paddingVertical: 9,
-                          paddingHorizontal: 14,
-                          borderRadius: 999,
-                          backgroundColor: selected ? "#2e6cff" : "#f3f4f6",
-                          marginRight: 8,
-                        }}
-                      >
-                        <Text
-                          style={{
-                            color: selected ? "white" : "#333",
-                            fontSize: 14,
-                            fontWeight: "600",
-                          }}
-                        >
-                          {label}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </ScrollView>
-
-                {upcomingEntries.length === 0 ? (
-                  <View
-                    style={{
-                      backgroundColor: "#f7f7f7",
-                      borderRadius: 10,
-                      padding: 14,
-                    }}
-                  >
-                    <Text style={{ fontSize: 14, color: "#666" }}>
-                      No upcoming entries for this filter in the next 7 days.
-                    </Text>
-                  </View>
-                ) : (
-                  upcomingEntries.map((entry) => (
-                    <Swipeable
-                      key={entry.id}
-                      renderRightActions={() =>
-                        renderCurrentRightActions(entry.type, entry.id)
-                      }
-                      overshootRight={false}
                     >
-                      <View
-                        style={{
-                          backgroundColor: "#f7f7f7",
-                          padding: 14,
-                          borderRadius: 10,
-                          marginBottom: 10,
-                          borderLeftWidth: 4,
-                          borderLeftColor: getEntryTypeStyles(entry.type).badgeText,
-                        }}
-                      >
-                        {!!entry.title && (
-                          <Text
-                            style={{
-                              fontSize: 15,
-                              fontWeight: "700",
-                              color: "black",
-                              marginBottom: 6,
-                            }}
-                          >
-                            {entry.title}
-                          </Text>
-                        )}
+                      {entry.title}
+                    </Text>
+                  )}
 
-                        <Text
-                          style={{
-                            fontSize: 16,
-                            color: "black",
-                            lineHeight: 22,
-                          }}
-                        >
-                          {entry.content}
-                        </Text>
-
-                        <Text
-                          style={{
-                            fontSize: 12,
-                            color: "#666",
-                            marginTop: 8,
-                          }}
-                        >
-                          {entry.cadence.charAt(0).toUpperCase() + entry.cadence.slice(1)} •{" "}
-                          {formatUpcomingLabel(entry.next_run_at)}
-                        </Text>
-                      </View>
-                    </Swipeable>
-                  ))
-                )}
-              </View>
-
-              <View style={{ marginBottom: 22 }}>
-                <Pressable
-                  onPress={() => setShowUngrouped(!showUngrouped)}
-                  style={{
-                    flexDirection: "row",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    marginBottom: 12,
-                  }}
-                >
                   <Text
                     style={{
-                      fontSize: 20,
-                      fontWeight: "700",
+                      fontSize: 16,
                       color: "black",
+                      lineHeight: 22,
                     }}
                   >
-                    Ungrouped Entries ({ungroupedEntries.length})
+                    {entry.content}
                   </Text>
 
-                  <Text style={{ fontSize: 18, color: "#666" }}>
-                    {showUngrouped ? "▾" : "▸"}
+                  <Text
+                    style={{
+                      fontSize: 12,
+                      color: "#666",
+                      marginTop: 8,
+                    }}
+                  >
+                    {entry.cadence.charAt(0).toUpperCase() + entry.cadence.slice(1)} •{" "}
+                    {formatUpcomingLabel(entry.next_run_at)}
                   </Text>
-                </Pressable>
+                </View>
+              </Swipeable>
+            ))}
+          </>
+        )}
+          </View>
+    </ScrollView>
 
-                {showUngrouped && (
-                  <>
-                    {ungroupedEntries.length === 0 ? (
-                      <View
-                        style={{
-                          backgroundColor: "#f7f7f7",
-                          borderRadius: 10,
-                          padding: 14,
-                        }}
-                      >
-                        <Text style={{ fontSize: 14, color: "#666" }}>
-                          No ungrouped entries.
-                        </Text>
-                      </View>
-                    ) : (
-                      ungroupedEntries.map((entry) => (
-                        <Swipeable
-                          key={entry.id}
-                          renderRightActions={() =>
-                            renderCurrentRightActions(entry.type, entry.id)
-                          }
-                          overshootRight={false}
-                        >
-                          <View
-                            style={{
-                              backgroundColor: "#f7f7f7",
-                              padding: 14,
-                              borderRadius: 10,
-                              marginBottom: 10,
-                              borderLeftWidth: 4,
-                              borderLeftColor: getEntryTypeStyles(entry.type).badgeText,
-                            }}
-                          >
-                            {!!entry.title && (
-                              <Text
-                                style={{
-                                  fontSize: 15,
-                                  fontWeight: "700",
-                                  color: "black",
-                                  marginBottom: 6,
-                                }}
-                              >
-                                {entry.title}
-                              </Text>
-                            )}
+    {showFloatingHeader && (
+      <View
+        pointerEvents="box-none"
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          zIndex: 50,
+          elevation: 50,
+        }}
+      >
+        <View
+          style={{
+            paddingHorizontal: 20,
+            paddingTop: 10,
+            paddingBottom: 14,
+            backgroundColor: "rgba(255,255,255,0.92)",
+            borderBottomLeftRadius: 18,
+            borderBottomRightRadius: 18,
+            overflow: "hidden",
+            borderBottomWidth: 1,
+            borderBottomColor: "#e5e7eb",
+            shadowColor: "#000",
+            shadowOpacity: 0.06,
+            shadowRadius: 8,
+            shadowOffset: { width: 0, height: 3 },
+          }}
+        >
+          {renderHomeHeaderContent(true)}
+        </View>
+      </View>
+    )}
+  </View>
+    
+</KeyboardAvoidingView>
+          <Modal visible={showCadenceMenu} transparent animationType="fade">
+  <Pressable
+    onPress={() => setShowCadenceMenu(false)}
+    style={{
+      flex: 1,
+      backgroundColor: "rgba(0,0,0,0.2)",
+      justifyContent: "center",
+      padding: 40,
+    }}
+  >
+    <View
+      style={{
+        backgroundColor: "white",
+        borderRadius: 12,
+        paddingVertical: 8,
+      }}
+    >
+      {(["all", "daily", "weekly", "monthly", "yearly"] as const).map(
+        (option) => {
+          const labelMap = {
+            all: "All",
+            daily: "Daily",
+            weekly: "Weekly",
+            monthly: "Monthly",
+            yearly: "Yearly",
+          };
 
-                            <Text style={{ fontSize: 16, color: "black" }}>{entry.content}</Text>
-
-                            <Text
-                              style={{
-                                fontSize: 11,
-                                color: "#6a6a6a",
-                                marginTop: 8,
-                              }}
-                            >
-                              {getEntryTypeIcon(entry.type)}{" "}
-                              {entry.type.charAt(0).toUpperCase() + entry.type.slice(1)} • Added{" "}
-                              {entry.created_at
-                                ? new Date(entry.created_at).toLocaleDateString()
-                                : ""}
-                            </Text>
-                          </View>
-                        </Swipeable>
-                      ))
-                    )}
-                  </>
-                )}
-              </View>
-            </ScrollView>
-          </TouchableWithoutFeedback>
-        </KeyboardAvoidingView>
-          
-        <Modal visible={showSaveEntryModal} transparent animationType="slide">
+          return (
+            <Pressable
+              key={option}
+              onPress={() => {
+                setSelectedCadenceFilter(option);
+                setShowCadenceMenu(false);
+              }}
+              style={{
+                paddingVertical: 12,
+                paddingHorizontal: 16,
+              }}
+            >
+              <Text style={{ fontSize: 15, color: "#333" }}>
+                {labelMap[option]}
+              </Text>
+            </Pressable>
+          );
+        }
+      )}
+    </View>
+  </Pressable>
+</Modal> 
+                <Modal visible={showSaveEntryModal} transparent animationType="slide">
           <Pressable
             onPress={resetSaveEntryState}
             style={{
@@ -1588,7 +1840,7 @@ export default function HomeScreen() {
                 >
                   Adjust the title if you want and choose which reminder this entry belongs to.
                 </Text>
-                
+
                 <Text
                   style={{
                     fontSize: 14,
@@ -1616,7 +1868,7 @@ export default function HomeScreen() {
                   }}
                 />
 
-                                        <Text
+                <Text
                   style={{
                     fontSize: 14,
                     fontWeight: "600",
@@ -1673,7 +1925,7 @@ export default function HomeScreen() {
                   })}
                 </ScrollView>
 
-                {saveModalReminderGroups.length === 0 ? (
+                            {saveModalReminderGroups.length === 0 ? (
                   <View
                     style={{
                       backgroundColor: "#f7f7f7",
@@ -1688,42 +1940,40 @@ export default function HomeScreen() {
                   </View>
                 ) : (
                   <View style={{ marginBottom: 18 }}>
-                    {saveModalReminderGroups.map((group) => {
-                      const selected = selectedReminderGroupId === group.id;
+    {saveModalReminderGroups.map((group) => {
+      const selected = selectedReminderGroupId === group.id;
 
-                      return (
-                        <Pressable
-                          key={group.id}
-                          onPress={() => setSelectedReminderGroupId(group.id)}
-                          style={{
-                            backgroundColor: selected ? "#e8f0ff" : "#f7f7f7",
-                            borderWidth: 1,
-                            borderColor: selected ? "#2e6cff" : "#e5e7eb",
-                            borderRadius: 10,
-                            padding: 12,
-                            marginBottom: 8,
-                          }}
-                        >
-                          <Text
-                            style={{
-                              fontSize: 15,
-                              fontWeight: "600",
-                              color: selected ? "#2e6cff" : "#333",
-                              marginBottom: 2,
-                            }}
-                          >
-                            {group.name}
-                          </Text>
-                          <Text style={{ fontSize: 12, color: "#666" }}>
-                            {formatReminderGroupSchedule(group)}
-                          </Text>
-                        </Pressable>
-                      );
-                    })}
-                  </View>
-                )}
-
-
+      return (
+        <Pressable
+          key={group.id}
+          onPress={() => setSelectedReminderGroupId(group.id)}
+          style={{
+            backgroundColor: selected ? "#e8f0ff" : "#f7f7f7",
+            borderWidth: 1,
+            borderColor: selected ? "#2e6cff" : "#e5e7eb",
+            borderRadius: 10,
+            padding: 12,
+            marginBottom: 8,
+          }}
+        >
+          <Text
+            style={{
+              fontSize: 15,
+              fontWeight: "600",
+              color: selected ? "#2e6cff" : "#333",
+              marginBottom: 2,
+            }}
+          >
+            {group.name}
+          </Text>
+          <Text style={{ fontSize: 12, color: "#666" }}>
+            {formatReminderGroupSchedule(group)}
+          </Text>
+        </Pressable>
+      );
+    })}
+  </View>
+)}
                 <View style={{ gap: 10 }}>
                   <Pressable
                     onPress={savePrayer}
@@ -1771,7 +2021,6 @@ export default function HomeScreen() {
             </Pressable>
           </Pressable>
         </Modal>
-
         <Modal visible={showAnswerNoteModal} transparent animationType="slide">
           <Pressable
             onPress={() => {
@@ -1923,6 +2172,7 @@ export default function HomeScreen() {
           </Pressable>
         </Modal>
       </SafeAreaView>
+      </ImageBackground>
     </GestureHandlerRootView>
   );
 }
