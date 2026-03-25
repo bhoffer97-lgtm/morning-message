@@ -38,6 +38,16 @@ tabBarStyle: {
 >
       <Tabs.Screen
         name="index"
+        listeners={({ navigation }) => ({
+          tabPress: (e) => {
+            if (navigation.isFocused()) {
+              e.preventDefault();
+              navigation.navigate("index", {
+                resetHomeAt: Date.now(),
+              });
+            }
+          },
+        })}
         options={{
           title: "Home",
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="sun.max.fill" color={color} />,

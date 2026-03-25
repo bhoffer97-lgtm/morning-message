@@ -1,4 +1,4 @@
-import { useFocusEffect } from "@react-navigation/native";
+import { useFocusEffect, useRoute } from "@react-navigation/native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -37,6 +37,7 @@ type Entry = {
   answered_at: string | null;
   created_at: string | null;
   reminder_group_id: string | null;
+  needs_read: boolean;
 };
 
 type DailyMessage = {
@@ -441,17 +442,25 @@ export default function HomeScreen() {
   const [currentMessageIndex, setCurrentMessageIndex] = useState(0);
   const [verseText, setVerseText] = useState<string | null>(null);
   const [showVerseModal, setShowVerseModal] = useState(false);
+  const [isJournalFocused, setIsJournalFocused] = useState(false);
   const [showCadenceMenu, setShowCadenceMenu] = useState(false);
   const [activeEntries, setActiveEntries] = useState<Entry[]>([]);
-  const [selectedAIMode, setSelectedAIMode] = useState<"prayer" | "affirmation" | "goal" | "other">("prayer");
+  const [selectedAIMode, setSelectedAIMode] = useState<"prayer" | "affirmation" | "goal" | "reminder">("prayer");
   const [reminderGroups, setReminderGroups] = useState<ReminderGroup[]>([]);
   const [selectedCadenceFilter, setSelectedCadenceFilter] = useState<
     "all" | "daily" | "weekly" | "monthly" | "yearly"
   >("all");
   const [showUngrouped, setShowUngrouped] = useState(true);
 
-  const [newPrayer, setNewPrayer] = useState("");
-  const [expandedEntryId, setExpandedEntryId] = useState<string | null>(null);
+ const [newPrayer, setNewPrayer] = useState("");
+  const [showComposeModal, setShowComposeModal] = useState(false);
+  const [selectedEntry, setSelectedEntry] = useState<UpcomingEntry | null>(null);
+  const [showEntryModal, setShowEntryModal] = useState(false);
+  const [isEditingEntry, setIsEditingEntry] = useState(false);
+  const [editingEntryTitle, setEditingEntryTitle] = useState("");
+  const [editingEntryContent, setEditingEntryContent] = useState("");
+  const [editingEntryReminderGroupId, setEditingEntryReminderGroupId] = useState<string | null>(null);
+  const [isSavingEntryEdit, setIsSavingEntryEdit] = useState(false);
   const [newEntryTitle, setNewEntryTitle] = useState("");
   const [searchText, setSearchText] = useState("");
   const [showSearch, setShowSearch] = useState(false);
@@ -459,7 +468,7 @@ export default function HomeScreen() {
   const [selectedSaveCadence, setSelectedSaveCadence] = useState<
     "daily" | "weekly" | "monthly" | "yearly"
   >("daily");
-    const [showSaveEntryModal, setShowSaveEntryModal] = useState(false);
+  const [showSaveEntryModal, setShowSaveEntryModal] = useState(false);
   const [scrollY, setScrollY] = useState(0);
   const [messageSectionHeight, setMessageSectionHeight] = useState(0);
   const [headerSectionHeight, setHeaderSectionHeight] = useState(0);
@@ -478,6 +487,12 @@ export default function HomeScreen() {
   const inputRef = useRef<TextInput | null>(null);
   const searchInputRef = useRef<TextInput | null>(null);
   const hasAutoScrolledSearchRef = useRef(false);
+  const suppressAutoBrowseModeRef = useRef(false);
+  const route = useRoute();
+  const resetHomeAt =
+    typeof (route.params as { resetHomeAt?: number | string } | undefined)?.resetHomeAt !== "undefined"
+      ? (route.params as { resetHomeAt?: number | string }).resetHomeAt
+      : undefined;
 
   const textFadeAnim = useRef(new Animated.Value(1)).current;
   const textScaleAnim = useRef(new Animated.Value(1)).current;
@@ -502,14 +517,24 @@ const [isFloatingHeaderVisible, setIsFloatingHeaderVisible] = useState(false);
 
 const showFloatingHeader = isBrowseMode || shouldPinFloatingHeader;
 
-    function resetSaveEntryState() {
-    setShowSaveEntryModal(false);
-    setNewEntryTitle("");
-    setSelectedReminderGroupId(null);
-    setSelectedSaveCadence("daily");
-  }
+ function resetSaveEntryState() {
+  setShowSaveEntryModal(false);
+  setNewEntryTitle("");
+  setSelectedReminderGroupId(null);
+  setSelectedSaveCadence("daily");
+}
 
- function openSaveEntryModal() {
+function openComposeModal() {
+  setShowComposeModal(true);
+}
+
+function closeComposeModal() {
+  setShowComposeModal(false);
+  setIsJournalFocused(false);
+  Keyboard.dismiss();
+}
+
+function openSaveEntryModal() {
   if (!newPrayer.trim() || isSavingPrayer) return;
 
   const dailyGroup = reminderGroups.find((group) => group.cadence === "daily");
@@ -517,8 +542,44 @@ const showFloatingHeader = isBrowseMode || shouldPinFloatingHeader;
   setNewEntryTitle((current) => current.trim() || getSuggestedTitle(newPrayer));
   setSelectedSaveCadence("daily");
   setSelectedReminderGroupId(dailyGroup?.id ?? null);
+
+  if (showComposeModal) {
+    setShowComposeModal(false);
+    Keyboard.dismiss();
+    requestAnimationFrame(() => {
+      setShowSaveEntryModal(true);
+    });
+    return;
+  }
+
   setShowSaveEntryModal(true);
 }
+useEffect(() => {
+  if (!showComposeModal) {
+    setIsJournalFocused(false);
+  }
+}, [showComposeModal]);
+  useEffect(() => {
+    if (!resetHomeAt) return;
+
+    suppressAutoBrowseModeRef.current = true;
+    setShowSearch(false);
+    setSearchText("");
+    setSelectedCadenceFilter("all");
+    setIsBrowseMode(false);
+    Keyboard.dismiss();
+
+    requestAnimationFrame(() => {
+      scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+    });
+  }, [resetHomeAt]);
+    useEffect(() => {
+    if (shouldPinFloatingHeader) return;
+
+    if (!isBrowseMode && scrollY >= 40) {
+      setIsBrowseMode(true);
+    }
+  }, [scrollY, isBrowseMode, shouldPinFloatingHeader]);
 
   async function loadMessage() {
     const {
@@ -637,20 +698,20 @@ const showFloatingHeader = isBrowseMode || shouldPinFloatingHeader;
     }
   }
 
-  async function loadEntries() {
- const { data, error } = await supabase
-  .from("entries")
-  .select("id, title, content, status, answered_at, created_at, reminder_group_id")
-  .eq("status", "active")
-  .order("created_at", { ascending: false });
+ async function loadEntries() {
+  const { data, error } = await supabase
+    .from("entries")
+    .select("id, title, content, status, answered_at, created_at, reminder_group_id, needs_read")
+    .eq("status", "active")
+    .order("created_at", { ascending: false });
 
-    if (error) {
-      console.log("Load active entries error:", error.message);
-      return;
-    }
-
-    setActiveEntries((data as Entry[]) ?? []);
+  if (error) {
+    console.log("Load active entries error:", error.message);
+    return;
   }
+
+  setActiveEntries((data as Entry[]) ?? []);
+}
 
   async function loadReminderGroups() {
     const { data, error } = await supabase
@@ -793,7 +854,96 @@ const { error } = await supabase.from("entries").insert({
       },
     ]);
   };
+const openEntry = async (entry: UpcomingEntry) => {
+  setSelectedEntry(entry);
+  setEditingEntryTitle(entry.title?.trim() || "");
+  setEditingEntryContent(entry.content || "");
+  setEditingEntryReminderGroupId(entry.reminder_group_id ?? null);
+  setIsEditingEntry(false);
+  setShowEntryModal(true);
 
+  if (!entry.needs_read) return;
+
+  const readAt = new Date().toISOString();
+
+const { error } = await supabase
+  .from("entries")
+  .update({
+    needs_read: false,
+    last_read_at: readAt,
+  })
+  .eq("id", entry.id);
+
+  if (error) {
+    console.log("Error marking entry as read:", error.message);
+    return;
+  }
+
+  setActiveEntries((current) =>
+  current.map((item) =>
+    item.id === entry.id
+      ? { ...item, needs_read: false, last_read_at: readAt }
+      : item
+  )
+);
+};
+const saveEntryEdit = async () => {
+  if (!selectedEntry) return;
+
+  const nextTitle = editingEntryTitle.trim() || "Untitled Entry";
+  const nextContent = editingEntryContent.trim();
+
+  if (!nextContent) {
+    Alert.alert("Missing entry", "Please enter something before saving.");
+    return;
+  }
+
+  setIsSavingEntryEdit(true);
+
+  const { data, error } = await supabase
+    .from("entries")
+    .update({
+      title: nextTitle,
+      content: nextContent,
+      reminder_group_id: editingEntryReminderGroupId,
+    })
+    .eq("id", selectedEntry.id)
+    .select("id, title, content, status, answered_at, created_at, reminder_group_id, needs_read")
+    .single();
+
+  setIsSavingEntryEdit(false);
+
+  if (error) {
+    Alert.alert("Unable to save", error.message);
+    return;
+  }
+
+  setActiveEntries((current) =>
+    current.map((item) =>
+      item.id === selectedEntry.id
+        ? {
+            ...item,
+            title: data.title,
+            content: data.content,
+            reminder_group_id: data.reminder_group_id,
+          }
+        : item
+    )
+  );
+
+  setSelectedEntry((current) =>
+    current
+      ? {
+          ...current,
+          title: data.title,
+          content: data.content,
+          reminder_group_id: data.reminder_group_id,
+        }
+      : current
+  );
+
+  setIsEditingEntry(false);
+};
   const renderCurrentRightActions = (id: string) => {
     return (
       <View
@@ -1021,7 +1171,6 @@ const { error } = await supabase.from("entries").insert({
       loadEntries();
       loadReminderGroups();
 
-      // Reset scroll to top when screen is focused
       requestAnimationFrame(() => {
         scrollViewRef.current?.scrollTo({ y: 0, animated: false });
       });
@@ -1169,157 +1318,93 @@ const upcomingEntries = useMemo<UpcomingEntry[]>(() => {
               transform: [{ scale: textScaleAnim }],
             }}
           >
- {isFloating ? (
-  <Pressable
-    onPress={() => {
-      scrollViewRef.current?.scrollTo({ y: 260, animated: true });
+            {isFloating ? (
+              <Pressable
+                onPress={() => {
+                  scrollViewRef.current?.scrollTo({ y: 260, animated: true });
 
-      setTimeout(() => {
-        inputRef.current?.focus();
-      }, 300);
-    }}
-    style={{
-      padding: 12,
-      paddingRight: 40,
-      minHeight: 100,
-      justifyContent: "flex-start",
-    }}
-  >
-    <Text
-      style={{
-        color: newPrayer.trim() ? "black" : "#999",
-        lineHeight: 22,
-      }}
-      numberOfLines={4}
-    >
-      {newPrayer.trim()
-        ? newPrayer
-        : "Write what’s on your mind… we’ll turn it into a prayer, goal, or affirmation."}
-    </Text>
-  </Pressable>
-) : (
-  <TextInput
-    ref={inputRef}
-    placeholder="Write what’s on your mind… we’ll turn it into a prayer, goal, or affirmation."
-    value={newPrayer}
-    onChangeText={setNewPrayer}
-    multiline
-    style={{
-      padding: 12,
-      paddingRight: 40,
-      paddingBottom: 34,
-      minHeight: 100,
-      textAlignVertical: "top",
-    }}
-  />
-)}
-
-{!!newPrayer.trim() && !isFloating && (
-  <Pressable
-    onPress={() => {
-      setNewPrayer("");
-      inputRef.current?.focus();
-    }}
-    hitSlop={10}
-    style={{
-      position: "absolute",
-      right: 10,
-      bottom: 10,
-      padding: 2,
-    }}
-  >
-    <Text style={{ fontSize: 16, color: "#777", fontWeight: "600" }}>×</Text>
-  </Pressable>
-)}
-
-<Pressable
-  onPress={handleAIHelp}
-  style={{
-    position: "absolute",
-    right: 10,
-    top: 10,
-    padding: 6,
-  }}
->
-            {isAIWorking ? (
-              <View style={{ flexDirection: "row", gap: 3 }}>
-                <Animated.View
+                  setTimeout(() => {
+                    inputRef.current?.focus();
+                  }, 300);
+                }}
+                style={{
+                  padding: 12,
+                  minHeight: 100,
+                  justifyContent: "flex-start",
+                }}
+              >
+                <Text
                   style={{
-                    width: 4,
-                    height: 4,
-                    borderRadius: 2,
-                    backgroundColor: "#2e6cff",
-                    opacity: dotAnim1,
+                    color: newPrayer.trim() ? "black" : "#999",
+                    lineHeight: 22,
                   }}
-                />
-                <Animated.View
-                  style={{
-                    width: 4,
-                    height: 4,
-                    borderRadius: 2,
-                    backgroundColor: "#2e6cff",
-                    opacity: dotAnim2,
-                  }}
-                />
-                <Animated.View
-                  style={{
-                    width: 4,
-                    height: 4,
-                    borderRadius: 2,
-                    backgroundColor: "#2e6cff",
-                    opacity: dotAnim3,
-                  }}
-                />
-              </View>
+                  numberOfLines={4}
+                >
+                  {newPrayer.trim()
+                    ? newPrayer
+                    : "Write what’s on your mind… we’ll turn it into a prayer, goal, or affirmation."}
+                </Text>
+              </Pressable>
             ) : (
-              <Text style={{ fontSize: 16 }}>✨</Text>
-            )}
-          </Pressable>
-        </Animated.View>
+              <Pressable
+                onPress={openComposeModal}
+                style={{
+                  padding: 12,
+                  minHeight: 100,
+                  justifyContent: "space-between",
+                }}
+              >
+                <Text
+                  style={{
+                    color: newPrayer.trim() ? "black" : "#999",
+                    lineHeight: 22,
+                  }}
+                  numberOfLines={4}
+                >
+                  {newPrayer.trim()
+                    ? newPrayer
+                    : "Write what’s on your mind… we’ll turn it into a prayer, goal, or affirmation."}
+                </Text>
 
-          <View style={{ marginBottom: 16 }}>
-          <Pressable
-            disabled={!newPrayer.trim() || isSavingPrayer}
-            onPress={openSaveEntryModal}
-            style={{
-              backgroundColor:
-                !newPrayer.trim() || isSavingPrayer
-                  ? "rgba(90,90,90,0.72)"
-                  : "rgba(20,20,20,0.98)",
-              borderRadius: 12,
-              paddingVertical: 13,
-              borderWidth: 1,
-              borderColor:
-                !newPrayer.trim() || isSavingPrayer
-                  ? "rgba(255,255,255,0.18)"
-                  : "rgba(255,255,255,0.22)",
-              opacity: isSavingPrayer ? 0.82 : 1,
-            }}
-          >
-            <Text
-              style={{
-                color: "white",
-                textAlign: "center",
-                fontSize: 16,
-                fontWeight: "700",
-              }}
-            >
-              {isSavingPrayer ? "Saving..." : "Save"}
-            </Text>
-          </Pressable>
-        </View>
+                <View
+                  style={{
+                    flexDirection: "row",
+                    justifyContent: "flex-end",
+                    marginTop: 10,
+                  }}
+                >
+                  <View
+                    style={{
+                      backgroundColor: "rgba(255,255,255,0.82)",
+                      borderWidth: 1,
+                      borderColor: "rgba(0,0,0,0.08)",
+                      borderRadius: 16,
+                      paddingHorizontal: 12,
+                      paddingVertical: 7,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 12,
+                        fontWeight: "600",
+                        color: "#374151",
+                      }}
+                    >
+                      Tap to write
+                    </Text>
+                  </View>
+                </View>
+              </Pressable>
+            )}
+        </Animated.View>
         </>
       )}
 
-      {isFloating && (
+       {isFloating && (
         <View
           style={{
-            marginBottom: 22,
-            backgroundColor: "rgba(255,255,255,0.6)",
-            borderRadius: 14,
-            padding: 12,
-            borderWidth: 1,
-            borderColor: "rgba(255,255,255,0.4)",
+            marginBottom: 8,
+            padding: 0,
           }}
         >
           <View
@@ -1330,7 +1415,9 @@ const upcomingEntries = useMemo<UpcomingEntry[]>(() => {
             }}
           >
             <Pressable
-              onPress={() => setShowCadenceMenu(true)}
+              onPress={() => {
+                setShowCadenceMenu(true);
+              }}
               style={{
                 paddingVertical: 9,
                 paddingHorizontal: 13,
@@ -1352,30 +1439,11 @@ const upcomingEntries = useMemo<UpcomingEntry[]>(() => {
               </Text>
             </Pressable>
 
-            <Pressable
-              onPress={() => {
-                setShowSearch(true);
-
-                requestAnimationFrame(() => {
-                  setTimeout(() => {
-                    searchInputRef.current?.focus();
-                  }, 50);
-                });
-              }}
-              style={{
-                borderRadius: 10,
-                paddingVertical: 10,
-                paddingHorizontal: 12,
-                backgroundColor: "rgba(255,255,255,0.92)",
-                borderWidth: 1,
-                borderColor: "#e5e7eb",
-              }}
-            >
-              <Text style={{ fontSize: 14, color: "#666" }}>Search</Text>
-            </Pressable>
+             <View style={{ flex: 1 }} />
 
             <Pressable
-              onPress={() => {
+               onPress={() => {
+                suppressAutoBrowseModeRef.current = true;
                 setShowSearch(false);
                 setSearchText("");
                 setSelectedCadenceFilter("all");
@@ -1391,12 +1459,12 @@ const upcomingEntries = useMemo<UpcomingEntry[]>(() => {
                 borderRadius: 10,
                 paddingVertical: 10,
                 paddingHorizontal: 12,
-                backgroundColor: "rgba(255,255,255,0.92)",
-                borderWidth: 1,
-                borderColor: "#e5e7eb",
+                backgroundColor: "rgba(40,40,40,0.85)",
               }}
             >
-              <Text style={{ fontSize: 14, color: "#666" }}>Close/Return</Text>
+               <Text style={{ fontSize: 14, fontWeight: "600", color: "white" }}>
+                Close/Return
+              </Text>
             </Pressable>
           </View>
 
@@ -1470,24 +1538,29 @@ const upcomingEntries = useMemo<UpcomingEntry[]>(() => {
 <ScrollView
   ref={scrollViewRef}
   keyboardShouldPersistTaps="handled"
+  keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
   showsVerticalScrollIndicator={false}
+  onScroll={(event) => {
+    const nextScrollY = event.nativeEvent.contentOffset.y;
+    setScrollY(nextScrollY);
 
-onScroll={(event) => {
-  const nextScrollY = event.nativeEvent.contentOffset.y;
-  setScrollY(nextScrollY);
+    if (suppressAutoBrowseModeRef.current) {
+      if (nextScrollY <= 8) {
+        suppressAutoBrowseModeRef.current = false;
+      }
+      return;
+    }
 
-  if (
-    !isBrowseMode &&
-    messageSectionHeight > 0 &&
-    headerSectionHeight > 0 &&
-    nextScrollY >= Math.max(140, messageSectionHeight - 40)
-  ) {
-    setIsBrowseMode(true);
-  }
-}}
-
+     if (
+      !isJournalFocused &&
+      !isBrowseMode &&
+      nextScrollY >= 40
+    ) {
+      setIsBrowseMode(true);
+    }
+  }}
   scrollEventThrottle={16}
-  contentContainerStyle={{ paddingBottom: 120 }}
+  contentContainerStyle={{ paddingBottom: 240 }}
 >
   {!showFloatingHeader && (
     <View>
@@ -1697,86 +1770,33 @@ onScroll={(event) => {
                 overshootRight={false}
               >
                 <Pressable
-                  onPress={() =>
-                    setExpandedEntryId((current) =>
-                      current === entry.id ? null : entry.id
-                    )
-                  }
+                  onPress={() => openEntry(entry)}
                   style={{
-                    marginBottom: expandedEntryId === entry.id ? 10 : 4,
-                    paddingVertical: expandedEntryId === entry.id ? 14 : 2,
-                    paddingHorizontal: expandedEntryId === entry.id ? 14 : 0,
-                    borderRadius: 14,
-                    backgroundColor:
-                      expandedEntryId === entry.id
-                        ? "rgba(255,255,255,0.92)"
-                        : "transparent",
-                    borderWidth: expandedEntryId === entry.id ? 1 : 0,
-                    borderColor:
-                      expandedEntryId === entry.id ? "#e5e7eb" : "transparent",
-                    shadowColor: "#000",
-                    shadowOpacity: expandedEntryId === entry.id ? 0.06 : 0,
-                    shadowRadius: 8,
-                    shadowOffset: { width: 0, height: 3 },
-                    elevation: expandedEntryId === entry.id ? 2 : 0,
+                    marginBottom: 4,
+                    paddingVertical: 2,
+                    paddingHorizontal: 0,
                   }}
                 >
-                  {expandedEntryId === entry.id ? (
-                    <>
-                      <Text
-                        style={{
-                          fontSize: 16,
-                          fontWeight: "700",
-                          color: "black",
-                          marginBottom: 10,
-                        }}
-                      >
-                        {entry.title?.trim() || "Untitled Entry"}
-                      </Text>
-
-                      <Text
-                        style={{
-                          fontSize: 14,
-                          lineHeight: 21,
-                          color: "#222",
-                          marginBottom: 10,
-                        }}
-                      >
-                        {entry.content}
-                      </Text>
-
-                      <Text
-                        style={{
-                          fontSize: 12,
-                          color: "#666",
-                        }}
-                      >
-                        {entry.cadence.charAt(0).toUpperCase() + entry.cadence.slice(1)} •{" "}
-                        {formatUpcomingLabel(entry.next_run_at)}
-                      </Text>
-                    </>
-                  ) : (
-                    <View
+                  <View
+                    style={{
+                      alignSelf: "flex-start",
+                      backgroundColor: entry.needs_read ? "rgba(0,0,0,0.82)" : "rgba(255,255,255,0.58)",
+                      borderRadius: 10,
+                      paddingVertical: 6,
+                      paddingHorizontal: 10,
+                    }}
+                  >
+                    <Text
                       style={{
-                        alignSelf: "flex-start",
-                        backgroundColor: "rgba(255,255,255,0.58)",
-                        borderRadius: 10,
-                        paddingVertical: 6,
-                        paddingHorizontal: 10,
+                        fontSize: 16,
+                        fontWeight: "700",
+                        color: entry.needs_read ? "white" : "black",
                       }}
+                      numberOfLines={1}
                     >
-                      <Text
-                        style={{
-                          fontSize: 16,
-                          fontWeight: "700",
-                          color: "black",
-                        }}
-                        numberOfLines={1}
-                      >
-                        {entry.title?.trim() || "Untitled Entry"}
-                      </Text>
-                    </View>
-                  )}
+                      {entry.title?.trim() || "Untitled Entry"}
+                    </Text>
+                  </View>
                 </Pressable>
               </Swipeable>
             ))}
@@ -1797,21 +1817,19 @@ onScroll={(event) => {
           elevation: 50,
         }}
       >
-        <View
+         <View
           style={{
             paddingHorizontal: 20,
             paddingTop: 10,
-            paddingBottom: 14,
+            paddingBottom: 6,
             backgroundColor: "rgba(255,255,255,0.92)",
-            borderBottomLeftRadius: 18,
-            borderBottomRightRadius: 18,
             overflow: "hidden",
-            borderBottomWidth: 1,
+            borderBottomWidth: 0.5,
             borderBottomColor: "#e5e7eb",
             shadowColor: "#000",
-            shadowOpacity: 0.06,
-            shadowRadius: 8,
-            shadowOffset: { width: 0, height: 3 },
+            shadowOpacity: 0.04,
+            shadowRadius: 6,
+            shadowOffset: { width: 0, height: 2 },
           }}
         >
           {renderHomeHeaderContent(true)}
@@ -1821,283 +1839,809 @@ onScroll={(event) => {
   </View>
     
 </KeyboardAvoidingView>
-          <Modal visible={showCadenceMenu} transparent animationType="fade">
+
+<Modal visible={showCadenceMenu} transparent animationType="fade">
   <Pressable
     onPress={() => setShowCadenceMenu(false)}
     style={{
       flex: 1,
-      backgroundColor: "rgba(0,0,0,0.2)",
-      justifyContent: "center",
-      padding: 40,
+      backgroundColor: "rgba(0,0,0,0.18)",
+      justifyContent: "flex-start",
+      paddingTop: 110,
+      paddingLeft: 20,
+      paddingRight: 20,
     }}
   >
-    <View
+    <Pressable
+      onPress={() => {}}
       style={{
+        alignSelf: "flex-start",
         backgroundColor: "white",
-        borderRadius: 12,
+        borderRadius: 14,
         paddingVertical: 8,
+        minWidth: 170,
+        borderWidth: 1,
+        borderColor: "#e5e7eb",
+        shadowColor: "#000",
+        shadowOpacity: 0.08,
+        shadowRadius: 10,
+        shadowOffset: { width: 0, height: 4 },
+        elevation: 3,
       }}
     >
-      {(["all", "daily", "weekly", "monthly", "yearly"] as const).map(
-        (option) => {
-          const labelMap = {
-            all: "All",
-            daily: "Daily",
-            weekly: "Weekly",
-            monthly: "Monthly",
-            yearly: "Yearly",
-          };
-
-          return (
-            <Pressable
-              key={option}
-              onPress={() => {
-                setSelectedCadenceFilter(option);
-                setShowCadenceMenu(false);
-              }}
-              style={{
-                paddingVertical: 12,
-                paddingHorizontal: 16,
-              }}
-            >
-              <Text style={{ fontSize: 15, color: "#333" }}>
-                {labelMap[option]}
-              </Text>
-            </Pressable>
-          );
-        }
-      )}
-    </View>
-  </Pressable>
-</Modal> 
-                <Modal visible={showSaveEntryModal} transparent animationType="slide">
-          <Pressable
-            onPress={resetSaveEntryState}
-            style={{
-              flex: 1,
-              backgroundColor: "rgba(0,0,0,0.35)",
-              justifyContent: "flex-end",
-            }}
-          >
-            <Pressable
-              onPress={() => {}}
-              style={{
-                maxHeight: "85%",
-                backgroundColor: "white",
-                borderTopLeftRadius: 20,
-                borderTopRightRadius: 20,
-                overflow: "hidden",
-              }}
-            >
-              <ScrollView
-                keyboardShouldPersistTaps="handled"
-                contentContainerStyle={{
-                  padding: 24,
-                  paddingBottom: 36,
-                }}
-              >
-                <Text
-                  style={{
-                    fontSize: 22,
-                    fontWeight: "700",
-                    color: "black",
-                    marginBottom: 8,
-                  }}
-                >
-                  Save Entry
-                </Text>
-
-                <Text
-                  style={{
-                    fontSize: 14,
-                    color: "#666",
-                    lineHeight: 20,
-                    marginBottom: 18,
-                  }}
-                >
-                  Adjust the title if you want and choose which reminder this entry belongs to.
-                </Text>
-
-                <Text
-                  style={{
-                    fontSize: 14,
-                    fontWeight: "600",
-                    color: "black",
-                    marginBottom: 8,
-                  }}
-                >
-                  Title
-                </Text>
-
-                <TextInput
-                  value={newEntryTitle}
-                  onChangeText={setNewEntryTitle}
-                  placeholder="Suggested title"
-                  style={{
-                    borderWidth: 1,
-                    borderColor: "#d6d6d6",
-                    borderRadius: 10,
-                    paddingHorizontal: 12,
-                    paddingVertical: 12,
-                    fontSize: 15,
-                    color: "black",
-                    marginBottom: 18,
-                  }}
-                />
-
-                <Text
-                  style={{
-                    fontSize: 14,
-                    fontWeight: "600",
-                    color: "black",
-                    marginBottom: 8,
-                  }}
-                >
-                  Reminder
-                </Text>
-
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={{ paddingRight: 4, marginBottom: 14 }}
-                >
-                  {(["daily", "weekly", "monthly", "yearly"] as const).map((cadence) => {
-                    const selected = selectedSaveCadence === cadence;
-                    const labelMap = {
-                      daily: "Daily",
-                      weekly: "Wkly",
-                      monthly: "Mthly",
-                      yearly: "Yrly",
-                    } as const;
-
-                    return (
-                      <Pressable
-                        key={cadence}
-                        onPress={() => {
-                          setSelectedSaveCadence(cadence);
-                          const firstGroup = reminderGroups.find(
-                            (group) => group.cadence === cadence
-                          );
-                          setSelectedReminderGroupId(firstGroup?.id ?? null);
-                        }}
-                        style={{
-                          paddingVertical: 9,
-                          paddingHorizontal: 14,
-                          borderRadius: 999,
-                          backgroundColor: selected ? "#2e6cff" : "#f3f4f6",
-                          marginRight: 8,
-                        }}
-                      >
-                        <Text
-                          style={{
-                            color: selected ? "white" : "#333",
-                            fontSize: 14,
-                            fontWeight: "600",
-                          }}
-                        >
-                          {labelMap[cadence]}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </ScrollView>
-
-                            {saveModalReminderGroups.length === 0 ? (
-                  <View
-                    style={{
-                      backgroundColor: "#f7f7f7",
-                      borderRadius: 10,
-                      padding: 12,
-                      marginBottom: 18,
-                    }}
-                  >
-                    <Text style={{ fontSize: 14, color: "#666" }}>
-                      No {selectedSaveCadence} reminder groups yet.
-                    </Text>
-                  </View>
-                ) : (
-                  <View style={{ marginBottom: 18 }}>
-    {saveModalReminderGroups.map((group) => {
-      const selected = selectedReminderGroupId === group.id;
-
-      return (
+      {(["all", "daily", "weekly", "monthly", "yearly"] as const).map((option) => (
         <Pressable
-          key={group.id}
-          onPress={() => setSelectedReminderGroupId(group.id)}
+          key={option}
+          onPress={() => {
+            setSelectedCadenceFilter(option);
+            setShowCadenceMenu(false);
+          }}
           style={{
-            backgroundColor: selected ? "#e8f0ff" : "#f7f7f7",
-            borderWidth: 1,
-            borderColor: selected ? "#2e6cff" : "#e5e7eb",
-            borderRadius: 10,
-            padding: 12,
-            marginBottom: 8,
+            paddingVertical: 12,
+            paddingHorizontal: 14,
           }}
         >
           <Text
             style={{
-              fontSize: 15,
-              fontWeight: "600",
-              color: selected ? "#2e6cff" : "#333",
-              marginBottom: 2,
+              fontSize: 14,
+              fontWeight: selectedCadenceFilter === option ? "700" : "500",
+              color: "#111",
             }}
           >
-            {group.name}
-          </Text>
-          <Text style={{ fontSize: 12, color: "#666" }}>
-            {formatReminderGroupSchedule(group)}
+            {option === "all"
+              ? "All"
+              : option.charAt(0).toUpperCase() + option.slice(1)}
           </Text>
         </Pressable>
-      );
-    })}
-  </View>
-)}
-                <View style={{ gap: 10 }}>
-                  <Pressable
-                    onPress={savePrayer}
-                    disabled={isSavingPrayer}
-                    style={{
-                      backgroundColor: "#2e6cff",
-                      borderRadius: 10,
-                      paddingVertical: 14,
-                      opacity: isSavingPrayer ? 0.7 : 1,
-                    }}
-                  >
-                    <Text
-                      style={{
-                        color: "white",
-                        textAlign: "center",
-                        fontSize: 16,
-                        fontWeight: "600",
-                      }}
-                    >
-                      {isSavingPrayer ? "Saving..." : "Save Entry"}
-                    </Text>
-                  </Pressable>
+      ))}
+    </Pressable>
+  </Pressable>
+</Modal>
 
-                  <Pressable
-                    onPress={resetSaveEntryState}
+<Modal visible={showEntryModal} animationType="slide" presentationStyle="fullScreen">
+  <KeyboardAvoidingView
+    style={{ flex: 1, backgroundColor: "white" }}
+    behavior={Platform.OS === "ios" ? "padding" : undefined}
+  >
+    <SafeAreaView style={{ flex: 1, backgroundColor: "white" }}>
+      <View
+        style={{
+          flexDirection: "row",
+          justifyContent: "space-between",
+          alignItems: "center",
+          paddingHorizontal: 18,
+          paddingTop: 8,
+          paddingBottom: 10,
+          borderBottomWidth: 1,
+          borderBottomColor: "#e5e7eb",
+          backgroundColor: "white",
+          gap: 10,
+        }}
+      >
+        <Text
+          style={{
+            flex: 1,
+            fontSize: 22,
+            fontWeight: "700",
+            color: "black",
+            paddingRight: 12,
+          }}
+        >
+          {isEditingEntry ? "Edit Entry" : selectedEntry?.title?.trim() || "Untitled Entry"}
+        </Text>
+
+        {!isEditingEntry && (
+          <Pressable
+            onPress={() => setIsEditingEntry(true)}
+            style={{
+              paddingVertical: 6,
+              paddingHorizontal: 10,
+              borderRadius: 10,
+              backgroundColor: "#eef2ff",
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 13,
+                fontWeight: "600",
+                color: "#3730a3",
+              }}
+            >
+              Edit
+            </Text>
+          </Pressable>
+        )}
+
+        <Pressable
+          onPress={() => {
+            setShowEntryModal(false);
+            setSelectedEntry(null);
+            setIsEditingEntry(false);
+          }}
+          style={{
+            paddingVertical: 6,
+            paddingHorizontal: 10,
+            borderRadius: 10,
+            backgroundColor: "#f3f4f6",
+          }}
+        >
+          <Text
+            style={{
+              fontSize: 13,
+              fontWeight: "600",
+              color: "#333",
+            }}
+          >
+            Close
+          </Text>
+        </Pressable>
+      </View>
+
+      <ScrollView
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{
+          padding: 24,
+          paddingBottom: 36,
+        }}
+      >
+        {!!selectedEntry && !isEditingEntry && (
+          <>
+            <Text
+              style={{
+                fontSize: 14,
+                lineHeight: 22,
+                color: "#222",
+                marginBottom: 14,
+              }}
+            >
+              {selectedEntry.content}
+            </Text>
+
+            <Text
+              style={{
+                fontSize: 12,
+                color: "#666",
+              }}
+            >
+              {selectedEntry.reminder_group_name
+                ? `${selectedEntry.reminder_group_name} • `
+                : ""}
+              {selectedEntry.cadence.charAt(0).toUpperCase() + selectedEntry.cadence.slice(1)}
+              {selectedEntry.next_run_at
+                ? ` • ${formatUpcomingLabel(selectedEntry.next_run_at)}`
+                : ""}
+            </Text>
+          </>
+        )}
+
+        {!!selectedEntry && isEditingEntry && (
+          <>
+            <Text
+              style={{
+                fontSize: 13,
+                fontWeight: "600",
+                color: "#374151",
+                marginBottom: 6,
+              }}
+            >
+              Title
+            </Text>
+            <TextInput
+              value={editingEntryTitle}
+              onChangeText={setEditingEntryTitle}
+              placeholder="Entry title"
+              placeholderTextColor="#9ca3af"
+              style={{
+                borderWidth: 1,
+                borderColor: "#d1d5db",
+                borderRadius: 12,
+                paddingHorizontal: 12,
+                paddingVertical: 10,
+                fontSize: 15,
+                color: "black",
+                marginBottom: 14,
+                backgroundColor: "white",
+              }}
+            />
+
+            <Text
+              style={{
+                fontSize: 13,
+                fontWeight: "600",
+                color: "#374151",
+                marginBottom: 6,
+              }}
+            >
+              Entry
+            </Text>
+            <TextInput
+              value={editingEntryContent}
+              onChangeText={setEditingEntryContent}
+              placeholder="Edit your entry"
+              placeholderTextColor="#9ca3af"
+              multiline
+              textAlignVertical="top"
+              style={{
+                minHeight: 140,
+                borderWidth: 1,
+                borderColor: "#d1d5db",
+                borderRadius: 12,
+                paddingHorizontal: 12,
+                paddingVertical: 12,
+                fontSize: 15,
+                lineHeight: 22,
+                color: "black",
+                marginBottom: 14,
+                backgroundColor: "white",
+              }}
+            />
+
+            <Text
+              style={{
+                fontSize: 13,
+                fontWeight: "600",
+                color: "#374151",
+                marginBottom: 8,
+              }}
+            >
+              Reminder Group
+            </Text>
+
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{ paddingBottom: 8 }}
+              style={{ marginBottom: 18 }}
+            >
+              <Pressable
+                onPress={() => setEditingEntryReminderGroupId(null)}
+                style={{
+                  marginRight: 8,
+                  paddingVertical: 8,
+                  paddingHorizontal: 12,
+                  borderRadius: 999,
+                  backgroundColor:
+                    editingEntryReminderGroupId === null ? "#2563eb" : "#eef2ff",
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 13,
+                    fontWeight: "600",
+                    color: editingEntryReminderGroupId === null ? "white" : "#1e3a8a",
+                  }}
+                >
+                  No Group
+                </Text>
+              </Pressable>
+
+              {reminderGroups.map((group) => (
+                <Pressable
+                  key={group.id}
+                  onPress={() => setEditingEntryReminderGroupId(group.id)}
+                  style={{
+                    marginRight: 8,
+                    paddingVertical: 8,
+                    paddingHorizontal: 12,
+                    borderRadius: 999,
+                    backgroundColor:
+                      editingEntryReminderGroupId === group.id ? "#2563eb" : "#eef2ff",
+                  }}
+                >
+                  <Text
                     style={{
-                      backgroundColor: "#f3f4f6",
-                      borderRadius: 10,
-                      paddingVertical: 14,
+                      fontSize: 13,
+                      fontWeight: "600",
+                      color:
+                        editingEntryReminderGroupId === group.id ? "white" : "#1e3a8a",
                     }}
                   >
-                    <Text
-                      style={{
-                        color: "#333",
-                        textAlign: "center",
-                        fontSize: 16,
-                        fontWeight: "600",
-                      }}
-                    >
-                      Cancel
-                    </Text>
-                  </Pressable>
-                </View>
-              </ScrollView>
-            </Pressable>
+                    {group.name}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+
+            <View
+              style={{
+                flexDirection: "row",
+                gap: 10,
+              }}
+            >
+              <Pressable
+                onPress={() => {
+                  setIsEditingEntry(false);
+                  setEditingEntryTitle(selectedEntry.title?.trim() || "");
+                  setEditingEntryContent(selectedEntry.content || "");
+                  setEditingEntryReminderGroupId(selectedEntry.reminder_group_id ?? null);
+                }}
+                style={{
+                  flex: 1,
+                  paddingVertical: 12,
+                  borderRadius: 12,
+                  backgroundColor: "#f3f4f6",
+                  alignItems: "center",
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 14,
+                    fontWeight: "600",
+                    color: "#374151",
+                  }}
+                >
+                  Cancel
+                </Text>
+              </Pressable>
+
+              <Pressable
+                onPress={saveEntryEdit}
+                disabled={isSavingEntryEdit}
+                style={{
+                  flex: 1,
+                  paddingVertical: 12,
+                  borderRadius: 12,
+                  backgroundColor: isSavingEntryEdit ? "#93c5fd" : "#2563eb",
+                  alignItems: "center",
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 14,
+                    fontWeight: "700",
+                    color: "white",
+                  }}
+                >
+                  {isSavingEntryEdit ? "Saving..." : "Save Changes"}
+                </Text>
+              </Pressable>
+            </View>
+          </>
+        )}
+      </ScrollView>
+    </SafeAreaView>
+  </KeyboardAvoidingView>
+</Modal>
+
+<Modal visible={showComposeModal} animationType="slide" presentationStyle="fullScreen">
+  <KeyboardAvoidingView
+    style={{ flex: 1, backgroundColor: "white" }}
+    behavior={Platform.OS === "ios" ? "padding" : undefined}
+  >
+    <SafeAreaView style={{ flex: 1, backgroundColor: "white" }}>
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+          paddingHorizontal: 18,
+          paddingTop: 8,
+          paddingBottom: 10,
+          borderBottomWidth: 1,
+          borderBottomColor: "#e5e7eb",
+          backgroundColor: "white",
+        }}
+      >
+        <Pressable
+          onPress={() => {
+            closeComposeModal();
+            setIsJournalFocused(false);
+            Keyboard.dismiss();
+          }}
+          style={{
+            paddingVertical: 8,
+            paddingHorizontal: 10,
+            borderRadius: 10,
+            backgroundColor: "#f3f4f6",
+          }}
+        >
+          <Text
+            style={{
+              fontSize: 13,
+              fontWeight: "600",
+              color: "#374151",
+            }}
+          >
+            Close
+          </Text>
+        </Pressable>
+
+        <Text
+          style={{
+            fontSize: 20,
+            fontWeight: "700",
+            color: "black",
+          }}
+        >
+          Write Entry
+        </Text>
+
+        <View style={{ width: 54 }} />
+      </View>
+
+      <View
+        style={{
+          flexDirection: "row",
+          justifyContent: "flex-end",
+          alignItems: "center",
+          gap: 10,
+          paddingHorizontal: 16,
+          paddingTop: 12,
+          paddingBottom: 10,
+          flexWrap: "wrap",
+          backgroundColor: "white",
+        }}
+      >
+        <Pressable
+          onPress={handleAIHelp}
+          hitSlop={10}
+          style={{
+            minHeight: 36,
+            borderRadius: 18,
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: "rgba(255,255,255,0.95)",
+            borderWidth: 1,
+            borderColor: "rgba(0,0,0,0.08)",
+            paddingHorizontal: 12,
+          }}
+        >
+          {isAIWorking ? (
+            <View style={{ flexDirection: "row", gap: 3 }}>
+              <Animated.View
+                style={{
+                  width: 4,
+                  height: 4,
+                  borderRadius: 2,
+                  backgroundColor: "#2e6cff",
+                  opacity: dotAnim1,
+                }}
+              />
+              <Animated.View
+                style={{
+                  width: 4,
+                  height: 4,
+                  borderRadius: 2,
+                  backgroundColor: "#2e6cff",
+                  opacity: dotAnim2,
+                }}
+              />
+              <Animated.View
+                style={{
+                  width: 4,
+                  height: 4,
+                  borderRadius: 2,
+                  backgroundColor: "#2e6cff",
+                  opacity: dotAnim3,
+                }}
+              />
+            </View>
+          ) : (
+            <Text
+              style={{
+                fontSize: 13,
+                fontWeight: "600",
+                color: "#374151",
+              }}
+            >
+              ✨ AI help write
+            </Text>
+          )}
+        </Pressable>
+
+        {!!newPrayer.trim() && (
+          <Pressable
+            onPress={openSaveEntryModal}
+            hitSlop={10}
+            style={{
+              minHeight: 36,
+              borderRadius: 18,
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor: "rgba(46,108,255,0.16)",
+              borderWidth: 1,
+              borderColor: "rgba(46,108,255,0.18)",
+              paddingHorizontal: 14,
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 13,
+                color: "#2e6cff",
+                fontWeight: "700",
+              }}
+            >
+              ✓ Save
+            </Text>
           </Pressable>
-        </Modal>
+        )}
+
+        {!!newPrayer.trim() && (
+          <Pressable
+            onPress={() => {
+              setNewPrayer("");
+              inputRef.current?.focus();
+            }}
+            hitSlop={10}
+            style={{
+              minHeight: 36,
+              borderRadius: 18,
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor: "rgba(0,0,0,0.08)",
+              borderWidth: 1,
+              borderColor: "rgba(0,0,0,0.06)",
+              paddingHorizontal: 14,
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 13,
+                color: "#6b7280",
+                fontWeight: "600",
+              }}
+            >
+              × Clear
+            </Text>
+          </Pressable>
+        )}
+      </View>
+
+      <View style={{ flex: 1, paddingHorizontal: 16, paddingBottom: 16 }}>
+        <TextInput
+          ref={inputRef}
+          placeholder="Write what’s on your mind… we’ll turn it into a prayer, goal, or affirmation."
+          value={newPrayer}
+          onChangeText={setNewPrayer}
+          multiline
+          scrollEnabled
+          autoFocus
+          onFocus={() => setIsJournalFocused(true)}
+          onBlur={() => setIsJournalFocused(false)}
+          style={{
+            flex: 1,
+            borderWidth: 1,
+            borderColor: "#d1d5db",
+            borderRadius: 16,
+            backgroundColor: "#fafafa",
+            padding: 14,
+            fontSize: 15,
+            lineHeight: 22,
+            color: "black",
+            textAlignVertical: "top",
+          }}
+        />
+      </View>
+    </SafeAreaView>
+  </KeyboardAvoidingView>
+</Modal>
+
+<Modal visible={showSaveEntryModal} transparent animationType="slide">
+  <Pressable
+    onPress={resetSaveEntryState}
+    style={{
+      flex: 1,
+      backgroundColor: "rgba(0,0,0,0.35)",
+      justifyContent: "flex-end",
+    }}
+  >
+    <Pressable
+      onPress={() => {}}
+      style={{
+        backgroundColor: "white",
+        borderTopLeftRadius: 20,
+        borderTopRightRadius: 20,
+        padding: 24,
+        paddingBottom: 20,
+        maxHeight: "82%",
+      }}
+    >
+      <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+        <Text
+          style={{
+            fontSize: 22,
+            fontWeight: "700",
+            color: "black",
+            marginBottom: 16,
+          }}
+        >
+          Save Entry
+        </Text>
+
+        <Text
+          style={{
+            fontSize: 13,
+            fontWeight: "600",
+            color: "#374151",
+            marginBottom: 6,
+          }}
+        >
+          Title
+        </Text>
+
+        <TextInput
+          value={newEntryTitle}
+          onChangeText={setNewEntryTitle}
+          placeholder="Entry title"
+          placeholderTextColor="#9ca3af"
+          style={{
+            borderWidth: 1,
+            borderColor: "#d1d5db",
+            borderRadius: 12,
+            paddingHorizontal: 12,
+            paddingVertical: 10,
+            fontSize: 15,
+            color: "black",
+            marginBottom: 16,
+            backgroundColor: "white",
+          }}
+        />
+
+        <Text
+          style={{
+            fontSize: 13,
+            fontWeight: "600",
+            color: "#374151",
+            marginBottom: 8,
+          }}
+        >
+          Cadence
+        </Text>
+
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ paddingBottom: 8 }}
+          style={{ marginBottom: 16 }}
+        >
+          {(["daily", "weekly", "monthly", "yearly"] as const).map((cadence) => (
+            <Pressable
+              key={cadence}
+              onPress={() => {
+                setSelectedSaveCadence(cadence);
+                const firstMatchingGroup = reminderGroups.find(
+                  (group) => group.cadence === cadence
+                );
+                setSelectedReminderGroupId(firstMatchingGroup?.id ?? null);
+              }}
+              style={{
+                marginRight: 8,
+                paddingVertical: 8,
+                paddingHorizontal: 12,
+                borderRadius: 999,
+                backgroundColor:
+                  selectedSaveCadence === cadence ? "#2563eb" : "#eef2ff",
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 13,
+                  fontWeight: "600",
+                  color: selectedSaveCadence === cadence ? "white" : "#1e3a8a",
+                }}
+              >
+                {cadence.charAt(0).toUpperCase() + cadence.slice(1)}
+              </Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+
+        <Text
+          style={{
+            fontSize: 13,
+            fontWeight: "600",
+            color: "#374151",
+            marginBottom: 8,
+          }}
+        >
+          Reminder Group
+        </Text>
+
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ paddingBottom: 8 }}
+          style={{ marginBottom: 20 }}
+        >
+          <Pressable
+            onPress={() => setSelectedReminderGroupId(null)}
+            style={{
+              marginRight: 8,
+              paddingVertical: 8,
+              paddingHorizontal: 12,
+              borderRadius: 999,
+              backgroundColor:
+                selectedReminderGroupId === null ? "#2563eb" : "#eef2ff",
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 13,
+                fontWeight: "600",
+                color: selectedReminderGroupId === null ? "white" : "#1e3a8a",
+              }}
+            >
+              No Group
+            </Text>
+          </Pressable>
+
+          {saveModalReminderGroups.map((group) => (
+            <Pressable
+              key={group.id}
+              onPress={() => setSelectedReminderGroupId(group.id)}
+              style={{
+                marginRight: 8,
+                paddingVertical: 8,
+                paddingHorizontal: 12,
+                borderRadius: 999,
+                backgroundColor:
+                  selectedReminderGroupId === group.id ? "#2563eb" : "#eef2ff",
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 13,
+                  fontWeight: "600",
+                  color:
+                    selectedReminderGroupId === group.id ? "white" : "#1e3a8a",
+                }}
+              >
+                {group.name}
+              </Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+
+        <View style={{ flexDirection: "row", gap: 10 }}>
+          <Pressable
+            onPress={resetSaveEntryState}
+            style={{
+              flex: 1,
+              paddingVertical: 12,
+              borderRadius: 12,
+              backgroundColor: "#f3f4f6",
+              alignItems: "center",
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 14,
+                fontWeight: "600",
+                color: "#374151",
+              }}
+            >
+              Cancel
+            </Text>
+          </Pressable>
+
+          <Pressable
+            onPress={savePrayer}
+            disabled={isSavingPrayer}
+            style={{
+              flex: 1,
+              paddingVertical: 12,
+              borderRadius: 12,
+              backgroundColor: isSavingPrayer ? "#93c5fd" : "#2563eb",
+              alignItems: "center",
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 14,
+                fontWeight: "700",
+                color: "white",
+              }}
+            >
+              {isSavingPrayer ? "Saving..." : "Save"}
+            </Text>
+          </Pressable>
+        </View>
+      </ScrollView>
+    </Pressable>
+  </Pressable>
+</Modal>
+
         <Modal visible={showAnswerNoteModal} transparent animationType="slide">
           <Pressable
             onPress={() => {

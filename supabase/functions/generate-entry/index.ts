@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-type AIWriteMode = "prayer" | "affirmation" | "goal" | "other";
+type AIWriteMode = "prayer" | "affirmation" | "goal" | "reminder";
 
 
 function countIntendedSentences(text: string) {
@@ -55,11 +55,14 @@ For goals:
 - When natural, a humble tone that reflects wisdom, discipline, trust, or purpose is good.
 `
       : `
-For personal writing:
-- Keep it clear, natural, and grounded.
+      : `
+For reminders:
+- Write it like a clear personal reminder the user would want to revisit later.
+- Keep it practical, concise, and natural.
 - Preserve the user's meaning and tone.
 - Do not force it into a prayer, affirmation, or goal format.
-- Keep it warm, sincere, and polished without sounding dramatic.
+- It should read like something worth remembering or acting on.
+- Keep it warm and polished without sounding dramatic.
 `;
 
   return `
@@ -325,70 +328,36 @@ function finalizeAITitle(originalText: string, aiTitle: string) {
   if (!original && suggested) return suggested;
   if (!original) return "New Entry";
 
-  const lowerOriginal = original.toLowerCase();
-  const lowerTitle = suggested.toLowerCase();
+  const cleaned = suggested
+    .replace(/^["'“”‘’]+|["'“”‘’]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 
-  const weakTitleStarts = [
-    "grant me",
-    "guide me",
-    "help me",
-    "help us",
-    "lord please",
-    "dear lord",
-    "dear god",
-    "prayer",
-    "new entry",
-  ];
-
-  const isWeakGenericTitle =
-    !suggested ||
-    weakTitleStarts.some((start) => lowerTitle.startsWith(start));
-
-  const subjectRules = [
-    {
-      keywords: ["manual transmission", "stick shift", "manual car"],
-      title: "Learning Manual Driving",
-    },
-    {
-      keywords: ["guitar"],
-      title: lowerOriginal.includes("patience") ? "Patience for Guitar" : "Learning Guitar",
-    },
-    {
-      keywords: ["drive", "driving"],
-      title: "Learning to Drive",
-    },
-    {
-      keywords: ["marriage", "wife", "husband"],
-      title: "Strength for Marriage",
-    },
-    {
-      keywords: ["job", "work", "career"],
-      title: "Wisdom for Work",
-    },
-    {
-      keywords: ["anxiety", "fear", "worry", "worried"],
-      title: "Peace over Anxiety",
-    },
-    {
-      keywords: ["patience"],
-      title: "Growing in Patience",
-    },
-  ];
-
-  for (const rule of subjectRules) {
-    const matchesOriginal = rule.keywords.some((keyword) => lowerOriginal.includes(keyword));
-    const titleIncludesSubject = rule.keywords.some((keyword) => lowerTitle.includes(keyword));
-
-    if (matchesOriginal && (isWeakGenericTitle || !titleIncludesSubject)) {
-      return rule.title;
-    }
-  }
-
-  if (isWeakGenericTitle) {
+  if (!cleaned) {
     return "New Entry";
   }
 
-  return suggested;
+  const lowerTitle = cleaned.toLowerCase();
+
+  const weakTitles = new Set([
+    "new entry",
+    "prayer",
+    "affirmation",
+    "goal",
+    "reminder",
+    "help me",
+    "help us",
+    "guide me",
+    "lord please",
+    "dear lord",
+    "dear god",
+  ]);
+
+  if (weakTitles.has(lowerTitle)) {
+    return "New Entry";
+  }
+
+  return cleaned;
 }
 serve(async (req) => {
   try {

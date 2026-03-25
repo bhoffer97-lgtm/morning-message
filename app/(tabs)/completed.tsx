@@ -57,13 +57,14 @@ function cadenceMatchesFilter(cadence: string | null | undefined, filter: Cadenc
 }
 
 export default function CompletedScreen() {
-  const [answeredEntries, setAnsweredEntries] = useState<any[]>([]);
-  const [searchText, setSearchText] = useState("");
-  const [selectedCadence, setSelectedCadence] = useState<CadenceFilter>("all");
-  const [showCadenceMenu, setShowCadenceMenu] = useState(false);
-  const [isSearchFocused, setIsSearchFocused] = useState(false);
-  const scrollViewRef = useRef<ScrollView | null>(null);
-
+    const [answeredEntries, setAnsweredEntries] = useState<any[]>([]);
+    const [searchText, setSearchText] = useState("");
+    const [selectedCadence, setSelectedCadence] = useState<CadenceFilter>("all");
+    const [showCadenceMenu, setShowCadenceMenu] = useState(false);
+    const [selectedArchivedEntry, setSelectedArchivedEntry] = useState<any | null>(null);
+    const [showArchivedEntryModal, setShowArchivedEntryModal] = useState(false);
+    const [isSearchFocused, setIsSearchFocused] = useState(false);
+    const scrollViewRef = useRef<ScrollView | null>(null);
   async function loadCompletedEntries() {
     const { data, error } = await supabase
       .from("entries")
@@ -110,15 +111,18 @@ export default function CompletedScreen() {
   };
 
   const deleteEntry = async (id: string) => {
-    const { error } = await supabase.from("entries").delete().eq("id", id);
+  console.log("Attempting to delete archived entry:", id);
 
-    if (error) {
-      console.log("Error deleting entry:", error.message);
-      return;
-    }
+  const { error } = await supabase.from("entries").delete().eq("id", id);
 
-    await loadCompletedEntries();
-  };
+  if (error) {
+    console.log("Error deleting archived entry:", error);
+    Alert.alert("Unable to delete", error.message);
+    return;
+  }
+
+  setAnsweredEntries((current) => current.filter((entry) => entry.id !== id));
+};
 
   const confirmDeleteEntry = (id: string) => {
     Alert.alert("Delete entry?", "This will permanently delete this entry.", [
@@ -262,23 +266,58 @@ export default function CompletedScreen() {
               }}
             >
               {/* Search */}
-              <TextInput
-                placeholder="Search..."
-                placeholderTextColor="rgba(0,0,0,0.45)"
-                value={searchText}
-                onChangeText={setSearchText}
-                onFocus={() => setIsSearchFocused(true)}
-                onBlur={() => setIsSearchFocused(false)}
+              <View
                 style={{
                   flex: 1,
+                  flexDirection: "row",
+                  alignItems: "center",
                   backgroundColor: "rgba(255,255,255,0.92)",
                   borderRadius: 14,
-                  paddingHorizontal: 14,
-                  paddingVertical: 12,
-                  fontSize: 15,
-                  color: "black",
+                  paddingLeft: 14,
+                  paddingRight: 10,
                 }}
-              />
+              >
+                <TextInput
+                  placeholder="Search..."
+                  placeholderTextColor="rgba(0,0,0,0.45)"
+                  value={searchText}
+                  onChangeText={setSearchText}
+                  onFocus={() => setIsSearchFocused(true)}
+                  onBlur={() => setIsSearchFocused(false)}
+                  style={{
+                    flex: 1,
+                    paddingVertical: 12,
+                    fontSize: 15,
+                    color: "black",
+                  }}
+                />
+
+                {searchText.trim().length > 0 ? (
+                  <Pressable
+                    onPress={() => setSearchText("")}
+                    hitSlop={10}
+                    style={{
+                      width: 22,
+                      height: 22,
+                      borderRadius: 11,
+                      alignItems: "center",
+                      justifyContent: "center",
+                      backgroundColor: "rgba(0,0,0,0.10)",
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 14,
+                        fontWeight: "700",
+                        color: "#374151",
+                        lineHeight: 14,
+                      }}
+                    >
+                      ×
+                    </Text>
+                  </Pressable>
+                ) : null}
+              </View>
 
               {/* Dropdown */}
               <Pressable
@@ -327,71 +366,65 @@ export default function CompletedScreen() {
                 const hasTitle = !!entry.title?.trim();
 
                 return (
-                  <Swipeable
-                    key={entry.id}
-                    renderRightActions={() => renderCompletedRightActions(entry.id)}
-                    overshootRight={false}
-                  >
+                <Swipeable
+                  key={entry.id}
+                  renderRightActions={() => renderCompletedRightActions(entry.id)}
+                  overshootRight={false}
+                >
+                <Pressable
+                  onPress={() => {
+                    setSelectedArchivedEntry(entry);
+                    setShowArchivedEntryModal(true);
+                  }}
+                  style={{
+                    paddingVertical: 8,
+                    marginBottom: 8,
+                  }}
+                >
                     <View
                       style={{
-                        backgroundColor: "rgba(255,255,255,0.88)",
-                        borderRadius: 18,
-                        padding: 16,
-                        marginBottom: 12,
-                        borderLeftWidth: 4,
-                        borderLeftColor: "#3b6df6",
+                        alignSelf: "flex-start",
+                        backgroundColor: "rgba(255,255,255,0.68)",
+                        borderRadius: 10,
+                        paddingVertical: 6,
+                        paddingHorizontal: 10,
+                        marginBottom: 8,
                       }}
                     >
-                      {hasTitle ? (
-                        <Text
-                          style={{
-                            fontSize: 14,
-                            fontWeight: "700",
-                            color: "#1f1f1f",
-                            marginBottom: 4,
-                          }}
-                          numberOfLines={1}
-                        >
-                          {entry.title}
-                        </Text>
-                      ) : null}
-
                       <Text
                         style={{
-                          fontSize: hasTitle ? 17 : 18,
-                          fontWeight: hasTitle ? "400" : "600",
-                          color: "#2d2d2d",
-                          lineHeight: hasTitle ? 24 : 26,
+                          fontSize: 16,
+                          fontWeight: "700",
+                          color: "#1f1f1f",
                         }}
+                        numberOfLines={1}
                       >
-                        {entry.content}
+                        {entry.title?.trim() || "Untitled Entry"}
                       </Text>
+                    </View>
 
-                      {entry.answer_notes ? (
-                        <Text
-                          style={{
-                            marginTop: 10,
-                            fontSize: 13,
-                            color: "#555",
-                            lineHeight: 19,
-                            fontStyle: "italic",
-                          }}
-                        >
-                          Reflection: {entry.answer_notes}
-                        </Text>
-                      ) : null}
-
+                    <View
+                      style={{
+                        alignSelf: "flex-start",
+                        backgroundColor: "rgba(31,31,31,0.72)",
+                        borderRadius: 10,
+                        paddingVertical: 4,
+                        paddingHorizontal: 8,
+                      }}
+                    >
                       <Text
                         style={{
-                          marginTop: 10,
-                          fontSize: 13,
-                          color: "#6a6a6a",
+                          fontSize: 12,
+                          fontWeight: "600",
+                          color: "white",
                         }}
+                        numberOfLines={1}
                       >
                         {cadenceLabel} • {getArchivedText(entry.answered_at, entry.created_at)}
                       </Text>
                     </View>
-                  </Swipeable>
+                  </Pressable>
+                </Swipeable>
                 );
               })}
 
@@ -436,6 +469,127 @@ export default function CompletedScreen() {
               )}
             </View>
           </ScrollView>
+
+<Modal visible={showArchivedEntryModal} transparent animationType="slide">
+  <Pressable
+    onPress={() => {
+      setShowArchivedEntryModal(false);
+      setSelectedArchivedEntry(null);
+    }}
+    style={{
+      flex: 1,
+      backgroundColor: "rgba(0,0,0,0.35)",
+      justifyContent: "flex-end",
+    }}
+  >
+    <Pressable
+      onPress={() => {}}
+      style={{
+        maxHeight: "82%",
+        backgroundColor: "white",
+        borderTopLeftRadius: 20,
+        borderTopRightRadius: 20,
+        overflow: "hidden",
+      }}
+    >
+      <ScrollView
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={{
+          padding: 24,
+          paddingBottom: 36,
+        }}
+      >
+        <View
+          style={{
+            flexDirection: "row",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: 14,
+            gap: 10,
+          }}
+        >
+          <Text
+            style={{
+              flex: 1,
+              fontSize: 22,
+              fontWeight: "700",
+              color: "black",
+              paddingRight: 12,
+            }}
+          >
+            {selectedArchivedEntry?.title?.trim() || "Untitled Entry"}
+          </Text>
+
+          <Pressable
+            onPress={() => {
+              setShowArchivedEntryModal(false);
+              setSelectedArchivedEntry(null);
+            }}
+            style={{
+              paddingVertical: 6,
+              paddingHorizontal: 10,
+              borderRadius: 10,
+              backgroundColor: "#f3f4f6",
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 13,
+                fontWeight: "600",
+                color: "#333",
+              }}
+            >
+              Close
+            </Text>
+          </Pressable>
+        </View>
+
+        {!!selectedArchivedEntry && (
+          <>
+            <Text
+              style={{
+                fontSize: 14,
+                lineHeight: 22,
+                color: "#222",
+                marginBottom: 14,
+              }}
+            >
+              {selectedArchivedEntry.content}
+            </Text>
+
+            {selectedArchivedEntry.answer_notes ? (
+              <Text
+                style={{
+                  marginBottom: 14,
+                  fontSize: 13,
+                  color: "#555",
+                  lineHeight: 20,
+                  fontStyle: "italic",
+                }}
+              >
+                Reflection: {selectedArchivedEntry.answer_notes}
+              </Text>
+            ) : null}
+
+            <Text
+              style={{
+                fontSize: 12,
+                color: "#666",
+              }}
+            >
+              {getCadenceLabel(
+                Array.isArray(selectedArchivedEntry.reminder_groups)
+                  ? selectedArchivedEntry.reminder_groups[0]?.cadence
+                  : selectedArchivedEntry.reminder_groups?.cadence
+              )}{" "}
+              • {getArchivedText(selectedArchivedEntry.answered_at, selectedArchivedEntry.created_at)}
+            </Text>
+          </>
+        )}
+      </ScrollView>
+    </Pressable>
+  </Pressable>
+</Modal>
 
           {/* ===== DROPDOWN MODAL (UNCHANGED) ===== */}
           <Modal visible={showCadenceMenu} transparent animationType="fade">
