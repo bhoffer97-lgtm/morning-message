@@ -29,13 +29,10 @@ const morningImages = [
   require("../../assets/images/morning-nature-4.jpg"),
 ];
 
-type EntryType = "prayer" | "gratitude" | "affirmation" | "goal";
-
 type Entry = {
   id: string;
   title: string | null;
   content: string;
-  type: EntryType;
   status: string;
   answered_at: string | null;
   created_at: string | null;
@@ -69,13 +66,6 @@ type UpcomingEntry = Entry & {
   reminder_group_name: string;
 };
 
-
-const ENTRY_TYPE_CONFIG: { key: EntryType; label: string; icon: string }[] = [
-  { key: "prayer", label: "Prayer", icon: "🙏" },
-  { key: "gratitude", label: "Gratitude", icon: "❤️" },
-  { key: "affirmation", label: "Affirmation", icon: "✨" },
-  { key: "goal", label: "Goal", icon: "🎯" },
-];
 
 function getEntryTypeStyles(type: string) {
   switch (type) {
@@ -122,63 +112,116 @@ function getEntryTypeIcon(type: string) {
   }
 }
 
-function getArchiveActionLabel(type: EntryType) {
-  switch (type) {
-    case "prayer":
-      return "Answered";
-    case "goal":
-      return "Done";
-    case "gratitude":
-    case "affirmation":
-    default:
-      return "Archive";
-  }
+function getArchiveActionLabel() {
+  return "Archive";
 }
 
-function getSuggestedTitle(text: string, type: EntryType) {
+function formatLocalDate(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getSuggestedTitle(text: string) {
   const cleaned = text.replace(/\s+/g, " ").trim();
 
   if (!cleaned) {
-    switch (type) {
-      case "prayer":
-        return "New Prayer";
-      case "gratitude":
-        return "New Gratitude";
-      case "affirmation":
-        return "New Affirmation";
-      case "goal":
-        return "New Goal";
-      default:
-        return "New Entry";
+    return "New Entry";
+  }
+
+  const normalized = cleaned
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/\s+/g, " ");
+
+  const leadingPatterns = [
+    /^lord[, ]+/i,
+    /^dear lord[, ]+/i,
+    /^dear god[, ]+/i,
+    /^god[, ]+/i,
+    /^jesus[, ]+/i,
+    /^please[, ]+/i,
+    /^i pray for\s+/i,
+    /^prayer for\s+/i,
+    /^help me\s+/i,
+    /^help us\s+/i,
+    /^give me\s+/i,
+    /^give us\s+/i,
+    /^please help me\s+/i,
+    /^please help us\s+/i,
+    /^i want to\s+/i,
+    /^i need to\s+/i,
+    /^i need\s+/i,
+    /^i am praying for\s+/i,
+    /^i'm praying for\s+/i,
+    /^thank you for\s+/i,
+    /^thank you\s+/i,
+  ];
+
+  let working = normalized;
+
+  for (const pattern of leadingPatterns) {
+    working = working.replace(pattern, "");
+  }
+
+  working = working
+    .replace(/[.!?]+$/g, "")
+    .replace(/^(the|a|an)\s+/i, "")
+    .trim();
+
+  if (!working) {
+    working = normalized.replace(/[.!?]+$/g, "").trim();
+  }
+
+  const words = working
+    .replace(/[^\w\s'-]/g, "")
+    .split(" ")
+    .filter(Boolean);
+
+  if (words.length === 0) {
+    return "New Entry";
+  }
+
+  const stopWords = new Set([
+    "the",
+    "a",
+    "an",
+    "and",
+    "or",
+    "but",
+    "for",
+    "to",
+    "of",
+    "in",
+    "on",
+    "at",
+    "with",
+    "my",
+    "our",
+    "your",
+    "his",
+    "her",
+    "their",
+  ]);
+
+  let selected = words.slice(0, 6);
+
+  if (selected.length > 3) {
+    while (
+      selected.length > 0 &&
+      stopWords.has(selected[selected.length - 1].toLowerCase())
+    ) {
+      selected = selected.slice(0, -1);
     }
   }
 
-  const words = cleaned
-    .replace(/[^\w\s']/g, "")
-    .split(" ")
-    .filter(Boolean)
-    .slice(0, 5);
-
-  const title = words
+  const title = selected
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-    .join(" ");
+    .join(" ")
+    .trim();
 
-  if (title.length > 0) {
-    return title;
-  }
-
-  switch (type) {
-    case "prayer":
-      return "New Prayer";
-    case "gratitude":
-      return "New Gratitude";
-    case "affirmation":
-      return "New Affirmation";
-    case "goal":
-      return "New Goal";
-    default:
-      return "New Entry";
-  }
+  return title || "New Entry";
 }
 
 function formatReminderGroupSubtitle(group: ReminderGroup) {
@@ -400,6 +443,7 @@ export default function HomeScreen() {
   const [showVerseModal, setShowVerseModal] = useState(false);
   const [showCadenceMenu, setShowCadenceMenu] = useState(false);
   const [activeEntries, setActiveEntries] = useState<Entry[]>([]);
+  const [selectedAIMode, setSelectedAIMode] = useState<"prayer" | "affirmation" | "goal" | "other">("prayer");
   const [reminderGroups, setReminderGroups] = useState<ReminderGroup[]>([]);
   const [selectedCadenceFilter, setSelectedCadenceFilter] = useState<
     "all" | "daily" | "weekly" | "monthly" | "yearly"
@@ -407,10 +451,10 @@ export default function HomeScreen() {
   const [showUngrouped, setShowUngrouped] = useState(true);
 
   const [newPrayer, setNewPrayer] = useState("");
+  const [expandedEntryId, setExpandedEntryId] = useState<string | null>(null);
   const [newEntryTitle, setNewEntryTitle] = useState("");
   const [searchText, setSearchText] = useState("");
   const [showSearch, setShowSearch] = useState(false);
-  const [selectedEntryType, setSelectedEntryType] = useState<EntryType>("prayer");
   const [selectedReminderGroupId, setSelectedReminderGroupId] = useState<string | null>(null);
   const [selectedSaveCadence, setSelectedSaveCadence] = useState<
     "daily" | "weekly" | "monthly" | "yearly"
@@ -428,7 +472,7 @@ export default function HomeScreen() {
   const [answerNoteText, setAnswerNoteText] = useState("");
   const [entryToCompleteId, setEntryToCompleteId] = useState<string | null>(null);
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
-
+  const [isBrowseMode, setIsBrowseMode] = useState(false);
   const scrollViewRef = useRef<ScrollView | null>(null);
   const messageScrollRef = useRef<ScrollView | null>(null);
   const inputRef = useRef<TextInput | null>(null);
@@ -454,11 +498,9 @@ const hasActiveSearch = searchText.trim().length > 0;
 const hasActiveFilter = selectedCadenceFilter !== "all";
 const shouldPinFloatingHeader = hasActiveSearch || hasActiveFilter;
 
-const showFloatingHeader =
-  (messageSectionHeight > 0 &&
-    headerSectionHeight > 0 &&
-    scrollY >= Math.max(140, messageSectionHeight - 40)) ||
-  shouldPinFloatingHeader;
+const [isFloatingHeaderVisible, setIsFloatingHeaderVisible] = useState(false);
+
+const showFloatingHeader = isBrowseMode || shouldPinFloatingHeader;
 
     function resetSaveEntryState() {
     setShowSaveEntryModal(false);
@@ -467,16 +509,16 @@ const showFloatingHeader =
     setSelectedSaveCadence("daily");
   }
 
-    function openSaveEntryModal() {
-    if (!newPrayer.trim() || isSavingPrayer) return;
+ function openSaveEntryModal() {
+  if (!newPrayer.trim() || isSavingPrayer) return;
 
-    const dailyGroup = reminderGroups.find((group) => group.cadence === "daily");
+  const dailyGroup = reminderGroups.find((group) => group.cadence === "daily");
 
-    setNewEntryTitle(getSuggestedTitle(newPrayer, selectedEntryType));
-    setSelectedSaveCadence("daily");
-    setSelectedReminderGroupId(dailyGroup?.id ?? null);
-    setShowSaveEntryModal(true);
-  }
+  setNewEntryTitle((current) => current.trim() || getSuggestedTitle(newPrayer));
+  setSelectedSaveCadence("daily");
+  setSelectedReminderGroupId(dailyGroup?.id ?? null);
+  setShowSaveEntryModal(true);
+}
 
   async function loadMessage() {
     const {
@@ -492,8 +534,8 @@ const showFloatingHeader =
     const twoDaysAgo = new Date();
     twoDaysAgo.setDate(today.getDate() - 2);
 
-    const todayString = today.toISOString().split("T")[0];
-    const twoDaysAgoString = twoDaysAgo.toISOString().split("T")[0];
+    const todayString = formatLocalDate(today);
+    const twoDaysAgoString = formatLocalDate(twoDaysAgo);
 
     const { data, error } = await supabase
       .from("daily_messages")
@@ -553,12 +595,12 @@ const showFloatingHeader =
 
       console.log("Generating daily message...", { forceRegenerate });
 
-      const { data: activeContextEntries, error: activeContextError } = await supabase
-        .from("entries")
-        .select("type, content")
-        .eq("status", "active")
-        .order("created_at", { ascending: false })
-        .limit(8);
+ const { data: activeContextEntries, error: activeContextError } = await supabase
+  .from("entries")
+  .select("content")
+  .eq("status", "active")
+  .order("created_at", { ascending: false })
+  .limit(8);
 
       if (activeContextError) {
         console.log("Load active entries for daily message error:", activeContextError.message);
@@ -596,11 +638,11 @@ const showFloatingHeader =
   }
 
   async function loadEntries() {
-    const { data, error } = await supabase
-      .from("entries")
-      .select("id, title, content, type, status, answered_at, created_at, reminder_group_id")
-      .eq("status", "active")
-      .order("created_at", { ascending: false });
+ const { data, error } = await supabase
+  .from("entries")
+  .select("id, title, content, status, answered_at, created_at, reminder_group_id")
+  .eq("status", "active")
+  .order("created_at", { ascending: false });
 
     if (error) {
       console.log("Load active entries error:", error.message);
@@ -667,16 +709,15 @@ const showFloatingHeader =
         return;
       }
 
-      const titleToSave = newEntryTitle.trim() || getSuggestedTitle(newPrayer, selectedEntryType);
+ const titleToSave = newEntryTitle.trim() || getSuggestedTitle(newPrayer);
 
-      const { error } = await supabase.from("entries").insert({
-        user_id: user.id,
-        type: selectedEntryType,
-        title: titleToSave,
-        status: "active",
-        content: newPrayer.trim(),
-        reminder_group_id: selectedReminderGroupId,
-      });
+const { error } = await supabase.from("entries").insert({
+  user_id: user.id,
+  title: titleToSave,
+  status: "active",
+  content: newPrayer.trim(),
+  reminder_group_id: selectedReminderGroupId,
+});
 
       if (error) {
         console.log("Error saving entry:", error);
@@ -686,15 +727,10 @@ const showFloatingHeader =
 
       setNewPrayer("");
       setNewEntryTitle("");
-      setSelectedEntryType("prayer");
       setSelectedReminderGroupId(null);
       setShowSaveEntryModal(false);
       Keyboard.dismiss();
       await loadEntries();
-
-      setTimeout(() => {
-        scrollViewRef.current?.scrollTo({ y: 350, animated: true });
-      }, 150);
     } finally {
       setIsSavingPrayer(false);
     }
@@ -758,7 +794,7 @@ const showFloatingHeader =
     ]);
   };
 
-  const renderCurrentRightActions = (type: EntryType, id: string) => {
+  const renderCurrentRightActions = (id: string) => {
     return (
       <View
         style={{
@@ -779,7 +815,7 @@ const showFloatingHeader =
           }}
         >
           <Text style={{ color: "white", fontSize: 13, fontWeight: "700" }}>
-            {getArchiveActionLabel(type)}
+            {getArchiveActionLabel()}
           </Text>
         </Pressable>
 
@@ -809,72 +845,78 @@ const showFloatingHeader =
   startAIDotsAnimation();
 
   try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
 
-      const { data, error } = await supabase.functions.invoke("generate-entry", {
-        body: {
-          mode: "write",
-          type: selectedEntryType,
-          text: newPrayer,
-        },
-        headers: session?.access_token
-          ? {
-              Authorization: `Bearer ${session.access_token}`,
-            }
-          : {},
-      });
+    const { data, error } = await supabase.functions.invoke("generate-entry", {
+      body: {
+        mode: "write",
+        aiMode: selectedAIMode,
+        text: newPrayer,
+      },
+      headers: session?.access_token
+        ? {
+            Authorization: `Bearer ${session.access_token}`,
+          }
+        : {},
+    });
 
-      if (error) {
-        console.log("AI help error:", error);
+    if (error) {
+      console.log("AI help error:", error);
 
-        try {
-          const errorBody = await error.context.json();
-          console.log("AI help error body:", errorBody);
-        } catch (readError) {
-          console.log("Could not read AI help error body:", readError);
-        }
-
-        return;
+      try {
+        const errorBody = await error.context.json();
+        console.log("AI help error body:", errorBody);
+      } catch (readError) {
+        console.log("Could not read AI help error body:", readError);
       }
 
-      if (data?.text) {
+      return;
+    }
+
+    if (data?.text) {
+      Animated.parallel([
+        Animated.timing(textFadeAnim, {
+          toValue: 0.4,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+        Animated.timing(textScaleAnim, {
+          toValue: 0.97,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+      ]).start(() => {
+        const nextText = data.text.trim();
+        const nextTitle =
+          typeof data?.title === "string" && data.title.trim().length > 0
+            ? data.title.trim()
+            : getSuggestedTitle(nextText);
+
+        setNewPrayer(nextText);
+        setNewEntryTitle(nextTitle);
+
         Animated.parallel([
           Animated.timing(textFadeAnim, {
-            toValue: 0.4,
-            duration: 200,
+            toValue: 1,
+            duration: 260,
             useNativeDriver: true,
           }),
           Animated.timing(textScaleAnim, {
-            toValue: 0.97,
-            duration: 200,
+            toValue: 1,
+            duration: 260,
             useNativeDriver: true,
           }),
-        ]).start(() => {
-          setNewPrayer(data.text);
-          setNewEntryTitle(getSuggestedTitle(data.text, selectedEntryType));
-
-          Animated.parallel([
-            Animated.timing(textFadeAnim, {
-              toValue: 1,
-              duration: 260,
-              useNativeDriver: true,
-            }),
-            Animated.timing(textScaleAnim, {
-              toValue: 1,
-              duration: 260,
-              useNativeDriver: true,
-            }),
-          ]).start();
-        });
-      }
-    } catch (error) {
-      console.log("AI help unexpected error:", error);
+        ]).start();
+      });
     }
+  } catch (error) {
+    console.log("AI help unexpected error:", error);
+  }
 
-    setIsAIWorking(false);
-  };
+  setIsAIWorking(false);
+};
 
   function startAIDotsAnimation() {
     Animated.loop(
@@ -1113,10 +1155,10 @@ const upcomingEntries = useMemo<UpcomingEntry[]>(() => {
         <>
           <Animated.View
             style={{
-              backgroundColor: "rgba(255,255,255,0.92)",
+              backgroundColor: "rgba(255,255,255,0.7)",
               borderRadius: 14,
               borderWidth: 1,
-              borderColor: "#e5e7eb",
+              borderColor: "rgba(255,255,255,0.7)",
               shadowColor: "#000",
               shadowOpacity: 0.06,
               shadowRadius: 8,
@@ -1235,18 +1277,23 @@ const upcomingEntries = useMemo<UpcomingEntry[]>(() => {
           </Pressable>
         </Animated.View>
 
-         <View style={{ marginBottom: 16 }}>
+          <View style={{ marginBottom: 16 }}>
           <Pressable
             disabled={!newPrayer.trim() || isSavingPrayer}
             onPress={openSaveEntryModal}
             style={{
               backgroundColor:
                 !newPrayer.trim() || isSavingPrayer
-                  ? "rgba(120,120,120,0.55)"
-                  : "rgba(40,40,40,0.95)",
+                  ? "rgba(90,90,90,0.72)"
+                  : "rgba(20,20,20,0.98)",
               borderRadius: 12,
               paddingVertical: 13,
-              opacity: isSavingPrayer ? 0.7 : 1,
+              borderWidth: 1,
+              borderColor:
+                !newPrayer.trim() || isSavingPrayer
+                  ? "rgba(255,255,255,0.18)"
+                  : "rgba(255,255,255,0.22)",
+              opacity: isSavingPrayer ? 0.82 : 1,
             }}
           >
             <Text
@@ -1254,7 +1301,7 @@ const upcomingEntries = useMemo<UpcomingEntry[]>(() => {
                 color: "white",
                 textAlign: "center",
                 fontSize: 16,
-                fontWeight: "600",
+                fontWeight: "700",
               }}
             >
               {isSavingPrayer ? "Saving..." : "Save"}
@@ -1305,95 +1352,91 @@ const upcomingEntries = useMemo<UpcomingEntry[]>(() => {
               </Text>
             </Pressable>
 
- {!showReturnButton ? (
-  <Pressable
-    onPress={() => {
-      setShowSearch(true);
+            <Pressable
+              onPress={() => {
+                setShowSearch(true);
 
-      requestAnimationFrame(() => {
-        setTimeout(() => {
-          searchInputRef.current?.focus();
-        }, 50);
-      });
-    }}
-    style={{
-      flex: 1,
-      borderRadius: 10,
-      paddingVertical: 10,
-      paddingHorizontal: 12,
-      backgroundColor: "rgba(255,255,255,0.92)",
-      borderWidth: 1,
-      borderColor: "#e5e7eb",
-    }}
-  >
-    <Text style={{ fontSize: 14, color: "#666" }}>Search</Text>
-  </Pressable>
-) : (
-  <Pressable
-    onPress={() => {
-      setShowSearch(false);
-      setSearchText("");
-      setSelectedCadenceFilter("all");
-      Keyboard.dismiss();
+                requestAnimationFrame(() => {
+                  setTimeout(() => {
+                    searchInputRef.current?.focus();
+                  }, 50);
+                });
+              }}
+              style={{
+                borderRadius: 10,
+                paddingVertical: 10,
+                paddingHorizontal: 12,
+                backgroundColor: "rgba(255,255,255,0.92)",
+                borderWidth: 1,
+                borderColor: "#e5e7eb",
+              }}
+            >
+              <Text style={{ fontSize: 14, color: "#666" }}>Search</Text>
+            </Pressable>
 
-      requestAnimationFrame(() => {
-        scrollViewRef.current?.scrollTo({ y: 0, animated: true });
-      });
-    }}
-    style={{
-      flex: 1,
-      borderRadius: 10,
-      paddingVertical: 10,
-      paddingHorizontal: 12,
-      backgroundColor: "rgba(255,255,255,0.92)",
-      borderWidth: 1,
-      borderColor: "#e5e7eb",
-    }}
-  >
-    <Text style={{ fontSize: 14, color: "#666" }}>Close/Return</Text>
-  </Pressable>
-)}
+            <Pressable
+              onPress={() => {
+                setShowSearch(false);
+                setSearchText("");
+                setSelectedCadenceFilter("all");
+                setIsBrowseMode(false);
+                Keyboard.dismiss();
+
+                requestAnimationFrame(() => {
+                  scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+                });
+              }}
+              style={{
+                marginLeft: 8,
+                borderRadius: 10,
+                paddingVertical: 10,
+                paddingHorizontal: 12,
+                backgroundColor: "rgba(255,255,255,0.92)",
+                borderWidth: 1,
+                borderColor: "#e5e7eb",
+              }}
+            >
+              <Text style={{ fontSize: 14, color: "#666" }}>Close/Return</Text>
+            </Pressable>
           </View>
 
-            {showSearch && (
-              <View style={{ marginBottom: 14, position: "relative" }}>
-                <TextInput
-                  ref={searchInputRef}
-                  placeholder="Search entries..."
-                  value={searchText}
-                  onChangeText={setSearchText}
-                  style={{
-                    backgroundColor: "white",
-                    borderWidth: 1,
-                    borderColor: "#d8d8d8",
-                    borderRadius: 10,
-                    paddingHorizontal: 12,
-                    paddingRight: 44,
-                    paddingVertical: 12,
-                    fontSize: 15,
-                    color: "black",
-                  }}
-                />
+          <View style={{ marginBottom: 14, position: "relative" }}>
+            <TextInput
+              ref={searchInputRef}
+              placeholder="Search entries..."
+              value={searchText}
+              onChangeText={setSearchText}
+              style={{
+                backgroundColor: "white",
+                borderWidth: 1,
+                borderColor: "#d8d8d8",
+                borderRadius: 10,
+                paddingHorizontal: 12,
+                paddingRight: 44,
+                paddingVertical: 12,
+                fontSize: 15,
+                color: "black",
+              }}
+            />
 
-                {!!searchText.trim() && (
-                  <Pressable
-                    onPress={() => {
-                      setSearchText("");
-                      searchInputRef.current?.focus();
-                    }}
-                    hitSlop={10}
-                    style={{
-                      position: "absolute",
-                      right: 12,
-                      top: 12,
-                      padding: 2,
-                    }}
-                  >
-                    <Text style={{ fontSize: 16, color: "#777", fontWeight: "600" }}>×</Text>
-                  </Pressable>
-                )}
-              </View>
+            {!!searchText.trim() && (
+              <Pressable
+                onPress={() => {
+                  setSearchText("");
+                  searchInputRef.current?.focus();
+                }}
+                hitSlop={10}
+                style={{
+                  position: "absolute",
+                  right: 12,
+                  top: 12,
+                  padding: 2,
+                }}
+              >
+                <Text style={{ fontSize: 16, color: "#777", fontWeight: "600" }}>×</Text>
+              </Pressable>
             )}
+          </View>
         </View>
       )}
       </>
@@ -1428,30 +1471,67 @@ const upcomingEntries = useMemo<UpcomingEntry[]>(() => {
   ref={scrollViewRef}
   keyboardShouldPersistTaps="handled"
   showsVerticalScrollIndicator={false}
-  onScroll={(event) => {
-    setScrollY(event.nativeEvent.contentOffset.y);
-  }}
+
+onScroll={(event) => {
+  const nextScrollY = event.nativeEvent.contentOffset.y;
+  setScrollY(nextScrollY);
+
+  if (
+    !isBrowseMode &&
+    messageSectionHeight > 0 &&
+    headerSectionHeight > 0 &&
+    nextScrollY >= Math.max(140, messageSectionHeight - 40)
+  ) {
+    setIsBrowseMode(true);
+  }
+}}
+
   scrollEventThrottle={16}
   contentContainerStyle={{ paddingBottom: 120 }}
 >
   {!showFloatingHeader && (
-    <View
-      onLayout={(event) => {
-        setMessageSectionHeight(event.nativeEvent.layout.height + 24);
-      }}
-      style={{
-        marginBottom: 24,
-        marginHorizontal: 20,
-        minHeight: 240,
-        justifyContent: "center",
-        backgroundColor: "rgba(255,255,255,0.32)",
-        borderRadius: 18,
-        borderWidth: 1,
-        borderColor: "rgba(255,255,255,0.38)",
-        overflow: "hidden",
-        paddingVertical: 18,
-      }}
-    >
+    <View>
+      <Pressable
+        onPress={() => generateDailyMessage(true)}
+        style={{
+          marginHorizontal: 20,
+          marginBottom: 10,
+          alignSelf: "stretch",
+        }}
+      >
+        <Text
+          style={{
+            textAlign: "center",
+            fontSize: 18,
+            fontWeight: "700",
+            color: "#111",
+            letterSpacing: 0.2,
+          }}
+        >
+          Morning Message
+          {currentDailyMessage?.message_date
+            ? ` - ${new Date(currentDailyMessage.message_date).toLocaleDateString()}`
+            : ""}
+        </Text>
+      </Pressable>
+
+      <View
+        onLayout={(event) => {
+          setMessageSectionHeight(event.nativeEvent.layout.height + 58);
+        }}
+        style={{
+          marginBottom: 24,
+          marginHorizontal: 20,
+          minHeight: 240,
+          justifyContent: "center",
+          backgroundColor: "rgba(255,255,255,0.7)",
+          borderRadius: 18,
+          borderWidth: 1,
+          borderColor: "rgba(255,255,255,0.70)",
+          overflow: "hidden",
+          paddingVertical: 18,
+        }}
+      >
           {dailyMessages.length > 0 ? (
           <>
             <ScrollView
@@ -1479,30 +1559,19 @@ const upcomingEntries = useMemo<UpcomingEntry[]>(() => {
                     alignItems: "center",
                   }}
                 >
-                  <Animated.Text
-                    style={{
-                      fontSize: 18,
-                      textAlign: "center",
-                      color: "#111",
-                      lineHeight: 26,
-                      marginBottom: 10,
-                      fontWeight: "500",
-                      opacity: messageFadeAnim,
-                    }}
-                  >
-                    {item.message}
-                  </Animated.Text>
-
-                  <Text
-                    style={{
-                      fontSize: 12,
-                      color: "#444",
-                      marginBottom: 8,
-                      textAlign: "center",
-                    }}
-                  >
-                    {new Date(item.message_date).toLocaleDateString()}
-                  </Text>
+                     <Animated.Text
+                      style={{
+                        fontSize: 18,
+                        textAlign: "center",
+                        color: "#111",
+                        lineHeight: 26,
+                        marginBottom: 10,
+                        fontWeight: "500",
+                        opacity: messageFadeAnim,
+                      }}
+                    >
+                      {item.message}
+                    </Animated.Text>
 
                   <Pressable
                     hitSlop={12}
@@ -1558,33 +1627,7 @@ const upcomingEntries = useMemo<UpcomingEntry[]>(() => {
                 />
               ))}
             </View>
-
-            <Pressable
-              onPress={() => generateDailyMessage(true)}
-              disabled={isRegeneratingMessage}
-              style={{
-                alignSelf: "center",
-                marginTop: 14,
-                paddingVertical: 8,
-                paddingHorizontal: 14,
-                borderRadius: 999,
-                backgroundColor: "rgba(255,255,255,0.72)",
-                borderWidth: 1,
-                borderColor: "rgba(17,17,17,0.12)",
-                opacity: isRegeneratingMessage ? 0.7 : 1,
-              }}
-            >
-              <Text
-                style={{
-                  fontSize: 13,
-                  fontWeight: "600",
-                  color: "#111",
-                }}
-              >
-                {isRegeneratingMessage ? "Regenerating..." : "Regenerate"}
-              </Text>
-            </Pressable>
-          </>
+           </>
         ) : (
           <Text
             style={{
@@ -1603,7 +1646,7 @@ const upcomingEntries = useMemo<UpcomingEntry[]>(() => {
           </Text>
         )}
    
-
+          </View>
            </View>
       )}
 
@@ -1629,8 +1672,9 @@ const upcomingEntries = useMemo<UpcomingEntry[]>(() => {
               backgroundColor: "rgba(255,255,255,0.92)",
               borderRadius: 14,
               padding: 14,
+              marginBottom: 10,
               borderWidth: 1,
-              borderColor: "#e5e7eb",
+              borderColor: "rgba(255,255,255,0.75)",
               shadowColor: "#000",
               shadowOpacity: 0.06,
               shadowRadius: 8,
@@ -1642,71 +1686,104 @@ const upcomingEntries = useMemo<UpcomingEntry[]>(() => {
               No entries for this filter yet.
             </Text>
           </View>
-        ) : (
+         ) : (
           <>
             {upcomingEntries.map((entry) => (
               <Swipeable
                 key={entry.id}
                 renderRightActions={() =>
-                  renderCurrentRightActions(entry.type, entry.id)
+                  renderCurrentRightActions(entry.id)
                 }
                 overshootRight={false}
               >
-                <View
+                <Pressable
+                  onPress={() =>
+                    setExpandedEntryId((current) =>
+                      current === entry.id ? null : entry.id
+                    )
+                  }
                   style={{
-                    backgroundColor: "rgba(255,255,255,0.92)",
+                    marginBottom: expandedEntryId === entry.id ? 10 : 4,
+                    paddingVertical: expandedEntryId === entry.id ? 14 : 2,
+                    paddingHorizontal: expandedEntryId === entry.id ? 14 : 0,
                     borderRadius: 14,
-                    padding: 14,
-                    marginBottom: 10,
-                    borderWidth: 1,
-                    borderColor: "#e5e7eb",
+                    backgroundColor:
+                      expandedEntryId === entry.id
+                        ? "rgba(255,255,255,0.92)"
+                        : "transparent",
+                    borderWidth: expandedEntryId === entry.id ? 1 : 0,
+                    borderColor:
+                      expandedEntryId === entry.id ? "#e5e7eb" : "transparent",
                     shadowColor: "#000",
-                    shadowOpacity: 0.06,
+                    shadowOpacity: expandedEntryId === entry.id ? 0.06 : 0,
                     shadowRadius: 8,
                     shadowOffset: { width: 0, height: 3 },
-                    elevation: 2,
+                    elevation: expandedEntryId === entry.id ? 2 : 0,
                   }}
                 >
-                  {!!entry.title && (
-                    <Text
+                  {expandedEntryId === entry.id ? (
+                    <>
+                      <Text
+                        style={{
+                          fontSize: 16,
+                          fontWeight: "700",
+                          color: "black",
+                          marginBottom: 10,
+                        }}
+                      >
+                        {entry.title?.trim() || "Untitled Entry"}
+                      </Text>
+
+                      <Text
+                        style={{
+                          fontSize: 14,
+                          lineHeight: 21,
+                          color: "#222",
+                          marginBottom: 10,
+                        }}
+                      >
+                        {entry.content}
+                      </Text>
+
+                      <Text
+                        style={{
+                          fontSize: 12,
+                          color: "#666",
+                        }}
+                      >
+                        {entry.cadence.charAt(0).toUpperCase() + entry.cadence.slice(1)} •{" "}
+                        {formatUpcomingLabel(entry.next_run_at)}
+                      </Text>
+                    </>
+                  ) : (
+                    <View
                       style={{
-                        fontSize: 15,
-                        fontWeight: "700",
-                        color: "black",
-                        marginBottom: 6,
+                        alignSelf: "flex-start",
+                        backgroundColor: "rgba(255,255,255,0.58)",
+                        borderRadius: 10,
+                        paddingVertical: 6,
+                        paddingHorizontal: 10,
                       }}
                     >
-                      {entry.title}
-                    </Text>
+                      <Text
+                        style={{
+                          fontSize: 16,
+                          fontWeight: "700",
+                          color: "black",
+                        }}
+                        numberOfLines={1}
+                      >
+                        {entry.title?.trim() || "Untitled Entry"}
+                      </Text>
+                    </View>
                   )}
-
-                  <Text
-                    style={{
-                      fontSize: 16,
-                      color: "black",
-                      lineHeight: 22,
-                    }}
-                  >
-                    {entry.content}
-                  </Text>
-
-                  <Text
-                    style={{
-                      fontSize: 12,
-                      color: "#666",
-                      marginTop: 8,
-                    }}
-                  >
-                    {entry.cadence.charAt(0).toUpperCase() + entry.cadence.slice(1)} •{" "}
-                    {formatUpcomingLabel(entry.next_run_at)}
-                  </Text>
-                </View>
+                </Pressable>
               </Swipeable>
             ))}
           </>
         )}
-          </View>
-    </ScrollView>
+    </View>
+</ScrollView>
 
     {showFloatingHeader && (
       <View

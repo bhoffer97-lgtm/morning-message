@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-type EntryType = "prayer" | "gratitude" | "affirmation" | "goal";
+type AIWriteMode = "prayer" | "affirmation" | "goal" | "other";
 
 
 function countIntendedSentences(text: string) {
@@ -17,9 +17,16 @@ function countIntendedSentences(text: string) {
   return 1;
 }
 
-function buildWritePrompt(type: string, text: string, sentenceLimit: number) {
-  const typeGuidance =
-    type === "prayer"
+function formatLocalDate(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function buildWritePrompt(aiMode: AIWriteMode, text: string, sentenceLimit: number) {
+   const typeGuidance =
+    aiMode === "prayer"
       ? `
 For prayers:
 - Point the user gently toward God.
@@ -28,7 +35,7 @@ For prayers:
 - Do not sound formal or preachy.
 - When possible, phrase the prayer around the strength, virtue, or grace the user needs rather than repeating the negative state.
 `
-      : type === "affirmation"
+      : aiMode === "affirmation"
       ? `
 For affirmations:
 - Keep the tone encouraging and grounded.
@@ -38,25 +45,25 @@ For affirmations:
 - When the user expresses a negative feeling or struggle, gently redirect the wording toward the positive virtue, grace, or spiritual direction they are seeking.
 - Prefer courage over "not fear," peace over "not anxiety," trust over "not worry," hope over "not discouragement," and patience over "not anger."
 - Do not dwell on the negative framing if a stronger positive spiritual framing is possible.
-- Especially in prayers, ask for what is needed in a positive direction rather than only asking to remove what is hard.
 - When natural, it is good for the tone to reflect trust, peace, purpose, or God's care, but do not force explicit faith language into every affirmation.
 `
-      : type === "gratitude"
+      : aiMode === "goal"
       ? `
-For gratitude:
-- Make it warm, thankful, and sincere.
-- When natural, it is good to reflect thankfulness to God, but do not force it if the user's words do not suggest it.
-- Keep it specific and genuine.
-`
-      : `
 For goals:
 - Make it clear, steady, and practical.
 - Keep it encouraging, but not overly intense.
 - When natural, a humble tone that reflects wisdom, discipline, trust, or purpose is good.
+`
+      : `
+For personal writing:
+- Keep it clear, natural, and grounded.
+- Preserve the user's meaning and tone.
+- Do not force it into a prayer, affirmation, or goal format.
+- Keep it warm, sincere, and polished without sounding dramatic.
 `;
 
   return `
-You are helping a user polish a short ${type} for a private app called Morning Message.
+You are helping a user polish a short piece of writing for a private app called Morning Message.
 
 Your role:
 - improve clarity
@@ -151,12 +158,13 @@ Write 1 distinct message built around this exact verse.
 
 async function chooseDailyVerse(
   supabase: any,
-  recentEntries: Array<{ type: string; content: string }>,
+  recentEntries: Array<{ content: string }>,
   recentlyUsedVerses: string[]
 ) {
-  const recentText = recentEntries
-    .map((entry) => `${entry.type}: ${entry.content}`.toLowerCase())
-    .join(" ");
+
+ const recentText = recentEntries
+  .map((entry) => `${entry.content}`.toLowerCase())
+  .join(" ");
 
   const themeSignals = [
     {
@@ -310,7 +318,78 @@ if (error) {
       : matchedPrinciples,
   };
 }
+function finalizeAITitle(originalText: string, aiTitle: string) {
+  const original = (originalText || "").trim();
+  const suggested = (aiTitle || "").trim();
 
+  if (!original && suggested) return suggested;
+  if (!original) return "New Entry";
+
+  const lowerOriginal = original.toLowerCase();
+  const lowerTitle = suggested.toLowerCase();
+
+  const weakTitleStarts = [
+    "grant me",
+    "guide me",
+    "help me",
+    "help us",
+    "lord please",
+    "dear lord",
+    "dear god",
+    "prayer",
+    "new entry",
+  ];
+
+  const isWeakGenericTitle =
+    !suggested ||
+    weakTitleStarts.some((start) => lowerTitle.startsWith(start));
+
+  const subjectRules = [
+    {
+      keywords: ["manual transmission", "stick shift", "manual car"],
+      title: "Learning Manual Driving",
+    },
+    {
+      keywords: ["guitar"],
+      title: lowerOriginal.includes("patience") ? "Patience for Guitar" : "Learning Guitar",
+    },
+    {
+      keywords: ["drive", "driving"],
+      title: "Learning to Drive",
+    },
+    {
+      keywords: ["marriage", "wife", "husband"],
+      title: "Strength for Marriage",
+    },
+    {
+      keywords: ["job", "work", "career"],
+      title: "Wisdom for Work",
+    },
+    {
+      keywords: ["anxiety", "fear", "worry", "worried"],
+      title: "Peace over Anxiety",
+    },
+    {
+      keywords: ["patience"],
+      title: "Growing in Patience",
+    },
+  ];
+
+  for (const rule of subjectRules) {
+    const matchesOriginal = rule.keywords.some((keyword) => lowerOriginal.includes(keyword));
+    const titleIncludesSubject = rule.keywords.some((keyword) => lowerTitle.includes(keyword));
+
+    if (matchesOriginal && (isWeakGenericTitle || !titleIncludesSubject)) {
+      return rule.title;
+    }
+  }
+
+  if (isWeakGenericTitle) {
+    return "New Entry";
+  }
+
+  return suggested;
+}
 serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
@@ -351,7 +430,7 @@ const {
 
        const body = await req.json();
     const mode = body?.mode ?? "write";
-    const type = (body?.type ?? "prayer") as EntryType;
+    const aiMode = (body?.aiMode ?? "prayer") as AIWriteMode;
     const text = body?.text ?? "";
     const forceRegenerate = body?.forceRegenerate === true;
     const activeEntries = Array.isArray(body?.activeEntries) ? body.activeEntries : [];
@@ -362,45 +441,105 @@ const {
   activeEntriesCount: activeEntries.length,
 });
 
-    if (mode === "write") {
-      const sentenceLimit = countIntendedSentences(text);
-      const prompt = buildWritePrompt(type, text, sentenceLimit);
+if (mode === "write") {
+  const sentenceLimit = countIntendedSentences(text);
+  const prompt = buildWritePrompt(aiMode, text, sentenceLimit);
 
-      const response = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${openAiKey}`,
+  const polishResponse = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${openAiKey}`,
+    },
+    body: JSON.stringify({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content:
+            "You help users gently polish prayers, gratitude reflections, affirmations, goals, and personal writing while preserving their original intent and approximate length.",
         },
-        body: JSON.stringify({
-          model: "gpt-4o-mini",
-          messages: [
-            {
-              role: "system",
-              content:
-                "You help users gently polish prayers, gratitude reflections, affirmations, and goals while preserving their original intent and approximate length.",
-            },
-            {
-              role: "user",
-              content: prompt,
-            },
-          ],
-          temperature: 0.6,
-          max_tokens: 120,
-        }),
-      });
+        {
+          role: "user",
+          content: prompt,
+        },
+      ],
+      temperature: 0.6,
+      max_tokens: 120,
+    }),
+  });
 
-      const data = await response.json();
-      const textOutput = data?.choices?.[0]?.message?.content?.trim() ?? "";
+  const polishData = await polishResponse.json();
+  const textOutput = polishData?.choices?.[0]?.message?.content?.trim() ?? "";
 
-      return new Response(JSON.stringify({ text: textOutput }), {
-        headers: { "Content-Type": "application/json" },
-        status: 200,
-      });
-    }
+  const titlePrompt = `
+You are helping generate a short, meaningful title for a private app entry.
 
-        if (mode === "daily") {
-      const today = new Date().toISOString().split("T")[0];
+Entry type:
+${aiMode}
+
+Original user text:
+${text || ""}
+
+Polished entry text:
+${textOutput || ""}
+
+Rules for the title:
+- Return only the title text.
+- Do not use quotation marks.
+- Do not use markdown.
+- Prefer 2 to 6 words.
+- The title must name the concrete subject when one exists.
+- If the entry is about learning an instrument, skill, vehicle, job, relationship, health issue, or decision, include that thing directly.
+- Avoid generic titles like "New Entry", "Prayer", "Help Me", "My Goal", "Guide Me", or "Lord Please".
+- Avoid titles that mainly repeat the opening phrase.
+- Avoid vague titles focused only on emotion when the entry clearly names a subject.
+- Keep it natural, clear, and human.
+`;
+
+  const titleResponse = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${openAiKey}`,
+    },
+    body: JSON.stringify({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content:
+            "You create short, meaningful titles for private journal entries.",
+        },
+        {
+          role: "user",
+          content: titlePrompt,
+        },
+      ],
+      temperature: 0.4,
+      max_tokens: 30,
+    }),
+  });
+
+  const titleData = await titleResponse.json();
+  const rawTitle = titleData?.choices?.[0]?.message?.content?.trim() ?? "";
+
+  const titleOutput = finalizeAITitle(text, rawTitle);
+
+console.log("WRITE_MODE_TITLE_DEBUG", {
+  originalText: text,
+  rawTitle,
+  finalTitle: titleOutput,
+});
+
+return new Response(JSON.stringify({ text: textOutput, title: titleOutput }), {
+  headers: { "Content-Type": "application/json" },
+  status: 200,
+});
+}
+
+  if (mode === "daily") {
+  const today = formatLocalDate(new Date());
 
 const { data: existingMessages, error: existingError } = await userSupabase
   .from("daily_messages")
@@ -418,11 +557,10 @@ const { data: existingMessages, error: existingError } = await userSupabase
         existingCount: existingMessages?.length ?? 0,
       });
 
- const recentEntries = activeEntries
+const recentEntries = activeEntries
   .filter(
     (entry) =>
       entry &&
-      typeof entry.type === "string" &&
       typeof entry.content === "string" &&
       entry.content.trim().length > 0
   )
@@ -501,21 +639,27 @@ const normalizedMessage =
     ? parsed.message.trim()
     : "God’s mercy is new this morning. Receive His grace, trust His presence, and take the next step in peace.";
 
+const nextMessageIndex =
+  existingMessages && existingMessages.length > 0
+    ? Math.max(...existingMessages.map((item) => item.message_index ?? 0)) + 1
+    : 0;
+
 const messageToSave = {
   user_id: user.id,
   message_date: today,
   message_text: normalizedMessage,
   verse_reference: selectedVerse.verseReference,
   verse_query: selectedVerse.verseReference,
+  message_index: nextMessageIndex,
+  is_primary: nextMessageIndex === 0,
 };
-const { error: upsertError } = await adminSupabase
-  .from("daily_messages")
-  .upsert(messageToSave, {
-    onConflict: "user_id,message_date",
-  });
 
-if (upsertError) {
-  console.log("Daily message upsert error:", upsertError.message);
+const { error: insertError } = await adminSupabase
+  .from("daily_messages")
+  .insert(messageToSave);
+
+if (insertError) {
+  console.log("Daily message insert error:", insertError.message);
 }
 
 return new Response(
@@ -523,6 +667,8 @@ return new Response(
     message: messageToSave.message_text,
     verse_reference: messageToSave.verse_reference,
     verse_query: messageToSave.verse_query,
+    message_index: messageToSave.message_index,
+    is_primary: messageToSave.is_primary,
   }),
   {
     headers: { "Content-Type": "application/json" },
