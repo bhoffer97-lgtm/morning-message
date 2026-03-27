@@ -11,7 +11,6 @@ import {
   View,
 } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
-import Swipeable from "react-native-gesture-handler/ReanimatedSwipeable";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { supabase } from "../../lib/supabase";
 
@@ -19,21 +18,34 @@ const completedHeaderImage = require("../../assets/images/morning-nature-4.jpg")
 
 type CadenceFilter = "all" | "daily" | "weekly" | "monthly" | "yearly";
 
-function getArchivedText(answeredAt?: string | null, createdAt?: string | null) {
-  if (!answeredAt) return "";
+function getArchivedText(entry: any) {
+  const eventDate =
+    entry.archived_at ||
+    entry.retired_at ||
+    entry.last_completed_at ||
+    entry.answered_at;
 
-  const archivedDate = new Date(answeredAt);
-  const formattedDate = archivedDate.toLocaleDateString();
+  if (!eventDate) return "";
 
-  if (!createdAt) {
-    return `Archived on ${formattedDate}`;
+  const eventDateObj = new Date(eventDate);
+  const formattedDate = eventDateObj.toLocaleDateString();
+
+  const prefix =
+    entry.status === "archived"
+      ? "Archived"
+      : entry.status === "retired"
+      ? "Retired"
+      : "Completed";
+
+  if (!entry.created_at) {
+    return `${prefix} on ${formattedDate}`;
   }
 
-  const createdDate = new Date(createdAt);
-  const diffMs = archivedDate.getTime() - createdDate.getTime();
+  const createdDate = new Date(entry.created_at);
+  const diffMs = eventDateObj.getTime() - createdDate.getTime();
   const diffDays = Math.max(1, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
 
-  return `Archived on ${formattedDate} after ${diffDays} day${diffDays === 1 ? "" : "s"}`;
+  return `${prefix} on ${formattedDate} after ${diffDays} day${diffDays === 1 ? "" : "s"}`;
 }
 
 function getCadenceLabel(cadence?: string | null) {
@@ -68,23 +80,27 @@ export default function CompletedScreen() {
   async function loadCompletedEntries() {
     const { data, error } = await supabase
       .from("entries")
-      .select(`
-        id,
-        title,
-        content,
-        status,
-        answered_at,
-        created_at,
-        answer_notes,
-        reminder_group_id,
-        reminder_groups (
-          id,
-          name,
-          cadence
-        )
-      `)
-      .eq("status", "answered")
-      .order("answered_at", { ascending: false });
+.select(`
+  id,
+  title,
+  content,
+  status,
+  answered_at,
+  created_at,
+  answer_notes,
+  archived_at,
+  retired_at,
+  last_completed_at,
+  resolution_note,
+  reminder_group_id,
+  reminder_groups (
+    id,
+    name,
+    cadence
+  )
+`)
+ .in("status", ["completed", "archived", "retired"])
+.order("updated_at", { ascending: false });
 
     if (error) {
       console.log("Load archived entries error:", error.message);
@@ -96,33 +112,47 @@ export default function CompletedScreen() {
     }
   }
 
-  const restoreEntry = async (id: string) => {
-    const { error } = await supabase
-      .from("entries")
-      .update({ status: "active", answered_at: null })
-      .eq("id", id);
+ const restoreEntry = async (id: string) => {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
-    if (error) {
-      console.log("Error restoring entry:", error.message);
-      return;
-    }
-
-    await loadCompletedEntries();
-  };
-
-  const deleteEntry = async (id: string) => {
-  console.log("Attempting to delete archived entry:", id);
-
-  const { error } = await supabase.from("entries").delete().eq("id", id);
-
-  if (error) {
-    console.log("Error deleting archived entry:", error);
-    Alert.alert("Unable to delete", error.message);
+  if (!user) {
+    console.log("No user found for restore");
     return;
   }
 
-  setAnsweredEntries((current) => current.filter((entry) => entry.id !== id));
+  const { error } = await supabase.rpc("reactivate_entry", {
+    p_entry_id: id,
+    p_user_id: user.id,
+  });
+
+  if (error) {
+    console.log("Error restoring entry:", error.message);
+    return;
+  }
+
+  await loadCompletedEntries();
 };
+
+   const deleteEntry = async (id: string) => {
+    console.log("Attempting to delete archived entry:", id);
+
+    const { error } = await supabase.from("entries").delete().eq("id", id);
+
+    if (error) {
+      console.log("Error deleting archived entry:", error);
+      Alert.alert("Unable to delete", error.message);
+      return;
+    }
+
+    if (selectedArchivedEntry?.id === id) {
+      setShowArchivedEntryModal(false);
+      setSelectedArchivedEntry(null);
+    }
+
+    setAnsweredEntries((current) => current.filter((entry) => entry.id !== id));
+  };
 
   const confirmDeleteEntry = (id: string) => {
     Alert.alert("Delete entry?", "This will permanently delete this entry.", [
@@ -138,51 +168,7 @@ export default function CompletedScreen() {
     ]);
   };
 
-  const renderCompletedRightActions = (id: string) => {
-    return (
-      <View
-        style={{
-          flexDirection: "row",
-          alignItems: "stretch",
-          marginBottom: 12,
-        }}
-      >
-        <Pressable
-          onPress={() => restoreEntry(id)}
-          style={{
-            width: 88,
-            backgroundColor: "#2f855a",
-            justifyContent: "center",
-            alignItems: "center",
-            borderTopLeftRadius: 18,
-            borderBottomLeftRadius: 18,
-          }}
-        >
-          <Text style={{ color: "white", fontSize: 13, fontWeight: "700" }}>
-            Restore
-          </Text>
-        </Pressable>
-
-        <Pressable
-          onPress={() => confirmDeleteEntry(id)}
-          style={{
-            width: 80,
-            backgroundColor: "#d64545",
-            justifyContent: "center",
-            alignItems: "center",
-            borderTopRightRadius: 18,
-            borderBottomRightRadius: 18,
-          }}
-        >
-          <Text style={{ color: "white", fontSize: 13, fontWeight: "700" }}>
-            Delete
-          </Text>
-        </Pressable>
-      </View>
-    );
-  };
-
-   useFocusEffect(
+    useFocusEffect(
     useCallback(() => {
       loadCompletedEntries();
       scrollViewRef.current?.scrollTo({ y: 0, animated: false });
@@ -195,7 +181,7 @@ export default function CompletedScreen() {
     return answeredEntries.filter((entry) => {
       const title = entry.title?.toLowerCase() ?? "";
       const content = entry.content?.toLowerCase() ?? "";
-      const notes = entry.answer_notes?.toLowerCase() ?? "";
+      const notes = (entry.resolution_note || entry.answer_notes || "").toLowerCase();
       const groupName = entry.reminder_groups?.name?.toLowerCase() ?? "";
       const cadence = entry.reminder_groups?.cadence ?? null;
 
@@ -365,22 +351,18 @@ export default function CompletedScreen() {
                 const cadenceLabel = getCadenceLabel(reminderGroup?.cadence);
                 const hasTitle = !!entry.title?.trim();
 
-                return (
-                <Swipeable
-                  key={entry.id}
-                  renderRightActions={() => renderCompletedRightActions(entry.id)}
-                  overshootRight={false}
-                >
-                <Pressable
-                  onPress={() => {
-                    setSelectedArchivedEntry(entry);
-                    setShowArchivedEntryModal(true);
-                  }}
-                  style={{
-                    paddingVertical: 8,
-                    marginBottom: 8,
-                  }}
-                >
+                 return (
+                  <Pressable
+                    key={entry.id}
+                    onPress={() => {
+                      setSelectedArchivedEntry(entry);
+                      setShowArchivedEntryModal(true);
+                    }}
+                    style={{
+                      paddingVertical: 8,
+                      marginBottom: 8,
+                    }}
+                  >
                     <View
                       style={{
                         alignSelf: "flex-start",
@@ -420,11 +402,10 @@ export default function CompletedScreen() {
                         }}
                         numberOfLines={1}
                       >
-                        {cadenceLabel} • {getArchivedText(entry.answered_at, entry.created_at)}
+                        {cadenceLabel} • {getArchivedText(entry)}
                       </Text>
                     </View>
                   </Pressable>
-                </Swipeable>
                 );
               })}
 
@@ -470,125 +451,219 @@ export default function CompletedScreen() {
             </View>
           </ScrollView>
 
-<Modal visible={showArchivedEntryModal} transparent animationType="slide">
-  <Pressable
-    onPress={() => {
-      setShowArchivedEntryModal(false);
-      setSelectedArchivedEntry(null);
-    }}
-    style={{
-      flex: 1,
-      backgroundColor: "rgba(0,0,0,0.35)",
-      justifyContent: "flex-end",
-    }}
+<Modal visible={showArchivedEntryModal} animationType="slide" presentationStyle="fullScreen">
+  <ImageBackground
+    source={completedHeaderImage}
+    resizeMode="cover"
+    style={{ flex: 1 }}
   >
-    <Pressable
-      onPress={() => {}}
-      style={{
-        maxHeight: "82%",
-        backgroundColor: "white",
-        borderTopLeftRadius: 20,
-        borderTopRightRadius: 20,
-        overflow: "hidden",
-      }}
-    >
-      <ScrollView
-        keyboardShouldPersistTaps="handled"
-        contentContainerStyle={{
-          padding: 24,
-          paddingBottom: 36,
-        }}
-      >
-        <View
+    <View style={{ flex: 1, backgroundColor: "rgba(255,255,255,0.28)" }}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: "transparent" }}>
+        <Pressable
+          onPress={() => {
+            setShowArchivedEntryModal(false);
+            setSelectedArchivedEntry(null);
+          }}
           style={{
-            flexDirection: "row",
-            justifyContent: "space-between",
             alignItems: "center",
-            marginBottom: 14,
-            gap: 10,
+            justifyContent: "center",
+            paddingHorizontal: 18,
+            paddingTop: 12,
+            paddingBottom: 12,
+            borderBottomWidth: 1,
+            borderBottomColor: "rgba(255,255,255,0.12)",
+            backgroundColor: "rgba(40,40,40,0.85)",
           }}
         >
           <Text
             style={{
-              flex: 1,
               fontSize: 22,
               fontWeight: "700",
-              color: "black",
-              paddingRight: 12,
+              color: "white",
+              textAlign: "center",
             }}
           >
             {selectedArchivedEntry?.title?.trim() || "Untitled Entry"}
           </Text>
+        </Pressable>
 
-          <Pressable
-            onPress={() => {
-              setShowArchivedEntryModal(false);
-              setSelectedArchivedEntry(null);
-            }}
-            style={{
-              paddingVertical: 6,
-              paddingHorizontal: 10,
-              borderRadius: 10,
-              backgroundColor: "#f3f4f6",
-            }}
-          >
-            <Text
+        <ScrollView
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{
+            padding: 20,
+            paddingBottom: 36,
+          }}
+        >
+          {!!selectedArchivedEntry && (
+            <View
               style={{
-                fontSize: 13,
-                fontWeight: "600",
-                color: "#333",
+                backgroundColor: "#fafafa",
+                borderRadius: 18,
+                padding: 18,
+                borderWidth: 1,
+                borderColor: "#e5e7eb",
               }}
             >
-              Close
-            </Text>
-          </Pressable>
-        </View>
-
-        {!!selectedArchivedEntry && (
-          <>
-            <Text
-              style={{
-                fontSize: 14,
-                lineHeight: 22,
-                color: "#222",
-                marginBottom: 14,
-              }}
-            >
-              {selectedArchivedEntry.content}
-            </Text>
-
-            {selectedArchivedEntry.answer_notes ? (
               <Text
                 style={{
-                  marginBottom: 14,
-                  fontSize: 13,
-                  color: "#555",
-                  lineHeight: 20,
-                  fontStyle: "italic",
+                  fontSize: 14,
+                  lineHeight: 22,
+                  color: "#222",
+                  marginBottom: 28,
                 }}
               >
-                Reflection: {selectedArchivedEntry.answer_notes}
+                {selectedArchivedEntry.content}
               </Text>
+
+              {(selectedArchivedEntry.resolution_note || selectedArchivedEntry.answer_notes) ? (
+              <View
+                style={{
+                  backgroundColor: "#f8fafc",
+                  borderRadius: 12,
+                  padding: 14,
+                  marginBottom: 24,
+                  borderWidth: 1,
+                  borderColor: "#e5e7eb",
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 12,
+                    fontWeight: "700",
+                    color: "#334155",
+                    marginBottom: 6,
+                  }}
+                >
+                  Resolution note
+                </Text>
+
+                <Text
+                  style={{
+                    fontSize: 14,
+                    lineHeight: 22,
+                    color: "#334155",
+                  }}
+                >
+                  {selectedArchivedEntry.resolution_note || selectedArchivedEntry.answer_notes}
+                </Text>
+              </View>
             ) : null}
 
-            <Text
-              style={{
-                fontSize: 12,
-                color: "#666",
-              }}
-            >
-              {getCadenceLabel(
-                Array.isArray(selectedArchivedEntry.reminder_groups)
-                  ? selectedArchivedEntry.reminder_groups[0]?.cadence
-                  : selectedArchivedEntry.reminder_groups?.cadence
-              )}{" "}
-              • {getArchivedText(selectedArchivedEntry.answered_at, selectedArchivedEntry.created_at)}
-            </Text>
-          </>
-        )}
-      </ScrollView>
-    </Pressable>
-  </Pressable>
+              <View
+                style={{
+                  alignItems: "center",
+                  marginBottom: 24,
+                }}
+              >
+                <View
+                  style={{
+                    width: 120,
+                    height: 1,
+                    backgroundColor: "#d1d5db",
+                  }}
+                />
+              </View>
+
+              <View
+                style={{
+                  flexDirection: "row",
+                  gap: 10,
+                  marginBottom: 14,
+                  flexWrap: "wrap",
+                  justifyContent: "center",
+                  alignItems: "center",
+                }}
+              >
+                <Pressable
+                  onPress={() => {
+                    setShowArchivedEntryModal(false);
+                    setSelectedArchivedEntry(null);
+                    restoreEntry(selectedArchivedEntry.id);
+                  }}
+                  style={{
+                    backgroundColor: "#2f855a",
+                    paddingVertical: 10,
+                    paddingHorizontal: 14,
+                    borderRadius: 10,
+                  }}
+                >
+                  <Text
+                    style={{
+                      color: "white",
+                      fontSize: 13,
+                      fontWeight: "700",
+                    }}
+                  >
+                    Restore
+                  </Text>
+                </Pressable>
+
+                <Pressable
+                  onPress={() => confirmDeleteEntry(selectedArchivedEntry.id)}
+                  style={{
+                    backgroundColor: "#fef2f2",
+                    paddingVertical: 10,
+                    paddingHorizontal: 14,
+                    borderRadius: 10,
+                  }}
+                >
+                  <Text
+                    style={{
+                      color: "#b91c1c",
+                      fontSize: 13,
+                      fontWeight: "700",
+                    }}
+                  >
+                    Delete
+                  </Text>
+                </Pressable>
+              </View>
+
+              <Text
+                style={{
+                  fontSize: 12,
+                  color: "#666",
+                  marginBottom: 18,
+                }}
+              >
+                {getCadenceLabel(
+                  Array.isArray(selectedArchivedEntry.reminder_groups)
+                    ? selectedArchivedEntry.reminder_groups[0]?.cadence
+                    : selectedArchivedEntry.reminder_groups?.cadence
+                )}{" "}
+                • {getArchivedText(selectedArchivedEntry)}
+              </Text>
+
+              <Pressable
+                onPress={() => {
+                  setShowArchivedEntryModal(false);
+                  setSelectedArchivedEntry(null);
+                }}
+                style={{
+                  alignSelf: "stretch",
+                  backgroundColor: "rgba(40,40,40,0.85)",
+                  paddingVertical: 12,
+                  borderRadius: 10,
+                  alignItems: "center",
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 14,
+                    fontWeight: "600",
+                    color: "white",
+                  }}
+                >
+                  Close / Return
+                </Text>
+              </Pressable>
+            </View>
+          )}
+        </ScrollView>
+      </SafeAreaView>
+    </View>
+  </ImageBackground>
 </Modal>
 
           {/* ===== DROPDOWN MODAL (UNCHANGED) ===== */}

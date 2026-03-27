@@ -25,7 +25,7 @@ function formatLocalDate(date: Date) {
 }
 
 function buildWritePrompt(aiMode: AIWriteMode, text: string, sentenceLimit: number) {
-   const typeGuidance =
+  const typeGuidance =
     aiMode === "prayer"
       ? `
 For prayers:
@@ -46,15 +46,18 @@ For affirmations:
 - Prefer courage over "not fear," peace over "not anxiety," trust over "not worry," hope over "not discouragement," and patience over "not anger."
 - Do not dwell on the negative framing if a stronger positive spiritual framing is possible.
 - When natural, it is good for the tone to reflect trust, peace, purpose, or God's care, but do not force explicit faith language into every affirmation.
+- Do not address God directly unless the user clearly wrote it that way.
 `
       : aiMode === "goal"
       ? `
 For goals:
 - Make it clear, steady, and practical.
 - Keep it encouraging, but not overly intense.
-- When natural, a humble tone that reflects wisdom, discipline, trust, or purpose is good.
+- Focus on action, discipline, consistency, or follow-through.
+- Keep it sounding like a personal goal, not a prayer.
+- Do not address God directly unless the user clearly wrote it that way.
+- Do not start with Lord, God, Dear God, or similar prayer language unless the user's original text clearly did that.
 `
-      : `
       : `
 For reminders:
 - Write it like a clear personal reminder the user would want to revisit later.
@@ -63,6 +66,7 @@ For reminders:
 - Do not force it into a prayer, affirmation, or goal format.
 - It should read like something worth remembering or acting on.
 - Keep it warm and polished without sounding dramatic.
+- Do not address God directly unless the user clearly wrote it that way.
 `;
 
   return `
@@ -81,13 +85,18 @@ Very important rules:
 - Do not take over the message.
 - Keep the response subtle, natural, encouraging, and human.
 - Prefer grounded, plain language over generic self-help language.
+- Preserve the user's original words whenever possible.
+- Do not remove key user-written words, names, codes, shorthand, or specific phrases unless you are only correcting a tiny obvious typo.
+- Prefer adding a little clarity around the user's original wording over replacing it with new wording.
+- If the text is ambiguous, fragmentary, code-like, highly personal shorthand, or not clearly understandable, return it unchanged.
+- Never replace the user's text with a generic explanation, placeholder, or apology.
 - When the user expresses a negative feeling or struggle, gently redirect the wording toward the positive virtue, grace, or spiritual direction they are seeking.
 - Prefer courage over "not fear," peace over "not anxiety," trust over "not worry," hope over "not discouragement," and patience over "not anger."
 - Do not dwell on the negative framing if a stronger positive spiritual framing is possible.
 - Especially in prayers, ask for what is needed in a positive direction rather than only asking to remove what is hard.
 - Avoid phrases about "the strength within myself," "my own power," or other purely self-powered language unless the user clearly asked for that tone.
 - Keep approximately the same scope and intensity as the user's original thought.
-- If the user wrote only a word, phrase, or fragment, turn it into exactly 1 sentence.
+- If the user wrote only a word, phrase, or fragment, preserve it and only expand it if the meaning is clearly understood.
 - If the user wrote 1 sentence, return no more than 1 sentence.
 - If the user wrote 2 sentences, return no more than 2 sentences.
 - In all cases, do not return more than ${sentenceLimit} sentence${sentenceLimit === 1 ? "" : "s"}.
@@ -438,8 +447,25 @@ if (mode === "write") {
     }),
   });
 
-  const polishData = await polishResponse.json();
-  const textOutput = polishData?.choices?.[0]?.message?.content?.trim() ?? "";
+   const polishData = await polishResponse.json();
+  const rawTextOutput = polishData?.choices?.[0]?.message?.content?.trim() ?? "";
+
+  const originalText = (text || "").trim();
+  const lowerRawOutput = rawTextOutput.toLowerCase();
+
+  const looksLikeBadFallback =
+    !rawTextOutput ||
+    lowerRawOutput.includes("there appears to be a mix up with your entry") ||
+    lowerRawOutput.includes("there appears to be a mix-up with your entry") ||
+    lowerRawOutput.includes("it seems like there might have been a mix up with your input") ||
+    lowerRawOutput.includes("it seems like there might have been a mix-up with your input") ||
+    lowerRawOutput.includes("please clarify") ||
+    lowerRawOutput.includes("i need more context") ||
+    lowerRawOutput.includes("i'm not sure what you mean") ||
+    lowerRawOutput.includes("unclear") ||
+    lowerRawOutput.includes("cannot determine");
+
+  const textOutput = looksLikeBadFallback ? originalText : rawTextOutput;
 
   const titlePrompt = `
 You are helping generate a short, meaningful title for a private app entry.
