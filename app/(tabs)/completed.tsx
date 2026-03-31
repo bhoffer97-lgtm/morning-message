@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { syncLocalNotifications } from "../../lib/notifications/syncNotifications";
 import { supabase } from "../../lib/supabase";
 
 const archivedHeaderImage = require("../../assets/images/morning-nature-4.jpg");
@@ -75,31 +76,30 @@ export default function CompletedScreen() {
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const scrollViewRef = useRef<ScrollView | null>(null);
 
-  async function loadArchivedEntries() {
-async function loadArchivedEntries() {
+ async function loadArchivedEntries() {
     const { data, error } = await supabase
       .from("entries")
-.select(`
-  id,
-  title,
-  content,
-  status,
-  created_at,
-  archived_at,
-  retired_at,
-  resolution_note,
-  digest_assignment,
-  schedule_mode,
-  next_due_at,
-  due_date,
-  due_time,
-  annual_month,
-  annual_day,
-  interval_value,
-  interval_unit
-`)
- .in("status", ["archived", "retired"])
-.order("updated_at", { ascending: false });
+      .select(`
+        id,
+        title,
+        content,
+        status,
+        created_at,
+        archived_at,
+        retired_at,
+        resolution_note,
+        digest_assignment,
+        schedule_mode,
+        next_due_at,
+        due_date,
+        due_time,
+        annual_month,
+        annual_day,
+        interval_value,
+        interval_unit
+      `)
+      .in("status", ["archived", "retired"])
+      .order("updated_at", { ascending: false });
 
     if (error) {
       console.log("Load archived entries error:", error.message);
@@ -132,6 +132,12 @@ async function loadArchivedEntries() {
   }
 
     await loadArchivedEntries();
+
+    try {
+      await syncLocalNotifications();
+    } catch (syncError) {
+      console.log("Restore notification sync error:", syncError);
+    }
 };
 
    const deleteEntry = async (id: string) => {
@@ -149,8 +155,13 @@ async function loadArchivedEntries() {
       setShowArchivedEntryModal(false);
       setSelectedArchivedEntry(null);
     }
-
     setArchivedEntries((current) => current.filter((entry) => entry.id !== id));
+
+    try {
+      await syncLocalNotifications();
+    } catch (syncError) {
+      console.log("Archived delete notification sync error:", syncError);
+    }
   };
 
   const confirmDeleteEntry = (id: string) => {
@@ -705,10 +716,9 @@ async function loadArchivedEntries() {
               </View>
             </Pressable>
           </Modal>
-
         </SafeAreaView>
       </View>
     </ImageBackground>
   </GestureHandlerRootView>
 );
-}}
+}

@@ -8,9 +8,10 @@ import {
   ScrollView,
   Text,
   TextInput,
-  View,
+  View
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { syncLocalNotifications } from "../../lib/notifications/syncNotifications";
 import { supabase } from "../../lib/supabase";
 
 const reminderBackground = require("../../assets/images/morning-nature-2.jpg");
@@ -256,6 +257,11 @@ export default function ReminderGroupsScreen() {
   const [selectorState, setSelectorState] = useState<SelectorState>(null);
   const [savingKey, setSavingKey] = useState<string | null>(null);
 
+  const [pendingTimeCadence, setPendingTimeCadence] = useState<ReminderCadence | null>(null);
+  const [pendingTimeHour, setPendingTimeHour] = useState("7");
+  const [pendingTimeMinute, setPendingTimeMinute] = useState("00");
+  const [pendingTimePeriod, setPendingTimePeriod] = useState<TimePeriod>("AM");
+
   async function loadReminderSchedules() {
     const {
       data: { user },
@@ -284,7 +290,7 @@ export default function ReminderGroupsScreen() {
     setSchedules(sorted);
   }
 
-  useFocusEffect(
+    useFocusEffect(
     useCallback(() => {
       loadReminderSchedules();
     }, [])
@@ -319,7 +325,7 @@ export default function ReminderGroupsScreen() {
 
     setSavingKey(cadence);
 
-    const { error } = await supabase
+     const { error } = await supabase
       .from("reminder_schedules")
       .update({
         is_enabled: optimistic.is_enabled,
@@ -334,6 +340,14 @@ export default function ReminderGroupsScreen() {
       console.log("Update reminder schedule error:", error.message);
       Alert.alert("Could not save reminder", error.message);
       await loadReminderSchedules();
+      return;
+    }
+
+     try {
+      await syncLocalNotifications();
+    } catch (syncError) {
+      console.log("Reminder notification sync error:", syncError);
+      Alert.alert("Reminder saved", "Your reminder was saved, but notifications could not be refreshed.");
     }
   }
 
@@ -381,102 +395,150 @@ export default function ReminderGroupsScreen() {
     );
   }
 
-  function renderTimeRow(schedule: ReminderSchedule) {
-    const form = parseTimeForForm(schedule.time_of_day);
+   function renderSettingRow(label: string, value: string, onPress: () => void) {
+    return (
+      <Pressable
+        onPress={onPress}
+        style={{
+          borderWidth: 1,
+          borderColor: "#d1d5db",
+          borderRadius: 12,
+          paddingHorizontal: 14,
+          paddingVertical: 12,
+          backgroundColor: "white",
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+        }}
+      >
+        <Text
+          style={{
+            fontSize: 14,
+            fontWeight: "600",
+            color: "#334155",
+          }}
+        >
+          {label}
+        </Text>
+
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            marginLeft: 12,
+          }}
+        >
+          <Text
+            style={{
+              fontSize: 14,
+              fontWeight: "600",
+              color: "#111827",
+              marginRight: 8,
+            }}
+          >
+            {value}
+          </Text>
+
+          <Text
+            style={{
+              fontSize: 14,
+              fontWeight: "700",
+              color: "#6b7280",
+            }}
+          >
+            ›
+          </Text>
+        </View>
+      </Pressable>
+    );
+  }
+
+  function renderUpcomingGrid(schedule: ReminderSchedule) {
+    const upcoming = getNextOccurrences(schedule, 4);
+    const includeYear = schedule.cadence === "yearly";
 
     return (
-      <View>
+      <View style={{ marginTop: 14 }}>
         <Text
           style={{
             fontSize: 12,
             fontWeight: "600",
             color: "#475569",
-            marginBottom: 6,
+            marginBottom: 8,
           }}
         >
-          Time
+          Upcoming
         </Text>
 
-        <View style={{ flexDirection: "row", gap: 10 }}>
-          <TextInput
-            value={form.hour}
-            onChangeText={(value) => {
-              const nextHour = sanitizeHourInput(value);
-              updateSchedule(schedule.cadence, {
-                time_of_day: build24HourTime(nextHour || "12", form.minute, form.period),
-              });
-            }}
-            keyboardType="number-pad"
-            placeholder="7"
-            style={{
-              flex: 1,
-              borderWidth: 1,
-              borderColor: "#d1d5db",
-              borderRadius: 12,
-              paddingHorizontal: 12,
-              paddingVertical: 10,
-              backgroundColor: "white",
-              color: "black",
-              fontSize: 14,
-            }}
-          />
+        <View
+          style={{
+            flexDirection: "row",
+            flexWrap: "wrap",
+            gap: 8,
+          }}
+        >
+          {upcoming.map((date, index) => {
+            const dateLabel = date.toLocaleDateString([], {
+              weekday: "short",
+              month: "numeric",
+              day: "numeric",
+              ...(includeYear ? { year: "numeric" as const } : {}),
+            });
 
-          <TextInput
-            value={form.minute}
-            onChangeText={(value) => {
-              const nextMinute = sanitizeMinuteInput(value);
-              updateSchedule(schedule.cadence, {
-                time_of_day: build24HourTime(form.hour, nextMinute || "00", form.period),
-              });
-            }}
-            keyboardType="number-pad"
-            placeholder="00"
-            style={{
-              flex: 1,
-              borderWidth: 1,
-              borderColor: "#d1d5db",
-              borderRadius: 12,
-              paddingHorizontal: 12,
-              paddingVertical: 10,
-              backgroundColor: "white",
-              color: "black",
-              fontSize: 14,
-            }}
-          />
+            const timeLabel = date.toLocaleTimeString([], {
+              hour: "numeric",
+              minute: "2-digit",
+            });
 
-          <Pressable
-            onPress={() =>
-              updateSchedule(schedule.cadence, {
-                time_of_day: build24HourTime(
-                  form.hour,
-                  form.minute,
-                  form.period === "AM" ? "PM" : "AM"
-                ),
-              })
-            }
+            return (
+              <View
+                key={`${schedule.cadence}-${index}-${date.toISOString()}`}
+                style={{
+                  width: "48%",
+                  backgroundColor: "#f8fafc",
+                  borderRadius: 12,
+                  paddingVertical: 10,
+                  paddingHorizontal: 10,
+                  borderWidth: 1,
+                  borderColor: "#e5e7eb",
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 12,
+                    fontWeight: "700",
+                    color: "#334155",
+                    marginBottom: 2,
+                  }}
+                >
+                  {dateLabel}
+                </Text>
+
+                <Text
+                  style={{
+                    fontSize: 13,
+                    color: "#111827",
+                    fontWeight: "600",
+                  }}
+                >
+                  {timeLabel}
+                </Text>
+              </View>
+            );
+          })}
+        </View>
+
+        {savingKey === schedule.cadence ? (
+          <Text
             style={{
-              minWidth: 72,
-              borderWidth: 1,
-              borderColor: "#d1d5db",
-              borderRadius: 12,
-              paddingHorizontal: 12,
-              paddingVertical: 10,
-              backgroundColor: "white",
-              alignItems: "center",
-              justifyContent: "center",
+              fontSize: 12,
+              color: "#64748b",
+              marginTop: 8,
             }}
           >
-            <Text
-              style={{
-                fontSize: 14,
-                fontWeight: "600",
-                color: "#111827",
-              }}
-            >
-              {form.period}
-            </Text>
-          </Pressable>
-        </View>
+            Saving...
+          </Text>
+        ) : null}
       </View>
     );
   }
@@ -520,143 +582,128 @@ export default function ReminderGroupsScreen() {
     );
   }
 
-  function renderScheduleCard(schedule: ReminderSchedule | null) {
+  function openTimeEditor(schedule: ReminderSchedule) {
+    const form = parseTimeForForm(schedule.time_of_day);
+    setPendingTimeCadence(schedule.cadence);
+    setPendingTimeHour(form.hour);
+    setPendingTimeMinute(form.minute);
+    setPendingTimePeriod(form.period);
+  }
+
+   async function applyPendingTime() {
+    if (!pendingTimeCadence) return;
+
+    const cadence = pendingTimeCadence;
+    setPendingTimeCadence(null);
+
+    await updateSchedule(cadence, {
+      time_of_day: build24HourTime(
+        pendingTimeHour || "12",
+        pendingTimeMinute || "00",
+        pendingTimePeriod
+      ),
+    });
+  }
+
+   function renderScheduleCard(schedule: ReminderSchedule | null) {
     if (!schedule) return null;
 
     const dateParts = parseDateParts(schedule.anchor_date);
     const weekday = new Date(`${schedule.anchor_date}T00:00:00`).getDay();
+    const timeLabel = formatPreviewDateTime(
+      new Date(
+        2026,
+        0,
+        1,
+        Number(schedule.time_of_day.split(":")[0] || "7"),
+        Number(schedule.time_of_day.split(":")[1] || "0"),
+        0,
+        0
+      )
+    ).replace(/^\d+\/\d+\s/, "");
 
     return (
-    <View
-      key={schedule.cadence}
-      style={{
-        backgroundColor: "rgba(255,255,255,0.92)",
-        borderRadius: 14,
-        padding: 16,
-        borderWidth: 1,
-        borderColor: "#e5e7eb",
-        shadowColor: "#000",
-        shadowOpacity: 0.06,
-        shadowRadius: 8,
-        shadowOffset: { width: 0, height: 3 },
-        elevation: 2,
-        marginBottom: 14,
-      }}
-    >
       <View
+        key={schedule.cadence}
         style={{
-          flexDirection: "row",
-          alignItems: "center",
-          justifyContent: "space-between",
-          marginBottom: 8,
+          backgroundColor: "rgba(255,255,255,0.92)",
+          borderRadius: 16,
+          padding: 16,
+          borderWidth: 1,
+          borderColor: "#e5e7eb",
+          shadowColor: "#000",
+          shadowOpacity: 0.06,
+          shadowRadius: 8,
+          shadowOffset: { width: 0, height: 3 },
+          elevation: 2,
+          marginBottom: 14,
         }}
       >
-        <Text
+        <View
           style={{
-            fontSize: 16,
-            fontWeight: "600",
-            color: "#111827",
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: 14,
           }}
         >
-          {getCadenceTitle(schedule.cadence)}
-        </Text>
+          <Text
+            style={{
+              fontSize: 16,
+              fontWeight: "700",
+              color: "#111827",
+            }}
+          >
+            {getCadenceTitle(schedule.cadence)}
+          </Text>
 
-        {renderToggle(schedule.cadence, schedule.is_enabled)}
+          {renderToggle(schedule.cadence, schedule.is_enabled)}
+        </View>
+
+        <View style={{ gap: 10 }}>
+          {schedule.cadence === "weekly" ? (
+            <>
+              {renderSettingRow("Every Week On", weekdayLabel(weekday), () =>
+                setSelectorState({ cadence: "weekly", type: "weekday" })
+              )}
+
+              {renderSettingRow("At", timeLabel, () => openTimeEditor(schedule))}
+            </>
+          ) : null}
+
+          {schedule.cadence === "daily" ? (
+            renderSettingRow("Every Day at", timeLabel, () => openTimeEditor(schedule))
+          ) : null}
+
+          {schedule.cadence === "monthly" ? (
+            <>
+              {renderSettingRow("Day of month", String(dateParts.day), () =>
+                setSelectorState({ cadence: "monthly", type: "day" })
+              )}
+
+             {renderSettingRow("Time", timeLabel, () => openTimeEditor(schedule))}
+            </>
+          ) : null}
+
+          {schedule.cadence === "quarterly" || schedule.cadence === "yearly" ? (
+            <>
+              {renderSettingRow("Month", monthLabels[dateParts.month - 1], () =>
+                setSelectorState({ cadence: schedule.cadence, type: "month" })
+              )}
+
+              {renderSettingRow("Day", String(dateParts.day), () =>
+                setSelectorState({ cadence: schedule.cadence, type: "day" })
+              )}
+
+              {renderSettingRow("Time", timeLabel, () => openTimeEditor(schedule))}
+            </>
+          ) : null}
+        </View>
+
+        {renderUpcomingGrid(schedule)}
       </View>
-
-      {schedule.cadence === "weekly" ? (
-        <View style={{ marginBottom: 14 }}>
-          <Text
-            style={{
-              fontSize: 12,
-              fontWeight: "600",
-              color: "#475569",
-              marginBottom: 6,
-            }}
-          >
-            Day
-          </Text>
-
-          {renderSelectorButton(weekdayLabel(weekday), () =>
-            setSelectorState({ cadence: "weekly", type: "weekday" })
-          )}
-        </View>
-      ) : null}
-
-      {schedule.cadence === "monthly" ? (
-        <View style={{ marginBottom: 14 }}>
-          <Text
-            style={{
-              fontSize: 12,
-              fontWeight: "600",
-              color: "#475569",
-              marginBottom: 6,
-            }}
-          >
-            Day of month
-          </Text>
-
-          {renderSelectorButton(String(dateParts.day), () =>
-            setSelectorState({ cadence: "monthly", type: "day" })
-          )}
-        </View>
-      ) : null}
-
-      {schedule.cadence === "quarterly" || schedule.cadence === "yearly" ? (
-        <View style={{ flexDirection: "row", gap: 10, marginBottom: 14 }}>
-          <View style={{ flex: 1 }}>
-            <Text
-              style={{
-                fontSize: 12,
-                fontWeight: "600",
-                color: "#475569",
-                marginBottom: 6,
-              }}
-            >
-              Month
-            </Text>
-
-            {renderSelectorButton(monthLabels[dateParts.month - 1], () =>
-              setSelectorState({ cadence: schedule.cadence, type: "month" })
-            )}
-          </View>
-
-          <View style={{ flex: 1 }}>
-            <Text
-              style={{
-                fontSize: 12,
-                fontWeight: "600",
-                color: "#475569",
-                marginBottom: 6,
-              }}
-            >
-              Day
-            </Text>
-
-            {renderSelectorButton(String(dateParts.day), () =>
-              setSelectorState({ cadence: schedule.cadence, type: "day" })
-            )}
-          </View>
-        </View>
-      ) : null}
-
-      {renderTimeRow(schedule)}
-
-      <Text
-        style={{
-          fontSize: 14,
-          lineHeight: 22,
-          color: "#4b5563",
-          marginTop: 12,
-        }}
-      >
-        {getUpcomingNotificationsText(schedule)}
-        {savingKey === schedule.cadence ? "  •  Saving..." : ""}
-      </Text>
-    </View>
-  );
-}
-
+    );
+  }
   const selectorOptions = useMemo(() => {
     if (!selectorState) return [];
 
@@ -680,33 +727,58 @@ export default function ReminderGroupsScreen() {
     }));
   }, [selectorState]);
 
-  async function applySelectorValue(value: number) {
+   async function applySelectorValue(value: number) {
     if (!selectorState) return;
 
-    const schedule = schedulesByCadence[selectorState.cadence];
+    const currentSelector = selectorState;
+    const schedule = schedulesByCadence[currentSelector.cadence];
     if (!schedule) return;
 
-    if (selectorState.type === "weekday") {
+    setSelectorState(null);
+
+    if (currentSelector.type === "weekday") {
       await updateSchedule(schedule.cadence, {
         anchor_date: getNextDateForWeekday(value),
       });
-      setSelectorState(null);
       return;
     }
 
-    if (selectorState.type === "month") {
+    if (currentSelector.type === "month") {
       await updateSchedule(schedule.cadence, {
         anchor_date: replaceDateParts(schedule.anchor_date, { month: value }),
       });
-      setSelectorState(null);
       return;
     }
 
     await updateSchedule(schedule.cadence, {
       anchor_date: replaceDateParts(schedule.anchor_date, { day: value }),
     });
-    setSelectorState(null);
   }
+
+  const quickTimeOptions = useMemo(() => {
+    const options: Array<{
+      label: string;
+      hour: string;
+      minute: string;
+      period: TimePeriod;
+    }> = [];
+
+    for (let hour24 = 0; hour24 < 24; hour24 += 1) {
+      for (let minute = 0; minute < 60; minute += 15) {
+        const period: TimePeriod = hour24 >= 12 ? "PM" : "AM";
+        const hour12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
+
+        options.push({
+          label: `${hour12}:${String(minute).padStart(2, "0")} ${period}`,
+          hour: String(hour12),
+          minute: String(minute).padStart(2, "0"),
+          period,
+        });
+      }
+    }
+
+    return options;
+  }, []);
 
   return (
     <ImageBackground source={reminderBackground} style={{ flex: 1 }} resizeMode="cover">
@@ -802,6 +874,280 @@ export default function ReminderGroupsScreen() {
                   ))}
                 </ScrollView>
               </View>
+            </Pressable>
+          </Modal>
+          <Modal visible={!!pendingTimeCadence} transparent animationType="slide">
+            <Pressable
+              onPress={() => setPendingTimeCadence(null)}
+              style={{
+                flex: 1,
+                backgroundColor: "rgba(0,0,0,0.25)",
+                justifyContent: "flex-end",
+              }}
+            >
+              <Pressable
+                onPress={() => {}}
+                style={{
+                  backgroundColor: "white",
+                  borderTopLeftRadius: 20,
+                  borderTopRightRadius: 20,
+                  paddingTop: 20,
+                  paddingHorizontal: 20,
+                  paddingBottom: 18,
+                  maxHeight: "82%",
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 22,
+                    fontWeight: "700",
+                    color: "#111827",
+                    marginBottom: 8,
+                  }}
+                >
+                  Select time
+                </Text>
+
+                 <Text
+                  style={{
+                    fontSize: 14,
+                    color: "#475569",
+                    marginBottom: 8,
+                  }}
+                >
+                  Choose a quick time or enter a custom one.
+                </Text>
+
+                <Text
+                  style={{
+                    fontSize: 15,
+                    fontWeight: "700",
+                    color: "#111827",
+                    marginBottom: 14,
+                  }}
+                >
+                  Selected: {pendingTimeHour}:{pendingTimeMinute} {pendingTimePeriod}
+                </Text>
+
+                <View
+                  style={{
+                    flexDirection: "row",
+                    gap: 10,
+                    marginBottom: 14,
+                  }}
+                >
+                  <Pressable
+                    onPress={() => setPendingTimePeriod("AM")}
+                    style={{
+                      flex: 1,
+                      paddingVertical: 12,
+                      borderRadius: 12,
+                      alignItems: "center",
+                      backgroundColor: pendingTimePeriod === "AM" ? "#2563eb" : "#eef2ff",
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 14,
+                        fontWeight: "700",
+                        color: pendingTimePeriod === "AM" ? "white" : "#1e3a8a",
+                      }}
+                    >
+                      AM
+                    </Text>
+                  </Pressable>
+
+                  <Pressable
+                    onPress={() => setPendingTimePeriod("PM")}
+                    style={{
+                      flex: 1,
+                      paddingVertical: 12,
+                      borderRadius: 12,
+                      alignItems: "center",
+                      backgroundColor: pendingTimePeriod === "PM" ? "#2563eb" : "#eef2ff",
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 14,
+                        fontWeight: "700",
+                        color: pendingTimePeriod === "PM" ? "white" : "#1e3a8a",
+                      }}
+                    >
+                      PM
+                    </Text>
+                  </Pressable>
+                </View>
+
+                <Text
+                  style={{
+                    fontSize: 13,
+                    fontWeight: "600",
+                    color: "#475569",
+                    marginBottom: 8,
+                  }}
+                >
+                  Quick pick
+                </Text>
+
+                <ScrollView
+                  showsVerticalScrollIndicator={false}
+                  contentContainerStyle={{
+                    paddingBottom: 12,
+                    gap: 8,
+                  }}
+                  style={{ maxHeight: 280, marginBottom: 14 }}
+                >
+                  {Array.from({ length: 48 }, (_, index) => {
+                    const hour = Math.floor(index / 4) === 0 ? 12 : Math.floor(index / 4);
+                    const minute = (index % 4) * 15;
+                    const minuteText = String(minute).padStart(2, "0");
+                    const selected =
+                      pendingTimeHour === String(hour) &&
+                      pendingTimeMinute === minuteText;
+
+                    return (
+                      <Pressable
+                        key={`${hour}:${minuteText}`}
+                        onPress={() => {
+                          setPendingTimeHour(String(hour));
+                          setPendingTimeMinute(minuteText);
+                        }}
+                        style={{
+                          borderWidth: 1,
+                          borderColor: selected ? "#2563eb" : "#d1d5db",
+                          borderRadius: 12,
+                          paddingVertical: 12,
+                          paddingHorizontal: 14,
+                          backgroundColor: selected ? "#eff6ff" : "white",
+                        }}
+                      >
+                        <Text
+                          style={{
+                            fontSize: 14,
+                            fontWeight: "600",
+                            color: selected ? "#1d4ed8" : "#111827",
+                          }}
+                        >
+                          {hour}:{minuteText} {pendingTimePeriod}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+
+                <View
+                  style={{
+                    borderWidth: 1,
+                    borderColor: "#d1d5db",
+                    borderRadius: 14,
+                    padding: 12,
+                    backgroundColor: "#f8fafc",
+                    marginBottom: 14,
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 13,
+                      fontWeight: "600",
+                      color: "#475569",
+                      marginBottom: 8,
+                    }}
+                  >
+                    Custom time
+                  </Text>
+
+                  <View style={{ flexDirection: "row", gap: 10 }}>
+                    <TextInput
+                      value={pendingTimeHour}
+                      onChangeText={(value) => setPendingTimeHour(sanitizeHourInput(value))}
+                      keyboardType="number-pad"
+                      placeholder="12"
+                      style={{
+                        flex: 1,
+                        borderWidth: 1,
+                        borderColor: "#d1d5db",
+                        borderRadius: 12,
+                        paddingHorizontal: 12,
+                        paddingVertical: 12,
+                        backgroundColor: "white",
+                        color: "black",
+                        fontSize: 15,
+                        textAlign: "center",
+                      }}
+                    />
+
+                    <TextInput
+                      value={pendingTimeMinute}
+                      onChangeText={(value) => setPendingTimeMinute(sanitizeMinuteInput(value))}
+                      keyboardType="number-pad"
+                      placeholder="00"
+                      style={{
+                        flex: 1,
+                        borderWidth: 1,
+                        borderColor: "#d1d5db",
+                        borderRadius: 12,
+                        paddingHorizontal: 12,
+                        paddingVertical: 12,
+                        backgroundColor: "white",
+                        color: "black",
+                        fontSize: 15,
+                        textAlign: "center",
+                      }}
+                    />
+                  </View>
+                </View>
+
+                <View
+                  style={{
+                    flexDirection: "row",
+                    gap: 10,
+                    marginTop: 4,
+                  }}
+                >
+                  <Pressable
+                    onPress={() => setPendingTimeCadence(null)}
+                    style={{
+                      flex: 1,
+                      paddingVertical: 13,
+                      borderRadius: 12,
+                      backgroundColor: "#f3f4f6",
+                      alignItems: "center",
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 14,
+                        fontWeight: "600",
+                        color: "#374151",
+                      }}
+                    >
+                      Cancel
+                    </Text>
+                  </Pressable>
+
+                  <Pressable
+                    onPress={applyPendingTime}
+                    style={{
+                      flex: 1,
+                      paddingVertical: 13,
+                      borderRadius: 12,
+                      backgroundColor: "#2563eb",
+                      alignItems: "center",
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 14,
+                        fontWeight: "700",
+                        color: "white",
+                      }}
+                    >
+                      OK
+                    </Text>
+                  </Pressable>
+                </View>
+              </Pressable>
             </Pressable>
           </Modal>
         </SafeAreaView>

@@ -14,13 +14,14 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { syncLocalNotifications } from "../lib/notifications/syncNotifications";
 import { supabase } from "../lib/supabase";
 
 type AIWriteMode = "prayer" | "affirmation" | "goal" | "reminder";
 type SaveScheduleSource = "none" | "digest" | "custom";
 type CustomScheduleMode = "daily_time" | "fixed_date" | "interval" | "annual_date";
 type EntryIntervalUnit = "days" | "weeks" | "months" | "years";
-type DigestAssignment = "none" | "daily" | "weekly" | "monthly" | "yearly";
+type DigestAssignment = "none" | "daily" | "weekly" | "monthly" | "quarterly" | "yearly";
 type WeekdayValue = 0 | 1 | 2 | 3 | 4 | 5 | 6;
 
 type ProfileDigestSettings = {
@@ -212,7 +213,7 @@ export default function ComposeScreen() {
 
   const [saveScheduleSource, setSaveScheduleSource] = useState<SaveScheduleSource>("none");
   const [selectedSaveCadence, setSelectedSaveCadence] = useState<
-    "daily" | "weekly" | "monthly" | "yearly"
+    "daily" | "weekly" | "monthly" | "quarterly" | "yearly"
   >("daily");
   const [profileDigestSettings, setProfileDigestSettings] = useState<ProfileDigestSettings>({
     daily_digest_time: null,
@@ -336,6 +337,7 @@ export default function ComposeScreen() {
       entry.digest_assignment === "daily" ||
       entry.digest_assignment === "weekly" ||
       entry.digest_assignment === "monthly" ||
+      entry.digest_assignment === "quarterly" ||
       entry.digest_assignment === "yearly"
     ) {
       setSaveScheduleSource("digest");
@@ -726,6 +728,12 @@ export default function ComposeScreen() {
           Alert.alert("Could not save entry", error.message);
           return;
         }
+      }
+
+       try {
+        await syncLocalNotifications();
+      } catch (syncError) {
+        console.log("Compose notification sync error:", syncError);
       }
 
       setShowSaveEntryModal(false);
@@ -1316,7 +1324,7 @@ const selectedDigestDescription = useMemo(() => {
                         {selectedDigestDescription}
                       </Text>
                       <View style={{ gap: 8 }}>
-                        {(["daily", "weekly", "monthly", "yearly"] as const).map((cadence) => {
+                        {(["daily", "weekly", "monthly", "quarterly", "yearly"] as const).map((cadence) => {
                           const selected = selectedSaveCadence === cadence;
 
                           return (
