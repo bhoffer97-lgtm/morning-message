@@ -3,7 +3,6 @@ import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Alert,
   Animated,
   Dimensions,
   ImageBackground,
@@ -37,13 +36,9 @@ type Entry = {
   status: string;
   created_at: string | null;
   updated_at: string | null;
-  answered_at: string | null;
-  answer_notes: string | null;
   resolution_note: string | null;
   archived_at: string | null;
   retired_at: string | null;
-  last_completed_at: string | null;
-  reminder_group_id: string | null;
   needs_read: boolean;
   last_read_at: string | null;
   next_due_at: string | null;
@@ -55,6 +50,9 @@ type Entry = {
   annual_month: number | null;
   annual_day: number | null;
   anchor_date: string | null;
+  digest_assignment: "none" | "daily" | "weekly" | "monthly" | "yearly";
+  last_surface_at: string | null;
+  last_surface_window_key: string | null;
 };
 
 type DailyMessage = {
@@ -66,27 +64,19 @@ type DailyMessage = {
   message_date: string;
 };
 
-type ReminderGroup = {
-  id: string;
-  name: string;
-  cadence: "daily" | "weekly" | "monthly" | "yearly";
-  is_active: boolean;
-  next_run_at: string | null;
-  time_of_day?: string | null;
-  day_of_week?: number | null;
-  day_of_month?: number | null;
-  month_of_year?: number | null;
-};
-
 type UpcomingEntry = Entry & {
-  cadence: ReminderGroup["cadence"] | "custom";
+  cadence: "daily" | "weekly" | "monthly" | "yearly" | "custom" | "none";
   next_run_at: Date | null;
-  reminder_group_name: string;
+  surface_label: string;
 };
 
-function getArchiveActionLabel() {
-  return "Archive";
-}
+type WeekdayValue = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+
+type ProfileDigestSettings = {
+  daily_digest_time: string | null;
+  weekly_digest_day_of_week: WeekdayValue | null;
+  weekly_digest_time: string | null;
+};
 
 function formatLocalDate(date: Date) {
   const year = date.getFullYear();
@@ -112,8 +102,25 @@ function formatTimeLabel(time?: string | null) {
   return `${hour12}:${minute} ${ampm}`;
 }
 
+function formatDisplayTime(time: string | null) {
+  if (!time) return "Not set";
+
+  const [hours, minutes] = time.split(":");
+  const hourNum = Number(hours);
+  const minuteNum = Number(minutes);
+
+  const suffix = hourNum >= 12 ? "PM" : "AM";
+  const displayHour = hourNum % 12 === 0 ? 12 : hourNum % 12;
+
+  return `${displayHour}:${String(minuteNum).padStart(2, "0")} ${suffix}`;
+}
+
+function weekdayLabel(day: WeekdayValue) {
+  return ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][day];
+}
+
 function getEntryScheduleSummary(entry: Entry | UpcomingEntry) {
-  if (entry.reminder_group_id && entry.schedule_mode === "none") {
+   if (entry.digest_assignment !== "none" && entry.schedule_mode === "none") {
     return null;
   }
 
@@ -163,175 +170,6 @@ function getEntryScheduleSummary(entry: Entry | UpcomingEntry) {
   return "No schedule";
 }
 
-function formatReminderGroupSchedule(group: ReminderGroup) {
-  const formatTime = (time: string | null | undefined) => {
-    if (!time) return "No time set";
-
-    const [hours, minutes] = time.split(":");
-    const hourNum = Number(hours);
-    const minuteNum = Number(minutes);
-
-    const suffix = hourNum >= 12 ? "PM" : "AM";
-    const displayHour = hourNum % 12 === 0 ? 12 : hourNum % 12;
-
-    return `${displayHour}:${String(minuteNum).padStart(2, "0")} ${suffix}`;
-  };
-
-  if (group.cadence === "daily") {
-    return formatTime(group.time_of_day);
-  }
-
-  if (group.cadence === "weekly") {
-    const days = [
-      "Sunday",
-      "Monday",
-      "Tuesday",
-      "Wednesday",
-      "Thursday",
-      "Friday",
-      "Saturday",
-    ];
-
-    return `${group.day_of_week !== null && group.day_of_week !== undefined ? days[group.day_of_week] : "Day not set"} • ${formatTime(group.time_of_day)}`;
-  }
-
-  if (group.cadence === "monthly") {
-    return `Day ${group.day_of_month ?? "?"} • ${formatTime(group.time_of_day)}`;
-  }
-
-  if (group.cadence === "yearly") {
-    const months = [
-      "",
-      "January",
-      "February",
-      "March",
-      "April",
-      "May",
-      "June",
-      "July",
-      "August",
-      "September",
-      "October",
-      "November",
-      "December",
-    ];
-
-    return `${months[group.month_of_year ?? 0] || "Month not set"} ${group.day_of_month ?? "?"} • ${formatTime(group.time_of_day)}`;
-  }
-
-  return formatTime(group.time_of_day);
-}
-
-function getNextRunFromGroup(group: ReminderGroup) {
-  if (!group.time_of_day) return null;
-
-  const now = new Date();
-  const timeParts = group.time_of_day.split(":");
-  const hours = Number(timeParts[0] ?? 0);
-  const minutes = Number(timeParts[1] ?? 0);
-
-  const buildCandidate = (year: number, month: number, day: number) => {
-    return new Date(year, month, day, hours, minutes, 0, 0);
-  };
-
-  if (group.cadence === "daily") {
-    let candidate = buildCandidate(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate()
-    );
-
-    if (candidate <= now) {
-      candidate = buildCandidate(
-        now.getFullYear(),
-        now.getMonth(),
-        now.getDate() + 1
-      );
-    }
-
-    return candidate;
-  }
-
-  if (group.cadence === "weekly") {
-    if (group.day_of_week === null || group.day_of_week === undefined) return null;
-
-    const todayDow = now.getDay();
-    let daysAhead = (group.day_of_week - todayDow + 7) % 7;
-
-    let candidate = buildCandidate(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate() + daysAhead
-    );
-
-    if (candidate <= now) {
-      candidate = buildCandidate(
-        now.getFullYear(),
-        now.getMonth(),
-        now.getDate() + daysAhead + 7
-      );
-    }
-
-    return candidate;
-  }
-
-  if (group.cadence === "monthly") {
-    if (!group.day_of_month) return null;
-
-    const year = now.getFullYear();
-    const month = now.getMonth();
-
-    const currentMonthLastDay = new Date(year, month + 1, 0).getDate();
-    const currentTargetDay = Math.min(group.day_of_month, currentMonthLastDay);
-
-    let candidate = buildCandidate(year, month, currentTargetDay);
-
-    if (candidate <= now) {
-      const nextMonthDate = new Date(year, month + 1, 1);
-      const nextYear = nextMonthDate.getFullYear();
-      const nextMonth = nextMonthDate.getMonth();
-      const nextMonthLastDay = new Date(nextYear, nextMonth + 1, 0).getDate();
-      const nextTargetDay = Math.min(group.day_of_month, nextMonthLastDay);
-
-      candidate = buildCandidate(nextYear, nextMonth, nextTargetDay);
-    }
-
-    return candidate;
-  }
-
-  if (group.cadence === "yearly") {
-    if (!group.month_of_year || !group.day_of_month) return null;
-
-    const currentYear = now.getFullYear();
-    const targetMonthIndex = group.month_of_year - 1;
-
-    const currentYearLastDay = new Date(currentYear, targetMonthIndex + 1, 0).getDate();
-    const currentYearTargetDay = Math.min(group.day_of_month, currentYearLastDay);
-
-    let candidate = buildCandidate(
-      currentYear,
-      targetMonthIndex,
-      currentYearTargetDay
-    );
-
-    if (candidate <= now) {
-      const nextYear = currentYear + 1;
-      const nextYearLastDay = new Date(nextYear, targetMonthIndex + 1, 0).getDate();
-      const nextYearTargetDay = Math.min(group.day_of_month, nextYearLastDay);
-
-      candidate = buildCandidate(
-        nextYear,
-        targetMonthIndex,
-        nextYearTargetDay
-      );
-    }
-
-    return candidate;
-  }
-
-  return null;
-}
-
 function formatUpcomingLabel(nextRunAt: Date | null) {
   if (!nextRunAt) return "";
 
@@ -368,7 +206,6 @@ export default function HomeScreen() {
   const [showVerseModal, setShowVerseModal] = useState(false);
   const [showCadenceMenu, setShowCadenceMenu] = useState(false);
   const [activeEntries, setActiveEntries] = useState<Entry[]>([]);
-  const [reminderGroups, setReminderGroups] = useState<ReminderGroup[]>([]);
   const [selectedCadenceFilter, setSelectedCadenceFilter] = useState<
     "all" | "daily" | "weekly" | "monthly" | "yearly"
   >("all");
@@ -379,13 +216,9 @@ export default function HomeScreen() {
   const [scrollY, setScrollY] = useState(0);
   const [messageSectionHeight, setMessageSectionHeight] = useState(0);
 
-  const [updatingPrayerId, setUpdatingPrayerId] = useState<string | null>(null);
   const [isRegeneratingMessage, setIsRegeneratingMessage] = useState(false);
-  const [showAnswerNoteModal, setShowAnswerNoteModal] = useState(false);
-  const [answerNoteText, setAnswerNoteText] = useState("");
-  const [entryToCompleteId, setEntryToCompleteId] = useState<string | null>(null);
   const [isBrowseMode, setIsBrowseMode] = useState(false);
-   const scrollViewRef = useRef<ScrollView | null>(null);
+  const scrollViewRef = useRef<ScrollView | null>(null);
   const messageScrollRef = useRef<ScrollView | null>(null);
   const searchInputRef = useRef<TextInput | null>(null);
   const hasAutoScrolledSearchRef = useRef(false);
@@ -409,6 +242,11 @@ const hasActiveFilter = selectedCadenceFilter !== "all";
 const shouldPinFloatingHeader = hasActiveSearch || hasActiveFilter;
 
 const showFloatingHeader = isBrowseMode || shouldPinFloatingHeader;
+  const [profileDigestSettings, setProfileDigestSettings] = useState<ProfileDigestSettings>({
+    daily_digest_time: null,
+    weekly_digest_day_of_week: null,
+    weekly_digest_time: null,
+  });
 
 function openComposeModal() {
   router.push({
@@ -439,6 +277,39 @@ useEffect(() => {
     setIsBrowseMode(true);
   }
 }, [scrollY, isBrowseMode, shouldPinFloatingHeader]);
+
+
+  async function loadProfileDigestSettings() {
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      console.log("Load profile digest settings user error:", userError?.message);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("daily_digest_time, weekly_digest_day_of_week, weekly_digest_time")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    if (error) {
+      console.log("Load profile digest settings error:", error.message);
+      return;
+    }
+
+    setProfileDigestSettings({
+      daily_digest_time: data?.daily_digest_time ?? null,
+      weekly_digest_day_of_week:
+        typeof data?.weekly_digest_day_of_week === "number"
+          ? (data.weekly_digest_day_of_week as WeekdayValue)
+          : null,
+      weekly_digest_time: data?.weekly_digest_time ?? null,
+    });
+  }
 
   async function loadMessage() {
     const {
@@ -562,7 +433,7 @@ async function loadEntries() {
   const { data, error } = await supabase
     .from("entries")
     .select(
-      "id, title, content, type, status, created_at, updated_at, answered_at, answer_notes, resolution_note, archived_at, retired_at, last_completed_at, reminder_group_id, needs_read, last_read_at, next_due_at, schedule_mode, due_date, due_time, interval_value, interval_unit, annual_month, annual_day, anchor_date"
+     "id, title, content, type, status, created_at, updated_at, resolution_note, archived_at, retired_at, needs_read, last_read_at, next_due_at, schedule_mode, due_date, due_time, interval_value, interval_unit, annual_month, annual_day, anchor_date, digest_assignment, last_surface_at, last_surface_window_key"
     )
     .eq("status", "active")
     .order("updated_at", { ascending: false });
@@ -574,24 +445,6 @@ async function loadEntries() {
 
   setActiveEntries((data as Entry[]) ?? []);
 }
-
-  async function loadReminderGroups() {
-    const { data, error } = await supabase
-      .from("reminder_groups")
-      .select(
-        "id, name, cadence, is_active, next_run_at, time_of_day, day_of_week, day_of_month, month_of_year"
-      )
-      .eq("is_active", true)
-      .order("next_run_at", { ascending: true });
-
-    if (error) {
-      console.log("Load reminder groups error:", error.message);
-      return;
-    }
-
-    const groups = (data as ReminderGroup[]) ?? [];
-    setReminderGroups(groups);
-  }
 
   async function loadVerse(reference: string) {
     console.log("Loading verse for reference:", reference);
@@ -617,47 +470,35 @@ async function loadEntries() {
     }
   }
 
-  const markEntryCompleted = async (id: string) => {
-    setEntryToCompleteId(id);
-    setAnswerNoteText("");
-    setShowAnswerNoteModal(true);
+  const archiveEntry = async (id: string) => {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      console.log("No user found for archive");
+      return;
+    }
+
+    const { error } = await supabase.rpc("archive_entry", {
+      p_entry_id: id,
+      p_user_id: user.id,
+    });
+
+    if (error) {
+      console.log("archive_entry error:", error.message);
+      return;
+    }
+
+    if (selectedEntry?.id === id) {
+      setShowEntryModal(false);
+      setSelectedEntry(null);
+    }
+
+    await loadEntries();
   };
 
-const saveAnswerNote = async () => {
-  if (!entryToCompleteId) return;
-
-  setUpdatingPrayerId(entryToCompleteId);
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    console.log("No user found for completion");
-    setUpdatingPrayerId(null);
-    return;
-  }
-
-  const { error } = await supabase.rpc("complete_entry", {
-    p_entry_id: entryToCompleteId,
-    p_user_id: user.id,
-    p_resolution_note: answerNoteText.trim() || null,
-  });
-
-  if (error) {
-    console.log("Error saving answer note:", error.message);
-    setUpdatingPrayerId(null);
-    return;
-  }
-
-  setShowAnswerNoteModal(false);
-  setEntryToCompleteId(null);
-  setAnswerNoteText("");
-  await loadEntries();
-  setUpdatingPrayerId(null);
-};
-
-   const deleteEntry = async (id: string) => {
+    const deleteEntry = async (id: string) => {
     const { error } = await supabase.from("entries").delete().eq("id", id);
 
     if (error) {
@@ -689,14 +530,38 @@ const openEntry = async (entry: UpcomingEntry) => {
   setSelectedEntry(entry);
   setShowEntryModal(true);
 
-  if (entry.needs_read) {
-    await supabase
-      .from("entries")
-      .update({ needs_read: false, last_read_at: new Date().toISOString() })
-      .eq("id", entry.id);
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
-    await loadEntries();
+  if (!user) {
+    console.log("No user found for view_entry");
+    return;
   }
+
+  const { data, error } = await supabase.rpc("view_entry", {
+    p_entry_id: entry.id,
+    p_user_id: user.id,
+  });
+
+  if (error) {
+    console.log("view_entry error:", error.message);
+    return;
+  }
+
+  if (data) {
+    setSelectedEntry((current) =>
+      current
+        ? {
+            ...current,
+            ...data,
+            next_run_at: data.next_due_at ? new Date(data.next_due_at) : null,
+          }
+        : current
+    );
+  }
+
+  await loadEntries();
 };
 
 useEffect(() => {
@@ -714,8 +579,8 @@ useEffect(() => {
       await generateDailyMessage();
     }
 
-    await loadEntries();
-    await loadReminderGroups();
+       await loadEntries();
+      await loadProfileDigestSettings();
   }
 
   initialize();
@@ -724,7 +589,7 @@ useEffect(() => {
    useFocusEffect(
     useCallback(() => {
       loadEntries();
-      loadReminderGroups();
+      loadProfileDigestSettings();
 
       requestAnimationFrame(() => {
         scrollViewRef.current?.scrollTo({ y: 0, animated: false });
@@ -783,99 +648,65 @@ useEffect(() => {
     });
   }, [activeEntries, searchText]);
 
-  const entriesByGroupId = useMemo(() => {
-    const grouped: Record<string, Entry[]> = {};
-
-    filteredActiveEntries.forEach((entry) => {
-      if (!entry.reminder_group_id) return;
-
-      if (!grouped[entry.reminder_group_id]) {
-        grouped[entry.reminder_group_id] = [];
-      }
-
-      grouped[entry.reminder_group_id].push(entry);
-    });
-
-    return grouped;
-  }, [filteredActiveEntries]);
-
-const ungroupedEntries = useMemo(() => {
-  return filteredActiveEntries.filter((entry) => !entry.reminder_group_id);
-}, [filteredActiveEntries]);
-
 const upcomingEntries = useMemo<UpcomingEntry[]>(() => {
   const now = new Date();
 
-  const groupedItems = reminderGroups
-    .filter((group) => {
-      const nextRun = getNextRunFromGroup(group);
-      const cadenceMatches =
-        selectedCadenceFilter === "all" || group.cadence === selectedCadenceFilter;
+  return filteredActiveEntries
+    .filter((entry) => {
+      if (selectedCadenceFilter === "all") {
+        return true;
+      }
 
-      return !!nextRun && nextRun >= now && cadenceMatches;
+      return entry.digest_assignment === selectedCadenceFilter;
     })
-    .flatMap((group) => {
-      const items = entriesByGroupId[group.id] ?? [];
-      const nextRun = getNextRunFromGroup(group);
+    .map((entry) => {
+      const nextRun = entry.next_due_at ? new Date(entry.next_due_at) : null;
 
-      return items.map((entry) => ({
+      const cadence =
+        entry.digest_assignment === "daily" ||
+        entry.digest_assignment === "weekly" ||
+        entry.digest_assignment === "monthly" ||
+        entry.digest_assignment === "yearly"
+          ? entry.digest_assignment
+          : entry.schedule_mode !== "none"
+          ? "custom"
+          : "none";
+
+       const surfaceLabel =
+        entry.digest_assignment === "daily"
+          ? `Daily Reminder • ${formatDisplayTime(profileDigestSettings.daily_digest_time ?? "07:00:00")}`
+          : entry.digest_assignment === "weekly"
+          ? `Weekly Reminder • ${weekdayLabel(
+              profileDigestSettings.weekly_digest_day_of_week ?? 0
+            )} • ${formatDisplayTime(profileDigestSettings.weekly_digest_time ?? "08:00:00")}`
+          : entry.digest_assignment === "monthly"
+          ? "Monthly Reminder"
+          : entry.digest_assignment === "yearly"
+          ? "Yearly Reminder"
+          : entry.schedule_mode !== "none"
+          ? "Custom schedule"
+          : "Ungrouped";
+
+      return {
         ...entry,
-        cadence: group.cadence,
-        next_run_at: nextRun,
-        reminder_group_name: group.name,
-      }));
+        cadence,
+        next_run_at: nextRun && nextRun >= now ? nextRun : nextRun,
+        surface_label: surfaceLabel,
+      };
+    })
+    .sort((a, b) => {
+      if (!a.next_run_at && !b.next_run_at) {
+        const aCreated = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const bCreated = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return bCreated - aCreated;
+      }
+
+      if (!a.next_run_at) return 1;
+      if (!b.next_run_at) return -1;
+
+      return a.next_run_at.getTime() - b.next_run_at.getTime();
     });
-
-   const customScheduledItems =
-    selectedCadenceFilter === "all"
-      ? filteredActiveEntries
-          .filter(
-            (entry) =>
-              !entry.reminder_group_id &&
-              entry.schedule_mode !== "none" &&
-              !!entry.next_due_at
-          )
-          .map((entry) => {
-            const nextRun = entry.next_due_at ? new Date(entry.next_due_at) : null;
-
-            return {
-              ...entry,
-              cadence: "custom" as const,
-              next_run_at: nextRun && nextRun >= now ? nextRun : null,
-              reminder_group_name: "Custom schedule",
-            };
-          })
-      : [];
-
-  const ungroupedItems =
-    selectedCadenceFilter === "all"
-      ? (ungroupedEntries ?? [])
-          .filter(
-            (entry) =>
-              entry.schedule_mode === "none" &&
-              !entry.next_due_at
-          )
-          .map((entry) => ({
-            ...entry,
-            cadence: "daily" as const,
-            next_run_at: null,
-            reminder_group_name: "Ungrouped",
-          }))
-      : [];
-
-  return [...groupedItems, ...customScheduledItems, ...ungroupedItems].sort((a, b) => {
-    if (!a.next_run_at && !b.next_run_at) {
-      const aCreated = a.created_at ? new Date(a.created_at).getTime() : 0;
-      const bCreated = b.created_at ? new Date(b.created_at).getTime() : 0;
-      return bCreated - aCreated;
-    }
-
-    if (!a.next_run_at) return 1;
-    if (!b.next_run_at) return -1;
-
-    return a.next_run_at.getTime() - b.next_run_at.getTime();
-  });
-}, [reminderGroups, entriesByGroupId, filteredActiveEntries, selectedCadenceFilter, ungroupedEntries]);
+}, [filteredActiveEntries, selectedCadenceFilter, profileDigestSettings]);
  
    function renderHomeHeaderContent(isFloating = Boolean) {
     return (
@@ -1486,11 +1317,11 @@ const upcomingEntries = useMemo<UpcomingEntry[]>(() => {
     alignItems: "center",
   }}
 >
-  <Pressable
+   <Pressable
     onPress={() => {
       if (!selectedEntry) return;
       setShowEntryModal(false);
-      markEntryCompleted(selectedEntry.id);
+      archiveEntry(selectedEntry.id);
     }}
     style={{
       backgroundColor: "#2e6cff",
@@ -1506,7 +1337,7 @@ const upcomingEntries = useMemo<UpcomingEntry[]>(() => {
         fontWeight: "700",
       }}
     >
-      {getArchiveActionLabel()}
+      Archive
     </Text>
   </Pressable>
 
@@ -1573,15 +1404,15 @@ onPress={() => {
                 marginBottom: 18,
               }}
             >
-              {selectedEntry.reminder_group_name
-                ? `${selectedEntry.reminder_group_name} • `
+               {selectedEntry.surface_label
+                ? selectedEntry.schedule_mode === "none"
+                  ? selectedEntry.surface_label
+                  : `${selectedEntry.surface_label} • `
                 : ""}
-            {getEntryScheduleSummary(selectedEntry) ??
-              (selectedEntry.cadence === "custom"
-                ? "Custom schedule"
-                : selectedEntry.cadence.charAt(0).toUpperCase() + selectedEntry.cadence.slice(1))}
-              {selectedEntry.next_run_at
-                ? ` • ${formatUpcomingLabel(selectedEntry.next_run_at)}`
+              {selectedEntry.schedule_mode !== "none"
+                ? `${getEntryScheduleSummary(selectedEntry)}${
+                    selectedEntry.next_run_at ? ` • ${formatUpcomingLabel(selectedEntry.next_run_at)}` : ""
+                  }`
                 : ""}
             </Text>
 
@@ -1616,116 +1447,6 @@ onPress={() => {
       </KeyboardAvoidingView>
     </View>
 </Modal>
-
-       <Modal visible={showAnswerNoteModal} transparent animationType="slide">
-          <Pressable
-            onPress={() => {
-              setShowAnswerNoteModal(false);
-              setEntryToCompleteId(null);
-              setAnswerNoteText("");
-            }}
-            style={{
-              flex: 1,
-              backgroundColor: "rgba(0,0,0,0.35)",
-              justifyContent: "flex-end",
-            }}
-          >
-            <Pressable
-              onPress={() => {}}
-              style={{
-                backgroundColor: "white",
-                borderTopLeftRadius: 20,
-                borderTopRightRadius: 20,
-                padding: 24,
-                paddingBottom: 18,
-              }}
-            >
-              <TextInput
-                placeholder="Add a note for future reference..."
-                placeholderTextColor="#888"
-                value={answerNoteText}
-                onChangeText={setAnswerNoteText}
-                multiline
-                style={{
-                  borderWidth: 1,
-                  borderColor: "#d6d6d6",
-                  borderRadius: 10,
-                  padding: 14,
-                  minHeight: 125,
-                  textAlignVertical: "top",
-                  marginBottom: 16,
-                }}
-              />
-
-              <View>
-                <Pressable
-                  onPress={saveAnswerNote}
-                  disabled={updatingPrayerId === entryToCompleteId}
-                  style={{
-                    backgroundColor: "#2e6cff",
-                    borderRadius: 10,
-                    paddingVertical: 14,
-                    marginBottom: 10,
-                    opacity: updatingPrayerId === entryToCompleteId ? 0.7 : 1,
-                  }}
-                >
-                  <Text
-                    style={{
-                      color: "white",
-                      textAlign: "center",
-                      fontSize: 16,
-                      fontWeight: "600",
-                    }}
-                  >
-                    {updatingPrayerId === entryToCompleteId ? "Saving..." : "Save"}
-                  </Text>
-                </Pressable>
-
-                <Pressable
-                   onPress={async () => {
-                    if (!entryToCompleteId) return;
-
-                    const {
-                      data: { user },
-                    } = await supabase.auth.getUser();
-
-                    if (!user) {
-                      console.log("No user found for completion");
-                      return;
-                    }
-
-                    const { error } = await supabase.rpc("complete_entry", {
-                      p_entry_id: entryToCompleteId,
-                      p_user_id: user.id,
-                      p_resolution_note: null,
-                    });
-
-                    if (error) {
-                      console.log("Error skipping answer note:", error.message);
-                      return;
-                    }
-
-                    setShowAnswerNoteModal(false);
-                    setEntryToCompleteId(null);
-                    setAnswerNoteText("");
-                    await loadEntries();
-                  }}
-                  style={{ paddingVertical: 8 }}
-                >
-                  <Text
-                    style={{
-                      textAlign: "center",
-                      color: "#666",
-                      fontSize: 14,
-                    }}
-                  >
-                    Skip
-                  </Text>
-                </Pressable>
-              </View>
-            </Pressable>
-          </Pressable>
-        </Modal>
 
         <Modal visible={showVerseModal} transparent animationType="slide">
           <Pressable

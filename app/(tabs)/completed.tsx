@@ -14,28 +14,19 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { supabase } from "../../lib/supabase";
 
-const completedHeaderImage = require("../../assets/images/morning-nature-4.jpg");
+const archivedHeaderImage = require("../../assets/images/morning-nature-4.jpg");
 
 type CadenceFilter = "all" | "daily" | "weekly" | "monthly" | "yearly";
 
 function getArchivedText(entry: any) {
-  const eventDate =
-    entry.archived_at ||
-    entry.retired_at ||
-    entry.last_completed_at ||
-    entry.answered_at;
+  const eventDate = entry.archived_at || entry.retired_at;
 
   if (!eventDate) return "";
 
   const eventDateObj = new Date(eventDate);
   const formattedDate = eventDateObj.toLocaleDateString();
 
-  const prefix =
-    entry.status === "archived"
-      ? "Archived"
-      : entry.status === "retired"
-      ? "Retired"
-      : "Completed";
+  const prefix = entry.status === "retired" ? "Retired" : "Archived";
 
   if (!entry.created_at) {
     return `${prefix} on ${formattedDate}`;
@@ -48,36 +39,44 @@ function getArchivedText(entry: any) {
   return `${prefix} on ${formattedDate} after ${diffDays} day${diffDays === 1 ? "" : "s"}`;
 }
 
-function getCadenceLabel(cadence?: string | null) {
-  switch ((cadence || "").toLowerCase()) {
-    case "daily":
-      return "Daily";
-    case "weekly":
-      return "Weekly";
-    case "monthly":
-      return "Monthly";
-    case "yearly":
-      return "Yearly";
-    default:
-      return "Archived";
-  }
+function getCadenceLabel(entry: any) {
+  const digestAssignment = (entry.digest_assignment || "").toLowerCase();
+  const scheduleMode = (entry.schedule_mode || "").toLowerCase();
+
+  if (digestAssignment === "daily") return "Daily";
+  if (digestAssignment === "weekly") return "Weekly";
+  if (digestAssignment === "monthly") return "Monthly";
+  if (digestAssignment === "yearly") return "Yearly";
+
+  if (scheduleMode === "daily_time") return "Daily";
+  if (scheduleMode === "annual_date") return "Yearly";
+  if (scheduleMode === "interval") return "Repeating";
+  if (scheduleMode === "fixed_date") return "One Date";
+  if (scheduleMode === "holiday") return "Holiday";
+
+  return "Archived";
 }
 
-function cadenceMatchesFilter(cadence: string | null | undefined, filter: CadenceFilter) {
+function cadenceMatchesFilter(
+  cadence: string | null | undefined,
+  filter: CadenceFilter
+) {
   if (filter === "all") return true;
   return (cadence || "").toLowerCase() === filter;
 }
 
 export default function CompletedScreen() {
-    const [answeredEntries, setAnsweredEntries] = useState<any[]>([]);
-    const [searchText, setSearchText] = useState("");
-    const [selectedCadence, setSelectedCadence] = useState<CadenceFilter>("all");
-    const [showCadenceMenu, setShowCadenceMenu] = useState(false);
-    const [selectedArchivedEntry, setSelectedArchivedEntry] = useState<any | null>(null);
-    const [showArchivedEntryModal, setShowArchivedEntryModal] = useState(false);
-    const [isSearchFocused, setIsSearchFocused] = useState(false);
-    const scrollViewRef = useRef<ScrollView | null>(null);
-  async function loadCompletedEntries() {
+  const [archivedEntries, setArchivedEntries] = useState<any[]>([]);
+  const [searchText, setSearchText] = useState("");
+  const [selectedCadence, setSelectedCadence] = useState<CadenceFilter>("all");
+  const [showCadenceMenu, setShowCadenceMenu] = useState(false);
+  const [selectedArchivedEntry, setSelectedArchivedEntry] = useState<any | null>(null);
+  const [showArchivedEntryModal, setShowArchivedEntryModal] = useState(false);
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const scrollViewRef = useRef<ScrollView | null>(null);
+
+  async function loadArchivedEntries() {
+async function loadArchivedEntries() {
     const { data, error } = await supabase
       .from("entries")
 .select(`
@@ -85,21 +84,21 @@ export default function CompletedScreen() {
   title,
   content,
   status,
-  answered_at,
   created_at,
-  answer_notes,
   archived_at,
   retired_at,
-  last_completed_at,
   resolution_note,
-  reminder_group_id,
-  reminder_groups (
-    id,
-    name,
-    cadence
-  )
+  digest_assignment,
+  schedule_mode,
+  next_due_at,
+  due_date,
+  due_time,
+  annual_month,
+  annual_day,
+  interval_value,
+  interval_unit
 `)
- .in("status", ["completed", "archived", "retired"])
+ .in("status", ["archived", "retired"])
 .order("updated_at", { ascending: false });
 
     if (error) {
@@ -108,7 +107,7 @@ export default function CompletedScreen() {
     }
 
     if (data) {
-      setAnsweredEntries(data);
+      setArchivedEntries(data);
     }
   }
 
@@ -132,7 +131,7 @@ export default function CompletedScreen() {
     return;
   }
 
-  await loadCompletedEntries();
+    await loadArchivedEntries();
 };
 
    const deleteEntry = async (id: string) => {
@@ -151,7 +150,7 @@ export default function CompletedScreen() {
       setSelectedArchivedEntry(null);
     }
 
-    setAnsweredEntries((current) => current.filter((entry) => entry.id !== id));
+    setArchivedEntries((current) => current.filter((entry) => entry.id !== id));
   };
 
   const confirmDeleteEntry = (id: string) => {
@@ -170,7 +169,7 @@ export default function CompletedScreen() {
 
     useFocusEffect(
     useCallback(() => {
-      loadCompletedEntries();
+      loadArchivedEntries();
       scrollViewRef.current?.scrollTo({ y: 0, animated: false });
     }, [])
   );
@@ -178,31 +177,31 @@ export default function CompletedScreen() {
   const filteredEntries = useMemo(() => {
     const normalizedSearch = searchText.trim().toLowerCase();
 
-    return answeredEntries.filter((entry) => {
+    return archivedEntries.filter((entry) => {
       const title = entry.title?.toLowerCase() ?? "";
       const content = entry.content?.toLowerCase() ?? "";
-      const notes = (entry.resolution_note || entry.answer_notes || "").toLowerCase();
-      const groupName = entry.reminder_groups?.name?.toLowerCase() ?? "";
-      const cadence = entry.reminder_groups?.cadence ?? null;
+      const archiveNote = (entry.resolution_note || "").toLowerCase();
+      const cadence = entry.digest_assignment ?? null;
+      const scheduleMode = entry.schedule_mode ?? "";
 
       const matchesSearch =
         !normalizedSearch ||
         title.includes(normalizedSearch) ||
         content.includes(normalizedSearch) ||
-        notes.includes(normalizedSearch) ||
-        groupName.includes(normalizedSearch);
+        archiveNote.includes(normalizedSearch) ||
+        scheduleMode.toLowerCase().includes(normalizedSearch);
 
       const matchesCadence = cadenceMatchesFilter(cadence, selectedCadence);
 
       return matchesSearch && matchesCadence;
     });
-  }, [answeredEntries, searchText, selectedCadence]);
+   }, [archivedEntries, searchText, selectedCadence]);
 
   const hasSearch = searchText.trim().length > 0;
 
   return (
   <GestureHandlerRootView style={{ flex: 1 }}>
-    <ImageBackground source={completedHeaderImage} style={{ flex: 1 }} resizeMode="cover">
+    <ImageBackground source={archivedHeaderImage} style={{ flex: 1 }} resizeMode="cover">
       <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.30)" }}>
         <SafeAreaView style={{ flex: 1, backgroundColor: "transparent" }}>
 
@@ -344,12 +343,7 @@ export default function CompletedScreen() {
             <View style={{ paddingTop: 6 }}>
 
               {filteredEntries.map((entry) => {
-                const reminderGroup = Array.isArray(entry.reminder_groups)
-                  ? entry.reminder_groups[0]
-                  : entry.reminder_groups;
-
-                const cadenceLabel = getCadenceLabel(reminderGroup?.cadence);
-                const hasTitle = !!entry.title?.trim();
+                 const cadenceLabel = getCadenceLabel(entry);
 
                  return (
                   <Pressable
@@ -453,7 +447,7 @@ export default function CompletedScreen() {
 
 <Modal visible={showArchivedEntryModal} animationType="slide" presentationStyle="fullScreen">
   <ImageBackground
-    source={completedHeaderImage}
+    source={archivedHeaderImage}
     resizeMode="cover"
     style={{ flex: 1 }}
   >
@@ -516,39 +510,39 @@ export default function CompletedScreen() {
                 {selectedArchivedEntry.content}
               </Text>
 
-              {(selectedArchivedEntry.resolution_note || selectedArchivedEntry.answer_notes) ? (
-              <View
-                style={{
-                  backgroundColor: "#f8fafc",
-                  borderRadius: 12,
-                  padding: 14,
-                  marginBottom: 24,
-                  borderWidth: 1,
-                  borderColor: "#e5e7eb",
-                }}
-              >
-                <Text
+               {selectedArchivedEntry.resolution_note ? (
+                <View
                   style={{
-                    fontSize: 12,
-                    fontWeight: "700",
-                    color: "#334155",
-                    marginBottom: 6,
+                    backgroundColor: "#f8fafc",
+                    borderRadius: 12,
+                    padding: 14,
+                    marginBottom: 24,
+                    borderWidth: 1,
+                    borderColor: "#e5e7eb",
                   }}
                 >
-                  Resolution note
-                </Text>
+                  <Text
+                    style={{
+                      fontSize: 12,
+                      fontWeight: "700",
+                      color: "#334155",
+                      marginBottom: 6,
+                    }}
+                  >
+                    Archive note
+                  </Text>
 
-                <Text
-                  style={{
-                    fontSize: 14,
-                    lineHeight: 22,
-                    color: "#334155",
-                  }}
-                >
-                  {selectedArchivedEntry.resolution_note || selectedArchivedEntry.answer_notes}
-                </Text>
-              </View>
-            ) : null}
+                  <Text
+                    style={{
+                      fontSize: 14,
+                      lineHeight: 22,
+                      color: "#334155",
+                    }}
+                  >
+                    {selectedArchivedEntry.resolution_note}
+                  </Text>
+                </View>
+              ) : null}
 
               <View
                 style={{
@@ -627,12 +621,7 @@ export default function CompletedScreen() {
                   marginBottom: 18,
                 }}
               >
-                {getCadenceLabel(
-                  Array.isArray(selectedArchivedEntry.reminder_groups)
-                    ? selectedArchivedEntry.reminder_groups[0]?.cadence
-                    : selectedArchivedEntry.reminder_groups?.cadence
-                )}{" "}
-                • {getArchivedText(selectedArchivedEntry)}
+                 {getCadenceLabel(selectedArchivedEntry)} • {getArchivedText(selectedArchivedEntry)}
               </Text>
 
               <Pressable
@@ -722,4 +711,4 @@ export default function CompletedScreen() {
     </ImageBackground>
   </GestureHandlerRootView>
 );
-}
+}}

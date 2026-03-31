@@ -1,5 +1,5 @@
 import { useFocusEffect } from "@react-navigation/native";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   Alert,
   ImageBackground,
@@ -15,37 +15,57 @@ import { supabase } from "../../lib/supabase";
 
 const reminderBackground = require("../../assets/images/morning-nature-2.jpg");
 
-type ReminderGroup = {
+type ReminderCadence = "daily" | "weekly" | "monthly" | "quarterly" | "yearly";
+type TimePeriod = "AM" | "PM";
+type SelectorType = "weekday" | "month" | "day";
+
+type ReminderSchedule = {
   id: string;
-  name: string;
-  cadence: "daily" | "weekly" | "monthly" | "yearly";
-  time_of_day: string | null;
-  day_of_week: number | null;
-  day_of_month: number | null;
-  month_of_year: number | null;
-  is_active: boolean;
+  cadence: ReminderCadence;
+  is_enabled: boolean;
+  anchor_date: string;
+  time_of_day: string;
 };
 
-function formatTime(time: string | null) {
-  if (!time) return "No time set";
+type SelectorState = {
+  cadence: ReminderCadence;
+  type: SelectorType;
+} | null;
 
-  const [hours, minutes] = time.split(":");
-  const hourNum = Number(hours);
-  const minuteNum = Number(minutes);
+const cadenceOrder: ReminderCadence[] = [
+  "daily",
+  "weekly",
+  "monthly",
+  "quarterly",
+  "yearly",
+];
 
-  const suffix = hourNum >= 12 ? "PM" : "AM";
-  const displayHour = hourNum % 12 === 0 ? 12 : hourNum % 12;
+const monthLabels = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+];
 
-  return `${displayHour}:${String(minuteNum).padStart(2, "0")} ${suffix}`;
+function weekdayLabel(day: number) {
+  return ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][day] ?? "Sunday";
 }
 
-function parseTimeForForm(time: string | null) {
-  const safeTime = time && time.includes(":") ? time : "09:00";
+function parseTimeForForm(time: string | null, fallback = "07:00") {
+  const safeTime = time && time.includes(":") ? time : fallback;
   const [hours, minutes] = safeTime.split(":");
   const hourNum = Number(hours);
   const minuteNum = Number(minutes);
 
-  const period: "AM" | "PM" = hourNum >= 12 ? "PM" : "AM";
+  const period: TimePeriod = hourNum >= 12 ? "PM" : "AM";
   const hour12 = hourNum % 12 === 0 ? 12 : hourNum % 12;
 
   return {
@@ -55,7 +75,7 @@ function parseTimeForForm(time: string | null) {
   };
 }
 
-function build24HourTime(hour: string, minute: string, period: "AM" | "PM") {
+function build24HourTime(hour: string, minute: string, period: TimePeriod) {
   const cleanHour = Math.min(12, Math.max(1, Number(hour) || 12));
   const cleanMinute = Math.min(59, Math.max(0, Number(minute) || 0));
 
@@ -64,7 +84,7 @@ function build24HourTime(hour: string, minute: string, period: "AM" | "PM") {
     hour24 += 12;
   }
 
-  return `${String(hour24).padStart(2, "0")}:${String(cleanMinute).padStart(2, "0")}`;
+  return `${String(hour24).padStart(2, "0")}:${String(cleanMinute).padStart(2, "0")}:00`;
 }
 
 function sanitizeMinuteInput(value: string) {
@@ -75,1066 +95,713 @@ function sanitizeHourInput(value: string) {
   return value.replace(/[^0-9]/g, "").slice(0, 2);
 }
 
-function formatGroupSchedule(group: ReminderGroup) {
-  if (group.cadence === "daily") {
-    return formatTime(group.time_of_day);
+function getTodayDateString() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function parseDateParts(dateString: string | null) {
+  const fallback = getTodayDateString();
+  const safe = dateString || fallback;
+  const [yearRaw, monthRaw, dayRaw] = safe.split("-");
+  const year = Number(yearRaw) || new Date().getFullYear();
+  const month = Number(monthRaw) || new Date().getMonth() + 1;
+  const day = Number(dayRaw) || new Date().getDate();
+
+  return { year, month, day };
+}
+
+function formatDateString(year: number, month: number, day: number) {
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function getDaysInMonth(year: number, month: number) {
+  return new Date(year, month, 0).getDate();
+}
+
+function replaceDateParts(
+  existingDate: string | null,
+  nextParts: Partial<{ year: number; month: number; day: number }>
+) {
+  const current = parseDateParts(existingDate);
+  const year = nextParts.year ?? current.year;
+  const month = nextParts.month ?? current.month;
+  const maxDay = getDaysInMonth(year, month);
+  const day = Math.min(nextParts.day ?? current.day, maxDay);
+
+  return formatDateString(year, month, day);
+}
+
+function getNextDateForWeekday(targetDay: number) {
+  const now = new Date();
+  const currentDay = now.getDay();
+  let diff = targetDay - currentDay;
+
+  if (diff < 0) diff += 7;
+  if (diff === 0) diff = 7;
+
+  now.setDate(now.getDate() + diff);
+
+  return formatDateString(now.getFullYear(), now.getMonth() + 1, now.getDate());
+}
+
+function getCadenceTitle(cadence: ReminderCadence) {
+  if (cadence === "daily") return "Daily Reminder";
+  if (cadence === "weekly") return "Weekly Reminder";
+  if (cadence === "monthly") return "Monthly Reminder";
+  if (cadence === "quarterly") return "Quarterly Reminder";
+  return "Yearly Reminder";
+}
+
+function addDays(date: Date, days: number) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function addMonths(date: Date, months: number) {
+  const next = new Date(date);
+  const originalDay = next.getDate();
+  next.setDate(1);
+  next.setMonth(next.getMonth() + months);
+  const daysInMonth = new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate();
+  next.setDate(Math.min(originalDay, daysInMonth));
+  return next;
+}
+
+function addYears(date: Date, years: number) {
+  const next = new Date(date);
+  const originalMonth = next.getMonth();
+  const originalDay = next.getDate();
+  next.setDate(1);
+  next.setFullYear(next.getFullYear() + years);
+  next.setMonth(originalMonth);
+  const daysInMonth = new Date(next.getFullYear(), originalMonth + 1, 0).getDate();
+  next.setDate(Math.min(originalDay, daysInMonth));
+  return next;
+}
+
+function formatPreviewDateTime(date: Date, includeYear = false) {
+  const month = date.getMonth() + 1;
+  const day = date.getDate();
+  const year = date.getFullYear();
+
+  let hours = date.getHours();
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  const period = hours >= 12 ? "PM" : "AM";
+  hours = hours % 12 || 12;
+
+  return includeYear
+    ? `${month}/${day}/${year} ${hours}:${minutes} ${period}`
+    : `${month}/${day} ${hours}:${minutes} ${period}`;
+}
+
+function getNextOccurrences(schedule: ReminderSchedule, count = 3) {
+  const results: Date[] = [];
+  const { year, month, day } = parseDateParts(schedule.anchor_date);
+  const time = parseTimeForForm(schedule.time_of_day);
+  const hour24 = Number(build24HourTime(time.hour, time.minute, time.period).split(":")[0]);
+  const minute = Number(time.minute);
+
+  let cursor = new Date(year, month - 1, day, hour24, minute, 0, 0);
+  const now = new Date();
+
+  while (cursor <= now) {
+    if (schedule.cadence === "daily") {
+      cursor = addDays(cursor, 1);
+    } else if (schedule.cadence === "weekly") {
+      cursor = addDays(cursor, 7);
+    } else if (schedule.cadence === "monthly") {
+      cursor = addMonths(cursor, 1);
+    } else if (schedule.cadence === "quarterly") {
+      cursor = addMonths(cursor, 3);
+    } else {
+      cursor = addYears(cursor, 1);
+    }
   }
 
-  if (group.cadence === "weekly") {
-    const days = [
-      "Sunday",
-      "Monday",
-      "Tuesday",
-      "Wednesday",
-      "Thursday",
-      "Friday",
-      "Saturday",
-    ];
+  while (results.length < count) {
+    results.push(new Date(cursor));
 
-    return `${group.day_of_week !== null ? days[group.day_of_week] : "Day not set"} • ${formatTime(group.time_of_day)}`;
+    if (schedule.cadence === "daily") {
+      cursor = addDays(cursor, 1);
+    } else if (schedule.cadence === "weekly") {
+      cursor = addDays(cursor, 7);
+    } else if (schedule.cadence === "monthly") {
+      cursor = addMonths(cursor, 1);
+    } else if (schedule.cadence === "quarterly") {
+      cursor = addMonths(cursor, 3);
+    } else {
+      cursor = addYears(cursor, 1);
+    }
   }
 
-  if (group.cadence === "monthly") {
-    return `Day ${group.day_of_month ?? "?"} • ${formatTime(group.time_of_day)}`;
-  }
+  return results;
+}
 
-  if (group.cadence === "yearly") {
-    const months = [
-      "",
-      "January",
-      "February",
-      "March",
-      "April",
-      "May",
-      "June",
-      "July",
-      "August",
-      "September",
-      "October",
-      "November",
-      "December",
-    ];
+function getUpcomingNotificationsText(schedule: ReminderSchedule) {
+  const upcoming = getNextOccurrences(schedule, 3);
+  const includeYear = schedule.cadence === "yearly";
 
-    return `${months[group.month_of_year ?? 0] || "Month not set"} ${group.day_of_month ?? "?"} • ${formatTime(group.time_of_day)}`;
-  }
-
-  return formatTime(group.time_of_day);
+  return `Upcoming notifications: ${upcoming
+    .map((date) => formatPreviewDateTime(date, includeYear))
+    .join(", ")}`;
 }
 
 export default function ReminderGroupsScreen() {
-  const [groups, setGroups] = useState<ReminderGroup[]>([]);
-  const [selectedCadenceFilter, setSelectedCadenceFilter] = useState<
-    "all" | "daily" | "weekly" | "monthly" | "yearly"
-  >("all");
-  const [showCadenceMenu, setShowCadenceMenu] = useState(false);
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [newCadence, setNewCadence] = useState<ReminderGroup["cadence"]>("daily");
-  const [newName, setNewName] = useState("");
-  const defaultTimeParts = parseTimeForForm("09:00");
-  const [newHour, setNewHour] = useState(defaultTimeParts.hour);
-  const [newMinute, setNewMinute] = useState(defaultTimeParts.minute);
-  const [newPeriod, setNewPeriod] = useState<"AM" | "PM">(defaultTimeParts.period);
-  const [newDayOfWeek, setNewDayOfWeek] = useState("1");
-  const [newDayOfMonth, setNewDayOfMonth] = useState("1");
-  const [newMonthOfYear, setNewMonthOfYear] = useState("1");
-  const [isSavingGroup, setIsSavingGroup] = useState(false);
-  const [editingGroup, setEditingGroup] = useState<ReminderGroup | null>(null);
-  const [showEditModal, setShowEditModal] = useState(false);
-  const [isDeletingGroupId, setIsDeletingGroupId] = useState<string | null>(null);
-  const scrollRef = useRef<ScrollView>(null);
-  const newTimeOfDay = useMemo(() => {
-    return build24HourTime(newHour, newMinute, newPeriod);
-  }, [newHour, newMinute, newPeriod]);
+  const [schedules, setSchedules] = useState<ReminderSchedule[]>([]);
+  const [selectorState, setSelectorState] = useState<SelectorState>(null);
+  const [savingKey, setSavingKey] = useState<string | null>(null);
 
-  async function loadGroups() {
+  async function loadReminderSchedules() {
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      console.log("Load reminder schedules user error:", userError?.message);
+      return;
+    }
+
     const { data, error } = await supabase
-      .from("reminder_groups")
-      .select("id, name, cadence, time_of_day, day_of_week, day_of_month, month_of_year, is_active")
-      .order("cadence", { ascending: true })
-      .order("time_of_day", { ascending: true });
+      .from("reminder_schedules")
+      .select("id, cadence, is_enabled, anchor_date, time_of_day")
+      .eq("user_id", user.id);
 
     if (error) {
-      console.log("Load reminder groups error:", error.message);
+      console.log("Load reminder schedules error:", error.message);
       return;
     }
 
-    setGroups((data as ReminderGroup[]) ?? []);
+    const sorted = ((data as ReminderSchedule[]) ?? []).sort(
+      (a, b) => cadenceOrder.indexOf(a.cadence) - cadenceOrder.indexOf(b.cadence)
+    );
+
+    setSchedules(sorted);
   }
 
- useFocusEffect(
-  useCallback(() => {
-    loadGroups();
+  useFocusEffect(
+    useCallback(() => {
+      loadReminderSchedules();
+    }, [])
+  );
 
-    // reset scroll to top
-    scrollRef.current?.scrollTo({ y: 0, animated: false });
-  }, [])
-);
-  function resetCreateForm(cadence: ReminderGroup["cadence"] = "daily") {
-    const defaultNames: Record<ReminderGroup["cadence"], string> = {
-      daily: "Daily Reminder",
-      weekly: "Weekly Reminder",
-      monthly: "Monthly Reminder",
-      yearly: "Yearly Reminder",
+  const schedulesByCadence = useMemo(() => {
+    return {
+      daily: schedules.find((item) => item.cadence === "daily") ?? null,
+      weekly: schedules.find((item) => item.cadence === "weekly") ?? null,
+      monthly: schedules.find((item) => item.cadence === "monthly") ?? null,
+      quarterly: schedules.find((item) => item.cadence === "quarterly") ?? null,
+      yearly: schedules.find((item) => item.cadence === "yearly") ?? null,
+    };
+  }, [schedules]);
+
+  async function updateSchedule(
+    cadence: ReminderCadence,
+    patch: Partial<ReminderSchedule>
+  ) {
+    const current = schedulesByCadence[cadence];
+
+    if (!current) return;
+
+    const optimistic: ReminderSchedule = {
+      ...current,
+      ...patch,
     };
 
-    setNewCadence(cadence);
-    setNewName(defaultNames[cadence]);
-    const defaultTime = parseTimeForForm("09:00");
-    setNewHour(defaultTime.hour);
-    setNewMinute(defaultTime.minute);
-    setNewPeriod(defaultTime.period);
-    setNewDayOfWeek("1");
-    setNewDayOfMonth("1");
-    setNewMonthOfYear("1");
-  }
+    setSchedules((existing) =>
+      existing.map((item) => (item.cadence === cadence ? optimistic : item))
+    );
 
-  function startEditGroup(group: ReminderGroup) {
-    setEditingGroup(group);
-    setNewCadence(group.cadence);
-    setNewName(group.name);
-    const parsedTime = parseTimeForForm(group.time_of_day ?? "09:00");
-    setNewHour(parsedTime.hour);
-    setNewMinute(parsedTime.minute);
-    setNewPeriod(parsedTime.period);
-    setNewDayOfWeek(String(group.day_of_week ?? 1));
-    setNewDayOfMonth(String(group.day_of_month ?? 1));
-    setNewMonthOfYear(String(group.month_of_year ?? 1));
-    setShowCreateModal(false);
-    setShowEditModal(true);
-  }
-
-  async function createReminderGroup() {
-    if (!newName.trim()) {
-      Alert.alert("Name required", "Please enter a reminder name.");
-      return;
-    }
-
-    const hourNum = Number(newHour);
-    const minuteNum = Number(newMinute);
-
-    if (!hourNum || hourNum < 1 || hourNum > 12) {
-      Alert.alert("Invalid time", "Please enter an hour between 1 and 12.");
-      return;
-    }
-
-    if (Number.isNaN(minuteNum) || minuteNum < 0 || minuteNum > 59) {
-      Alert.alert("Invalid time", "Please enter minutes between 00 and 59.");
-      return;
-    }
-
-    setIsSavingGroup(true);
-
-    const { data: userData, error: userError } = await supabase.auth.getUser();
-
-    if (userError || !userData?.user) {
-      setIsSavingGroup(false);
-      Alert.alert("Not signed in", "Please sign in again and try again.");
-      return;
-    }
-
-    const payload: any = {
-      user_id: userData.user.id,
-      name: newName.trim(),
-      cadence: newCadence,
-      time_of_day: newTimeOfDay || null,
-      is_active: true,
-    };
-
-    if (newCadence === "weekly") {
-      payload.day_of_week = Number(newDayOfWeek);
-    }
-
-    if (newCadence === "monthly") {
-      payload.day_of_month = Number(newDayOfMonth);
-    }
-
-    if (newCadence === "yearly") {
-      payload.day_of_month = Number(newDayOfMonth);
-      payload.month_of_year = Number(newMonthOfYear);
-    }
-
-    const { error } = await supabase.from("reminder_groups").insert(payload);
-
-    setIsSavingGroup(false);
-
-    if (error) {
-      console.log("Create reminder group error:", error.message);
-      Alert.alert("Could not save reminder", error.message);
-      return;
-    }
-
-    setShowCreateModal(false);
-    setShowEditModal(false);
-    setEditingGroup(null);
-    resetCreateForm("daily");
-    await loadGroups();
-  }
-
-  async function updateReminderGroup() {
-    if (!editingGroup) return;
-
-    if (!newName.trim()) {
-      Alert.alert("Name required", "Please enter a reminder name.");
-      return;
-    }
-
-    const hourNum = Number(newHour);
-    const minuteNum = Number(newMinute);
-
-    if (!hourNum || hourNum < 1 || hourNum > 12) {
-      Alert.alert("Invalid time", "Please enter an hour between 1 and 12.");
-      return;
-    }
-
-    if (Number.isNaN(minuteNum) || minuteNum < 0 || minuteNum > 59) {
-      Alert.alert("Invalid time", "Please enter minutes between 00 and 59.");
-      return;
-    }
-
-    setIsSavingGroup(true);
-
-    const payload: any = {
-      name: newName.trim(),
-      cadence: newCadence,
-      time_of_day: newTimeOfDay || null,
-    };
-
-    payload.day_of_week = null;
-    payload.day_of_month = null;
-    payload.month_of_year = null;
-
-    if (newCadence === "weekly") {
-      payload.day_of_week = Number(newDayOfWeek);
-    }
-
-    if (newCadence === "monthly") {
-      payload.day_of_month = Number(newDayOfMonth);
-    }
-
-    if (newCadence === "yearly") {
-      payload.day_of_month = Number(newDayOfMonth);
-      payload.month_of_year = Number(newMonthOfYear);
-    }
+    setSavingKey(cadence);
 
     const { error } = await supabase
-      .from("reminder_groups")
-      .update(payload)
-      .eq("id", editingGroup.id);
+      .from("reminder_schedules")
+      .update({
+        is_enabled: optimistic.is_enabled,
+        anchor_date: optimistic.anchor_date,
+        time_of_day: optimistic.time_of_day,
+      })
+      .eq("id", current.id);
 
-    setIsSavingGroup(false);
+    setSavingKey(null);
 
     if (error) {
-      console.log("Update reminder group error:", error.message);
-      Alert.alert("Could not update reminder", error.message);
-      return;
+      console.log("Update reminder schedule error:", error.message);
+      Alert.alert("Could not save reminder", error.message);
+      await loadReminderSchedules();
     }
-
-    setShowCreateModal(false);
-    setShowEditModal(false);
-    setEditingGroup(null);
-    resetCreateForm("daily");
-    await loadGroups();
   }
 
-  async function deleteReminderGroup(group: ReminderGroup) {
-    Alert.alert(
-      "Delete reminder?",
-      `Are you sure you want to delete "${group.name}"?`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            setIsDeletingGroupId(group.id);
+  function renderToggle(cadence: ReminderCadence, enabled: boolean) {
+    return (
+      <Pressable
+        onPress={() => updateSchedule(cadence, { is_enabled: !enabled })}
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 8,
+        }}
+      >
+        <Text
+          style={{
+            fontSize: 12,
+            fontWeight: "700",
+            color: enabled ? "#166534" : "#64748b",
+          }}
+        >
+          {enabled ? "ON" : "OFF"}
+        </Text>
 
-            const { error } = await supabase
-              .from("reminder_groups")
-              .delete()
-              .eq("id", group.id);
-
-            setIsDeletingGroupId(null);
-
-            if (error) {
-              console.log("Delete reminder group error:", error.message);
-              Alert.alert("Could not delete reminder", error.message);
-              return;
-            }
-
-            if (editingGroup?.id === group.id) {
-              setShowCreateModal(false);
-              setShowEditModal(false);
-              setEditingGroup(null);
-              resetCreateForm("daily");
-            }
-
-            await loadGroups();
-          },
-        },
-      ]
+        <View
+          style={{
+            width: 42,
+            height: 24,
+            borderRadius: 12,
+            paddingHorizontal: 3,
+            backgroundColor: enabled ? "#22c55e" : "#cbd5e1",
+            justifyContent: "center",
+            alignItems: enabled ? "flex-end" : "flex-start",
+          }}
+        >
+          <View
+            style={{
+              width: 18,
+              height: 18,
+              borderRadius: 9,
+              backgroundColor: "white",
+            }}
+          />
+        </View>
+      </Pressable>
     );
   }
 
-  const filteredGroups = useMemo(() => {
-    if (selectedCadenceFilter === "all") return groups;
+  function renderTimeRow(schedule: ReminderSchedule) {
+    const form = parseTimeForForm(schedule.time_of_day);
 
-    return groups.filter((group) => group.cadence === selectedCadenceFilter);
-  }, [groups, selectedCadenceFilter]);
+    return (
+      <View>
+        <Text
+          style={{
+            fontSize: 12,
+            fontWeight: "600",
+            color: "#475569",
+            marginBottom: 6,
+          }}
+        >
+          Time
+        </Text>
+
+        <View style={{ flexDirection: "row", gap: 10 }}>
+          <TextInput
+            value={form.hour}
+            onChangeText={(value) => {
+              const nextHour = sanitizeHourInput(value);
+              updateSchedule(schedule.cadence, {
+                time_of_day: build24HourTime(nextHour || "12", form.minute, form.period),
+              });
+            }}
+            keyboardType="number-pad"
+            placeholder="7"
+            style={{
+              flex: 1,
+              borderWidth: 1,
+              borderColor: "#d1d5db",
+              borderRadius: 12,
+              paddingHorizontal: 12,
+              paddingVertical: 10,
+              backgroundColor: "white",
+              color: "black",
+              fontSize: 14,
+            }}
+          />
+
+          <TextInput
+            value={form.minute}
+            onChangeText={(value) => {
+              const nextMinute = sanitizeMinuteInput(value);
+              updateSchedule(schedule.cadence, {
+                time_of_day: build24HourTime(form.hour, nextMinute || "00", form.period),
+              });
+            }}
+            keyboardType="number-pad"
+            placeholder="00"
+            style={{
+              flex: 1,
+              borderWidth: 1,
+              borderColor: "#d1d5db",
+              borderRadius: 12,
+              paddingHorizontal: 12,
+              paddingVertical: 10,
+              backgroundColor: "white",
+              color: "black",
+              fontSize: 14,
+            }}
+          />
+
+          <Pressable
+            onPress={() =>
+              updateSchedule(schedule.cadence, {
+                time_of_day: build24HourTime(
+                  form.hour,
+                  form.minute,
+                  form.period === "AM" ? "PM" : "AM"
+                ),
+              })
+            }
+            style={{
+              minWidth: 72,
+              borderWidth: 1,
+              borderColor: "#d1d5db",
+              borderRadius: 12,
+              paddingHorizontal: 12,
+              paddingVertical: 10,
+              backgroundColor: "white",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 14,
+                fontWeight: "600",
+                color: "#111827",
+              }}
+            >
+              {form.period}
+            </Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
+
+  function renderSelectorButton(label: string, onPress: () => void) {
+    return (
+      <Pressable
+        onPress={onPress}
+        style={{
+          borderWidth: 1,
+          borderColor: "#d1d5db",
+          borderRadius: 12,
+          paddingHorizontal: 12,
+          paddingVertical: 10,
+          backgroundColor: "white",
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+        }}
+      >
+        <Text
+          style={{
+            fontSize: 14,
+            fontWeight: "600",
+            color: "#111827",
+          }}
+        >
+          {label}
+        </Text>
+
+        <Text
+          style={{
+            fontSize: 14,
+            fontWeight: "700",
+            color: "#6b7280",
+          }}
+        >
+          ▼
+        </Text>
+      </Pressable>
+    );
+  }
+
+  function renderScheduleCard(schedule: ReminderSchedule | null) {
+    if (!schedule) return null;
+
+    const dateParts = parseDateParts(schedule.anchor_date);
+    const weekday = new Date(`${schedule.anchor_date}T00:00:00`).getDay();
+
+    return (
+    <View
+      key={schedule.cadence}
+      style={{
+        backgroundColor: "rgba(255,255,255,0.92)",
+        borderRadius: 14,
+        padding: 16,
+        borderWidth: 1,
+        borderColor: "#e5e7eb",
+        shadowColor: "#000",
+        shadowOpacity: 0.06,
+        shadowRadius: 8,
+        shadowOffset: { width: 0, height: 3 },
+        elevation: 2,
+        marginBottom: 14,
+      }}
+    >
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: 8,
+        }}
+      >
+        <Text
+          style={{
+            fontSize: 16,
+            fontWeight: "600",
+            color: "#111827",
+          }}
+        >
+          {getCadenceTitle(schedule.cadence)}
+        </Text>
+
+        {renderToggle(schedule.cadence, schedule.is_enabled)}
+      </View>
+
+      {schedule.cadence === "weekly" ? (
+        <View style={{ marginBottom: 14 }}>
+          <Text
+            style={{
+              fontSize: 12,
+              fontWeight: "600",
+              color: "#475569",
+              marginBottom: 6,
+            }}
+          >
+            Day
+          </Text>
+
+          {renderSelectorButton(weekdayLabel(weekday), () =>
+            setSelectorState({ cadence: "weekly", type: "weekday" })
+          )}
+        </View>
+      ) : null}
+
+      {schedule.cadence === "monthly" ? (
+        <View style={{ marginBottom: 14 }}>
+          <Text
+            style={{
+              fontSize: 12,
+              fontWeight: "600",
+              color: "#475569",
+              marginBottom: 6,
+            }}
+          >
+            Day of month
+          </Text>
+
+          {renderSelectorButton(String(dateParts.day), () =>
+            setSelectorState({ cadence: "monthly", type: "day" })
+          )}
+        </View>
+      ) : null}
+
+      {schedule.cadence === "quarterly" || schedule.cadence === "yearly" ? (
+        <View style={{ flexDirection: "row", gap: 10, marginBottom: 14 }}>
+          <View style={{ flex: 1 }}>
+            <Text
+              style={{
+                fontSize: 12,
+                fontWeight: "600",
+                color: "#475569",
+                marginBottom: 6,
+              }}
+            >
+              Month
+            </Text>
+
+            {renderSelectorButton(monthLabels[dateParts.month - 1], () =>
+              setSelectorState({ cadence: schedule.cadence, type: "month" })
+            )}
+          </View>
+
+          <View style={{ flex: 1 }}>
+            <Text
+              style={{
+                fontSize: 12,
+                fontWeight: "600",
+                color: "#475569",
+                marginBottom: 6,
+              }}
+            >
+              Day
+            </Text>
+
+            {renderSelectorButton(String(dateParts.day), () =>
+              setSelectorState({ cadence: schedule.cadence, type: "day" })
+            )}
+          </View>
+        </View>
+      ) : null}
+
+      {renderTimeRow(schedule)}
+
+      <Text
+        style={{
+          fontSize: 14,
+          lineHeight: 22,
+          color: "#4b5563",
+          marginTop: 12,
+        }}
+      >
+        {getUpcomingNotificationsText(schedule)}
+        {savingKey === schedule.cadence ? "  •  Saving..." : ""}
+      </Text>
+    </View>
+  );
+}
+
+  const selectorOptions = useMemo(() => {
+    if (!selectorState) return [];
+
+    if (selectorState.type === "weekday") {
+      return [0, 1, 2, 3, 4, 5, 6].map((value) => ({
+        label: weekdayLabel(value),
+        value,
+      }));
+    }
+
+    if (selectorState.type === "month") {
+      return monthLabels.map((label, index) => ({
+        label,
+        value: index + 1,
+      }));
+    }
+
+    return Array.from({ length: 31 }, (_, index) => ({
+      label: String(index + 1),
+      value: index + 1,
+    }));
+  }, [selectorState]);
+
+  async function applySelectorValue(value: number) {
+    if (!selectorState) return;
+
+    const schedule = schedulesByCadence[selectorState.cadence];
+    if (!schedule) return;
+
+    if (selectorState.type === "weekday") {
+      await updateSchedule(schedule.cadence, {
+        anchor_date: getNextDateForWeekday(value),
+      });
+      setSelectorState(null);
+      return;
+    }
+
+    if (selectorState.type === "month") {
+      await updateSchedule(schedule.cadence, {
+        anchor_date: replaceDateParts(schedule.anchor_date, { month: value }),
+      });
+      setSelectorState(null);
+      return;
+    }
+
+    await updateSchedule(schedule.cadence, {
+      anchor_date: replaceDateParts(schedule.anchor_date, { day: value }),
+    });
+    setSelectorState(null);
+  }
 
   return (
     <ImageBackground source={reminderBackground} style={{ flex: 1 }} resizeMode="cover">
       <View style={{ flex: 1, backgroundColor: "rgba(255,255,255,0.55)" }}>
         <SafeAreaView style={{ flex: 1, backgroundColor: "transparent" }}>
- {/* HEADER (FIXED) */}
-<View
-  style={{
-    padding: 24,
-    paddingTop: 20,
-    paddingBottom: 14,
-    backgroundColor: "rgba(255,255,255,0.35)", // lighter = more glass
-    borderBottomWidth: 1,
-    borderBottomColor: "rgba(255,255,255,0.4)",
-  }}
->
-  <Text
-    style={{
-      fontSize: 28,
-      fontWeight: "700",
-      color: "#111",
-textShadowColor: "rgba(255,255,255,0.4)",
-textShadowOffset: { width: 0, height: 1 },
-textShadowRadius: 2,
-      marginBottom: 8,
-    }}
-  >
-    Reminder Groups
-  </Text>
+          <View
+            style={{
+              padding: 24,
+              paddingTop: 20,
+              paddingBottom: 14,
+              backgroundColor: "rgba(255,255,255,0.35)",
+              borderBottomWidth: 1,
+              borderBottomColor: "rgba(255,255,255,0.4)",
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 28,
+                fontWeight: "700",
+                color: "#111",
+                textShadowColor: "rgba(255,255,255,0.4)",
+                textShadowOffset: { width: 0, height: 1 },
+                textShadowRadius: 2,
+                marginBottom: 8,
+              }}
+            >
+              Reminders
+            </Text>
 
-  <Text
-    style={{
-      fontSize: 15,
-      color: "black",
-      lineHeight: 22,
-      marginBottom: 16,
-    }}
-  >
-    Create reminders to group entries and control notifications.
-  </Text>
+            <Text
+              style={{
+                fontSize: 15,
+                color: "black",
+                lineHeight: 22,
+              }}
+            >
+              Set when your reminders should appear.
+            </Text>
+          </View>
 
-  <View
-    style={{
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 10,
-    }}
-  >
-    <Pressable
-      onPress={() => setShowCadenceMenu(true)}
-      style={{
-        paddingVertical: 9,
-        paddingHorizontal: 13,
-        borderRadius: 10,
-        backgroundColor: "rgba(40,40,40,0.85)",
-      }}
-    >
-      <Text style={{ fontSize: 14, fontWeight: "600", color: "white" }}>
-        {selectedCadenceFilter === "all"
-          ? "All"
-          : selectedCadenceFilter === "daily"
-          ? "Daily"
-          : selectedCadenceFilter === "weekly"
-          ? "Weekly"
-          : selectedCadenceFilter === "monthly"
-          ? "Monthly"
-          : "Yearly"} ▼
-      </Text>
-    </Pressable>
-
-    <Pressable
-      onPress={() => {
-        setShowEditModal(false);
-        setEditingGroup(null);
-        resetCreateForm("daily");
-        setShowCreateModal(true);
-      }}
-      style={{
-        backgroundColor: "rgba(40,40,40,0.95)",
-        borderRadius: 12,
-        paddingVertical: 9,
-        paddingHorizontal: 13,
-      }}
-    >
-      <Text
-        style={{
-          color: "white",
-          fontSize: 14,
-          fontWeight: "600",
-        }}
-      >
-        Create Reminder
-      </Text>
-    </Pressable>
-  </View>
-</View>
-
-<ScrollView
-  ref={scrollRef}
-  contentContainerStyle={{
-    padding: 24,
-    paddingTop: 10,
-    paddingBottom: 40,
-  }}
->
-
-            {filteredGroups.length > 0 ? (
-              filteredGroups.map((group) => (
-                <View
-                  key={group.id}
-                  style={{
-                    backgroundColor: "rgba(255,255,255,0.92)",
-                    borderRadius: 14,
-                    padding: 14,
-                    marginBottom: 10,
-                    borderWidth: 1,
-                    borderColor: "#e5e7eb",
-                    shadowColor: "#000",
-                    shadowOpacity: 0.06,
-                    shadowRadius: 8,
-                    shadowOffset: { width: 0, height: 3 },
-                    elevation: 2,
-                  }}
-                >
-                  <Text
-                    style={{
-                      fontSize: 16,
-                      fontWeight: "600",
-                      color: "black",
-                      marginBottom: 6,
-                    }}
-                  >
-                    {group.name}
-                  </Text>
-
-                  <Text
-                    style={{
-                      fontSize: 14,
-                      color: "#666",
-                      marginBottom: 6,
-                    }}
-                  >
-                    {formatGroupSchedule(group)}
-                  </Text>
-
-                  <View
-                    style={{
-                      flexDirection: "row",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      marginTop: 8,
-                    }}
-                  >
-                    <Text
-                      style={{
-                        fontSize: 13,
-                        color: group.is_active ? "#2f855a" : "#999",
-                        fontWeight: "600",
-                      }}
-                    >
-                      {group.is_active ? "Active" : "Paused"}
-                    </Text>
-
-                    <View style={{ flexDirection: "row", gap: 10 }}>
-                      <Pressable
-                        onPress={() => startEditGroup(group)}
-                        style={{
-                          paddingVertical: 6,
-                          paddingHorizontal: 10,
-                          borderRadius: 8,
-                          backgroundColor: "#f3f4f6",
-                        }}
-                      >
-                        <Text
-                          style={{
-                            fontSize: 13,
-                            fontWeight: "600",
-                            color: "#333",
-                          }}
-                        >
-                          Edit
-                        </Text>
-                      </Pressable>
-
-                      <Pressable
-                        onPress={() => deleteReminderGroup(group)}
-                        disabled={isDeletingGroupId === group.id}
-                        style={{
-                          paddingVertical: 6,
-                          paddingHorizontal: 10,
-                          borderRadius: 8,
-                          backgroundColor: "#fef2f2",
-                          opacity: isDeletingGroupId === group.id ? 0.6 : 1,
-                        }}
-                      >
-                        <Text
-                          style={{
-                            fontSize: 13,
-                            fontWeight: "600",
-                            color: "#b91c1c",
-                          }}
-                        >
-                          {isDeletingGroupId === group.id ? "Deleting..." : "Delete"}
-                        </Text>
-                      </Pressable>
-                    </View>
-                  </View>
-                </View>
-              ))
-            ) : (
-              <View
-                style={{
-                  backgroundColor: "rgba(255,255,255,0.92)",
-                  borderRadius: 14,
-                  padding: 14,
-                  borderWidth: 1,
-                  borderColor: "#e5e7eb",
-                  shadowColor: "#000",
-                  shadowOpacity: 0.06,
-                  shadowRadius: 8,
-                  shadowOffset: { width: 0, height: 3 },
-                  elevation: 2,
-                }}
-              >
-                <Text style={{ fontSize: 14, color: "#777" }}>
-                  No reminders for this filter yet.
-                </Text>
-              </View>
-            )}
+          <ScrollView
+            contentContainerStyle={{
+              padding: 24,
+              paddingBottom: 40,
+            }}
+            keyboardShouldPersistTaps="handled"
+          >
+            {renderScheduleCard(schedulesByCadence.daily)}
+            {renderScheduleCard(schedulesByCadence.weekly)}
+            {renderScheduleCard(schedulesByCadence.monthly)}
+            {renderScheduleCard(schedulesByCadence.quarterly)}
+            {renderScheduleCard(schedulesByCadence.yearly)}
           </ScrollView>
 
-          <Modal visible={showCadenceMenu} transparent animationType="fade">
+          <Modal visible={!!selectorState} transparent animationType="fade">
             <Pressable
-              onPress={() => setShowCadenceMenu(false)}
+              onPress={() => setSelectorState(null)}
               style={{
-              paddingVertical: 12,
-              paddingHorizontal: 14,
-              borderRadius: 12,
-              backgroundColor: "rgba(40,40,40,0.85)",
-              alignItems: "center",
-            }}
+                flex: 1,
+                backgroundColor: "rgba(0,0,0,0.2)",
+                justifyContent: "center",
+                padding: 40,
+              }}
             >
               <View
                 style={{
                   backgroundColor: "white",
                   borderRadius: 12,
                   paddingVertical: 8,
+                  maxHeight: "70%",
                 }}
               >
-                {(["all", "daily", "weekly", "monthly", "yearly"] as const).map(
-                  (option) => {
-                    const labelMap = {
-                      all: "All",
-                      daily: "Daily",
-                      weekly: "Weekly",
-                      monthly: "Monthly",
-                      yearly: "Yearly",
-                    };
-
-                    return (
-                      <Pressable
-                        key={option}
-                        onPress={() => {
-                          setSelectedCadenceFilter(option);
-                          setShowCadenceMenu(false);
-                        }}
+                <ScrollView>
+                  {selectorOptions.map((option) => (
+                    <Pressable
+                      key={`${selectorState?.type}-${option.value}`}
+                      onPress={() => applySelectorValue(option.value)}
+                      style={{
+                        paddingVertical: 12,
+                        paddingHorizontal: 16,
+                      }}
+                    >
+                      <Text
                         style={{
-                          paddingVertical: 12,
-                          paddingHorizontal: 16,
+                          fontSize: 15,
+                          color: "#333",
+                          fontWeight: "500",
                         }}
                       >
-                        <Text style={{ fontSize: 15, color: "#333" }}>
-                          {labelMap[option]}
-                        </Text>
-                      </Pressable>
-                    );
-                  }
-                )}
+                        {option.label}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </ScrollView>
               </View>
-            </Pressable>
-          </Modal>
-
-          <Modal visible={showCreateModal || showEditModal} transparent animationType="slide">
-            <Pressable
-              onPress={() => {
-                setShowCreateModal(false);
-                setShowEditModal(false);
-                setEditingGroup(null);
-                resetCreateForm("daily");
-              }}
-              style={{
-                flex: 1,
-                backgroundColor: "rgba(0,0,0,0.35)",
-                justifyContent: "flex-end",
-              }}
-            >
-              <ScrollView
-                keyboardShouldPersistTaps="handled"
-                style={{
-                  backgroundColor: "white",
-                  borderTopLeftRadius: 20,
-                  borderTopRightRadius: 20,
-                  maxHeight: "85%",
-                }}
-                contentContainerStyle={{
-                  padding: 24,
-                  paddingBottom: 40,
-                }}
-              >
-                <Text
-                  style={{
-                    fontSize: 22,
-                    fontWeight: "700",
-                    color: "black",
-                    marginBottom: 8,
-                  }}
-                >
-                  {editingGroup ? "Edit Reminder" : "Create Reminder"}
-                </Text>
-
-                <Text
-                  style={{
-                    fontSize: 14,
-                    color: "#666",
-                    lineHeight: 20,
-                    marginBottom: 18,
-                  }}
-                >
-                  {editingGroup
-                    ? "Update this reminder group and its schedule."
-                    : "Set up a reminder group for entries you want to revisit together."}
-                </Text>
-
-                <Text
-                  style={{
-                    fontSize: 14,
-                    fontWeight: "600",
-                    color: "black",
-                    marginBottom: 8,
-                  }}
-                >
-                  Reminder name
-                </Text>
-
-                <TextInput
-                  value={newName}
-                  onChangeText={setNewName}
-                  placeholder="Morning Reminder"
-                  style={{
-                    borderWidth: 1,
-                    borderColor: "#d6d6d6",
-                    borderRadius: 10,
-                    paddingHorizontal: 12,
-                    paddingVertical: 12,
-                    fontSize: 15,
-                    color: "black",
-                    marginBottom: 16,
-                  }}
-                />
-
-                <Text
-                  style={{
-                    fontSize: 14,
-                    fontWeight: "600",
-                    color: "black",
-                    marginBottom: 8,
-                  }}
-                >
-                  Cadence
-                </Text>
-
-                <View
-                  style={{
-                    flexDirection: "row",
-                    flexWrap: "wrap",
-                    marginBottom: 16,
-                    marginHorizontal: -4,
-                  }}
-                >
-                  {(["daily", "weekly", "monthly", "yearly"] as ReminderGroup["cadence"][]).map(
-                    (cadence) => {
-                      const selected = newCadence === cadence;
-
-                      return (
-                        <View
-                          key={cadence}
-                          style={{
-                            width: "50%",
-                            paddingHorizontal: 4,
-                            marginBottom: 8,
-                          }}
-                        >
-                          <Pressable
-                            onPress={() => {
-                              resetCreateForm(cadence);
-                            }}
-                            style={{
-                            paddingVertical: 12,
-                            paddingHorizontal: 16,
-                            borderRadius: 12,
-                           backgroundColor: selected ? "#2e6cff" : "rgba(0,0,0,0.6)",
-                            marginLeft: 20,
-                          }}
-                          >
-                            <Text
-                              style={{
-                                color: selected ? "white" : "white",
-                                fontSize: 14,
-                                fontWeight: "600",
-                                textTransform: "capitalize",
-                              }}
-                            >
-                              {cadence}
-                            </Text>
-                          </Pressable>
-                        </View>
-                      );
-                    }
-                  )}
-                </View>
-
-                <Text
-                  style={{
-                    fontSize: 14,
-                    fontWeight: "600",
-                    color: "black",
-                    marginBottom: 8,
-                  }}
-                >
-                  Time
-                </Text>
-
-                <View
-                  style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    marginBottom: 8,
-                  }}
-                >
-                  <TextInput
-                    value={newHour}
-                    onFocus={() => {
-                      if (newHour === "9" || newHour === "09") {
-                        setNewHour("");
-                      }
-                    }}
-                    onBlur={() => {
-                      if (!newHour) {
-                        setNewHour("9");
-                      }
-                    }}
-                    onChangeText={(value) => setNewHour(sanitizeHourInput(value))}
-                    placeholder="9"
-                    keyboardType="number-pad"
-                    maxLength={2}
-                    style={{
-                      width: 72,
-                      borderWidth: 1,
-                      borderColor: "#d6d6d6",
-                      borderRadius: 10,
-                      paddingHorizontal: 12,
-                      paddingVertical: 12,
-                      fontSize: 16,
-                      color: "black",
-                      textAlign: "center",
-                      backgroundColor: "white",
-                    }}
-                  />
-
-                  <Text
-                    style={{
-                      fontSize: 20,
-                      fontWeight: "600",
-                      color: "#333",
-                      marginHorizontal: 8,
-                    }}
-                  >
-                    :
-                  </Text>
-
-                  <TextInput
-                    value={newMinute}
-                    onFocus={() => {
-                      if (newMinute === "00") {
-                        setNewMinute("");
-                      }
-                    }}
-                    onBlur={() => {
-                      if (!newMinute) {
-                        setNewMinute("00");
-                      }
-                    }}
-                    onChangeText={(value) => setNewMinute(sanitizeMinuteInput(value))}
-                    placeholder="00"
-                    keyboardType="number-pad"
-                    maxLength={2}
-                    style={{
-                      width: 72,
-                      borderWidth: 1,
-                      borderColor: "#d6d6d6",
-                      borderRadius: 10,
-                      paddingHorizontal: 12,
-                      paddingVertical: 12,
-                      fontSize: 16,
-                      color: "black",
-                      textAlign: "center",
-                      backgroundColor: "white",
-                    }}
-                  />
-
-                  <View
-                    style={{
-                      flexDirection: "row",
-                      marginLeft: 12,
-                      backgroundColor: "#f3f4f6",
-                      borderRadius: 999,
-                      padding: 4,
-                    }}
-                  >
-                    {(["AM", "PM"] as const).map((period) => {
-                      const selected = newPeriod === period;
-
-                      return (
-                        <Pressable
-                          key={period}
-                          onPress={() => setNewPeriod(period)}
-                          style={{
-                            paddingVertical: 8,
-                            paddingHorizontal: 14,
-                            borderRadius: 999,
-                            backgroundColor: selected ? "#2e6cff" : "transparent",
-                          }}
-                        >
-                          <Text
-                            style={{
-                              fontSize: 13,
-                              fontWeight: "600",
-                              color: selected ? "white" : "#333",
-                            }}
-                          >
-                            {period}
-                          </Text>
-                        </Pressable>
-                      );
-                    })}
-                  </View>
-                </View>
-
-                <Text
-                  style={{
-                    fontSize: 12,
-                    color: "#777",
-                    lineHeight: 18,
-                    marginBottom: 16,
-                  }}
-                >
-                  Example: 2:00 PM
-                </Text>
-
-                {newCadence === "weekly" && (
-                  <>
-                    <Text
-                      style={{
-                        fontSize: 14,
-                        fontWeight: "600",
-                        color: "black",
-                        marginBottom: 8,
-                      }}
-                    >
-                      Day of week (0=Sun, 1=Mon ... 6=Sat)
-                    </Text>
-
-                    <TextInput
-                      value={newDayOfWeek}
-                      onChangeText={setNewDayOfWeek}
-                      placeholder="1"
-                      style={{
-                        borderWidth: 1,
-                        borderColor: "#d6d6d6",
-                        borderRadius: 10,
-                        paddingHorizontal: 12,
-                        paddingVertical: 12,
-                        fontSize: 15,
-                        color: "black",
-                        marginBottom: 16,
-                      }}
-                    />
-                  </>
-                )}
-
-                {newCadence === "monthly" && (
-                  <>
-                    <Text
-                      style={{
-                        fontSize: 14,
-                        fontWeight: "600",
-                        color: "black",
-                        marginBottom: 8,
-                      }}
-                    >
-                      Day of month
-                    </Text>
-
-                    <TextInput
-                      value={newDayOfMonth}
-                      onChangeText={setNewDayOfMonth}
-                      placeholder="1"
-                      style={{
-                        borderWidth: 1,
-                        borderColor: "#d6d6d6",
-                        borderRadius: 10,
-                        paddingHorizontal: 12,
-                        paddingVertical: 12,
-                        fontSize: 15,
-                        color: "black",
-                        marginBottom: 8,
-                      }}
-                    />
-
-                    <Text
-                      style={{
-                        fontSize: 12,
-                        color: "#777",
-                        lineHeight: 18,
-                        marginBottom: 16,
-                      }}
-                    >
-                      If a month is shorter, this reminder will occur on the last valid day.
-                    </Text>
-                  </>
-                )}
-
-                {newCadence === "yearly" && (
-                  <>
-                    <Text
-                      style={{
-                        fontSize: 14,
-                        fontWeight: "600",
-                        color: "black",
-                        marginBottom: 8,
-                      }}
-                    >
-                      Month of year
-                    </Text>
-
-                    <TextInput
-                      value={newMonthOfYear}
-                      onChangeText={setNewMonthOfYear}
-                      placeholder="1"
-                      style={{
-                        borderWidth: 1,
-                        borderColor: "#d6d6d6",
-                        borderRadius: 10,
-                        paddingHorizontal: 12,
-                        paddingVertical: 12,
-                        fontSize: 15,
-                        color: "black",
-                        marginBottom: 16,
-                      }}
-                    />
-
-                    <Text
-                      style={{
-                        fontSize: 14,
-                        fontWeight: "600",
-                        color: "black",
-                        marginBottom: 8,
-                      }}
-                    >
-                      Day of month
-                    </Text>
-
-                    <TextInput
-                      value={newDayOfMonth}
-                      onChangeText={setNewDayOfMonth}
-                      placeholder="1"
-                      style={{
-                        borderWidth: 1,
-                        borderColor: "#d6d6d6",
-                        borderRadius: 10,
-                        paddingHorizontal: 12,
-                        paddingVertical: 12,
-                        fontSize: 15,
-                        color: "black",
-                        marginBottom: 8,
-                      }}
-                    />
-
-                    <Text
-                      style={{
-                        fontSize: 12,
-                        color: "#777",
-                        lineHeight: 18,
-                        marginBottom: 16,
-                      }}
-                    >
-                      If that date does not exist in a given year, this reminder will occur on the
-                      last valid day.
-                    </Text>
-                  </>
-                )}
-
-                <View style={{ marginTop: 4, gap: 10 }}>
-                  <Pressable
-                    onPress={editingGroup ? updateReminderGroup : createReminderGroup}
-                    disabled={isSavingGroup}
-                    style={{
-                      backgroundColor: "#2e6cff",
-                      borderRadius: 10,
-                      paddingVertical: 14,
-                      opacity: isSavingGroup ? 0.7 : 1,
-                    }}
-                  >
-                    <Text
-                      style={{
-                        color: "white",
-                        textAlign: "center",
-                        fontSize: 16,
-                        fontWeight: "600",
-                      }}
-                    >
-                      {isSavingGroup
-                        ? "Saving..."
-                        : editingGroup
-                        ? "Save Changes"
-                        : "Save Reminder"}
-                    </Text>
-                  </Pressable>
-
-                  <Pressable
-                    onPress={() => {
-                      setShowCreateModal(false);
-                      setShowEditModal(false);
-                      setEditingGroup(null);
-                      resetCreateForm("daily");
-                    }}
-                    style={{
-                      backgroundColor: "#f3f4f6",
-                      borderRadius: 10,
-                      paddingVertical: 14,
-                    }}
-                  >
-                    <Text
-                      style={{
-                        color: "#333",
-                        textAlign: "center",
-                        fontSize: 16,
-                        fontWeight: "600",
-                      }}
-                    >
-                      Cancel
-                    </Text>
-                  </Pressable>
-                </View>
-              </ScrollView>
             </Pressable>
           </Modal>
         </SafeAreaView>

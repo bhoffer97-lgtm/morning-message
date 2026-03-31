@@ -1,36 +1,32 @@
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-    Alert,
-    Animated,
-    Keyboard,
-    KeyboardAvoidingView,
-    Modal,
-    Platform,
-    Pressable,
-    ScrollView,
-    Text,
-    TextInput,
-    View,
+  Alert,
+  Animated,
+  Keyboard,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
+  View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { supabase } from "../lib/supabase";
 
 type AIWriteMode = "prayer" | "affirmation" | "goal" | "reminder";
-type SaveScheduleSource = "none" | "group" | "custom";
+type SaveScheduleSource = "none" | "digest" | "custom";
 type CustomScheduleMode = "daily_time" | "fixed_date" | "interval" | "annual_date";
 type EntryIntervalUnit = "days" | "weeks" | "months" | "years";
+type DigestAssignment = "none" | "daily" | "weekly" | "monthly" | "yearly";
+type WeekdayValue = 0 | 1 | 2 | 3 | 4 | 5 | 6;
 
-type ReminderGroup = {
-  id: string;
-  name: string;
-  cadence: "daily" | "weekly" | "monthly" | "yearly";
-  is_active: boolean;
-  next_run_at: string | null;
-  time_of_day?: string | null;
-  day_of_week?: number | null;
-  day_of_month?: number | null;
-  month_of_year?: number | null;
+type ProfileDigestSettings = {
+  daily_digest_time: string | null;
+  weekly_digest_day_of_week: WeekdayValue | null;
+  weekly_digest_time: string | null;
 };
 
 type EntryRecord = {
@@ -38,7 +34,7 @@ type EntryRecord = {
   title: string | null;
   content: string;
   type: string | null;
-  reminder_group_id: string | null;
+  digest_assignment: DigestAssignment;
   schedule_mode: string;
   due_date: string | null;
   due_time: string | null;
@@ -54,6 +50,23 @@ function getLocalDateString(date = new Date()) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function formatDisplayTime(time: string | null) {
+  if (!time) return "Not set";
+
+  const [hours, minutes] = time.split(":");
+  const hourNum = Number(hours);
+  const minuteNum = Number(minutes);
+
+  const suffix = hourNum >= 12 ? "PM" : "AM";
+  const displayHour = hourNum % 12 === 0 ? 12 : hourNum % 12;
+
+  return `${displayHour}:${String(minuteNum).padStart(2, "0")} ${suffix}`;
+}
+
+function weekdayLabel(day: WeekdayValue) {
+  return ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][day];
 }
 
 function sanitizeCustomHourInput(value: string) {
@@ -197,12 +210,15 @@ export default function ComposeScreen() {
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
   const [isLoadingEntry, setIsLoadingEntry] = useState(composeMode === "edit");
 
-  const [reminderGroups, setReminderGroups] = useState<ReminderGroup[]>([]);
   const [saveScheduleSource, setSaveScheduleSource] = useState<SaveScheduleSource>("none");
-  const [selectedReminderGroupId, setSelectedReminderGroupId] = useState<string | null>(null);
   const [selectedSaveCadence, setSelectedSaveCadence] = useState<
     "daily" | "weekly" | "monthly" | "yearly"
   >("daily");
+  const [profileDigestSettings, setProfileDigestSettings] = useState<ProfileDigestSettings>({
+    daily_digest_time: null,
+    weekly_digest_day_of_week: null,
+    weekly_digest_time: null,
+  });
   const [customScheduleMode, setCustomScheduleMode] = useState<CustomScheduleMode>("daily_time");
   const [customScheduleTime, setCustomScheduleTime] = useState("07:00");
   const [customTimeHour, setCustomTimeHour] = useState("7");
@@ -219,10 +235,6 @@ export default function ComposeScreen() {
   const dotAnim1 = useRef(new Animated.Value(0.35)).current;
   const dotAnim2 = useRef(new Animated.Value(0.35)).current;
   const dotAnim3 = useRef(new Animated.Value(0.35)).current;
-
-  const saveModalReminderGroups = useMemo(() => {
-    return reminderGroups.filter((group) => group.cadence === selectedSaveCadence);
-  }, [reminderGroups, selectedSaveCadence]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -259,9 +271,7 @@ export default function ComposeScreen() {
   }, [customTimeHour, customTimeMinute, customTimePeriod]);
 
     useEffect(() => {
-    async function initialize() {
-      await loadReminderGroups();
-
+     async function initialize() {
       if (composeMode === "edit" && editingEntryId) {
         await loadEntryForEdit(editingEntryId);
         return;
@@ -275,7 +285,6 @@ export default function ComposeScreen() {
       setPreAIText(null);
       setPreAITitle(null);
       setSaveScheduleSource("none");
-      setSelectedReminderGroupId(null);
       setSelectedSaveCadence("daily");
       setCustomScheduleMode("daily_time");
       setCustomScheduleTime("07:00");
@@ -292,30 +301,13 @@ export default function ComposeScreen() {
     initialize();
   }, [composeMode, editingEntryId]);
 
-  async function loadReminderGroups() {
-    const { data, error } = await supabase
-      .from("reminder_groups")
-      .select(
-        "id, name, cadence, is_active, next_run_at, time_of_day, day_of_week, day_of_month, month_of_year"
-      )
-      .eq("is_active", true)
-      .order("next_run_at", { ascending: true });
-
-    if (error) {
-      console.log("Load reminder groups error:", error.message);
-      return;
-    }
-
-    setReminderGroups((data as ReminderGroup[]) ?? []);
-  }
-
   async function loadEntryForEdit(entryId: string) {
     setIsLoadingEntry(true);
 
     const { data, error } = await supabase
       .from("entries")
-      .select(
-        "id, title, content, type, reminder_group_id, schedule_mode, due_date, due_time, interval_value, interval_unit, annual_month, annual_day, anchor_date"
+       .select(
+        "id, title, content, type, digest_assignment, schedule_mode, due_date, due_time, interval_value, interval_unit, annual_month, annual_day, anchor_date"
       )
       .eq("id", entryId)
       .single();
@@ -340,22 +332,14 @@ export default function ComposeScreen() {
         : "prayer"
     );
 
-    if (entry.reminder_group_id) {
-      const { data: groupData } = await supabase
-        .from("reminder_groups")
-        .select("id, cadence")
-        .eq("id", entry.reminder_group_id)
-        .maybeSingle();
-
-      setSaveScheduleSource("group");
-      setSelectedReminderGroupId(entry.reminder_group_id);
-      setSelectedSaveCadence(
-        groupData?.cadence === "weekly" ||
-          groupData?.cadence === "monthly" ||
-          groupData?.cadence === "yearly"
-          ? groupData.cadence
-          : "daily"
-      );
+     if (
+      entry.digest_assignment === "daily" ||
+      entry.digest_assignment === "weekly" ||
+      entry.digest_assignment === "monthly" ||
+      entry.digest_assignment === "yearly"
+    ) {
+      setSaveScheduleSource("digest");
+      setSelectedSaveCadence(entry.digest_assignment);
       return;
     }
 
@@ -399,7 +383,6 @@ export default function ComposeScreen() {
     }
 
     setSaveScheduleSource("none");
-    setSelectedReminderGroupId(null);
   }
 
     function startAIDotsAnimation() {
@@ -462,6 +445,43 @@ export default function ComposeScreen() {
         ]),
       ])
     ).start();
+  }
+
+  async function loadProfileDigestSettings() {
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      console.log("Load profile digest settings user error:", userError?.message);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("daily_digest_time, weekly_digest_day_of_week, weekly_digest_time")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    if (error) {
+      console.log("Load profile digest settings error:", error.message);
+      return;
+    }
+
+    console.log("PROFILE_DIGEST_SETTINGS_LOAD", {
+      userId: user.id,
+      data,
+    });
+
+    setProfileDigestSettings({
+      daily_digest_time: data?.daily_digest_time ?? null,
+      weekly_digest_day_of_week:
+        typeof data?.weekly_digest_day_of_week === "number"
+          ? (data.weekly_digest_day_of_week as WeekdayValue)
+          : null,
+      weekly_digest_time: data?.weekly_digest_time ?? null,
+    });
   }
 
   async function runAIHelpForType(aiType: AIWriteMode) {
@@ -567,13 +587,14 @@ export default function ComposeScreen() {
     });
   }
 
-  function openSaveEntryModal() {
+    async function openSaveEntryModal() {
     if (!text.trim() || isSaving || isLoadingEntry) return;
 
     if (!title.trim()) {
       setTitle(getSuggestedTitle(text));
     }
 
+    await loadProfileDigestSettings();
     setShowSaveEntryModal(true);
     Keyboard.dismiss();
   }
@@ -586,7 +607,6 @@ export default function ComposeScreen() {
     }
 
     setSaveScheduleSource("none");
-    setSelectedReminderGroupId(null);
     setSelectedSaveCadence("daily");
     setCustomScheduleMode("daily_time");
     setCustomScheduleTime("07:00");
@@ -627,11 +647,11 @@ export default function ComposeScreen() {
       const parsedAnnualDay = parseInt(customAnnualDay, 10);
       const anchorDate = customDueDate.trim() || getLocalDateString();
 
-      const payload: any = {
+       const payload: any = {
         title: titleToSave,
         content: text.trim(),
         type: selectedAIMode,
-        reminder_group_id: saveScheduleSource === "group" ? selectedReminderGroupId : null,
+        digest_assignment: saveScheduleSource === "digest" ? selectedSaveCadence : "none",
         schedule_mode: "none",
         due_time: null,
         due_date: null,
@@ -642,15 +662,8 @@ export default function ComposeScreen() {
         anchor_date: null,
       };
 
-      if (saveScheduleSource === "group") {
-        if (!selectedReminderGroupId) {
-          Alert.alert("Select a reminder", "Choose an existing reminder before saving.");
-          return;
-        }
-      }
-
       if (saveScheduleSource === "custom") {
-        payload.reminder_group_id = null;
+        payload.digest_assignment = "none";
         payload.schedule_mode = customScheduleMode;
 
         if (customScheduleMode === "daily_time") {
@@ -708,19 +721,18 @@ export default function ComposeScreen() {
           status: "active",
           ...payload,
         });
-
+   
         if (error) {
           Alert.alert("Could not save entry", error.message);
           return;
         }
       }
 
-       setShowSaveEntryModal(false);
+      setShowSaveEntryModal(false);
       setShowRevertAI(false);
       setPreAIText(null);
       setPreAITitle(null);
       setSaveScheduleSource("none");
-      setSelectedReminderGroupId(null);
       setSelectedSaveCadence("daily");
       setCustomScheduleMode("daily_time");
       setCustomScheduleTime("07:00");
@@ -738,6 +750,26 @@ export default function ComposeScreen() {
       setIsSaving(false);
     }
   }
+
+const selectedDigestDescription = useMemo(() => {
+    if (selectedSaveCadence === "daily") {
+      return `Appears in the Daily Reminder at ${formatDisplayTime(
+        profileDigestSettings.daily_digest_time ?? "07:00:00"
+      )}`;
+    }
+
+    if (selectedSaveCadence === "weekly") {
+      return `Appears in the Weekly Reminder on ${weekdayLabel(
+        profileDigestSettings.weekly_digest_day_of_week ?? 0
+      )} at ${formatDisplayTime(profileDigestSettings.weekly_digest_time ?? "08:00:00")}`;
+    }
+
+    if (selectedSaveCadence === "monthly") {
+      return "Will appear in the Monthly Reminder when monthly reminder support is added.";
+    }
+
+    return "Will appear in the Yearly Reminder when yearly reminder support is added.";
+  }, [selectedSaveCadence, profileDigestSettings]);
 
   return (
     <KeyboardAvoidingView
@@ -1201,9 +1233,9 @@ export default function ComposeScreen() {
 
                   <View style={{ flexDirection: "row", gap: 8, marginBottom: 18, flexWrap: "wrap" }}>
                     {(
-                      [
+                       [
                         { key: "none", label: "None" },
-                        { key: "group", label: "Assign to Reminder" },
+                        { key: "digest", label: "Assign to Reminder" },
                         { key: "custom", label: "Custom" },
                       ] as const
                     ).map((option) => (
@@ -1213,15 +1245,11 @@ export default function ComposeScreen() {
                           setSaveScheduleSource(option.key);
 
                           if (option.key === "none") {
-                            setSelectedReminderGroupId(null);
+                            setSelectedSaveCadence("daily");
                           }
 
-                          if (option.key === "group" && !selectedReminderGroupId) {
-                            const dailyGroup = reminderGroups.find(
-                              (group) => group.cadence === "daily"
-                            );
+                          if (option.key === "digest") {
                             setSelectedSaveCadence("daily");
-                            setSelectedReminderGroupId(dailyGroup?.id ?? null);
                           }
                         }}
                         style={{
@@ -1245,7 +1273,7 @@ export default function ComposeScreen() {
                     ))}
                   </View>
 
-                  {saveScheduleSource === "group" ? (
+                   {saveScheduleSource === "digest" ? (
                     <View
                       style={{
                         backgroundColor: "#f8fafc",
@@ -1264,7 +1292,7 @@ export default function ComposeScreen() {
                           color: "#334155",
                         }}
                       >
-                        Existing Reminder
+                        Reminder Assignment
                       </Text>
 
                       <Text
@@ -1275,9 +1303,18 @@ export default function ComposeScreen() {
                           marginBottom: 4,
                         }}
                       >
-                        Reminder cadence
+                        Choose which reminder this item belongs to by default
                       </Text>
-
+                      <Text
+                        style={{
+                          fontSize: 13,
+                          lineHeight: 20,
+                          color: "#475569",
+                          marginBottom: 8,
+                        }}
+                      >
+                        {selectedDigestDescription}
+                      </Text>
                       <View style={{ gap: 8 }}>
                         {(["daily", "weekly", "monthly", "yearly"] as const).map((cadence) => {
                           const selected = selectedSaveCadence === cadence;
@@ -1285,13 +1322,7 @@ export default function ComposeScreen() {
                           return (
                             <Pressable
                               key={cadence}
-                              onPress={() => {
-                                setSelectedSaveCadence(cadence);
-                                const firstMatchingGroup = reminderGroups.find(
-                                  (group) => group.cadence === cadence
-                                );
-                                setSelectedReminderGroupId(firstMatchingGroup?.id ?? null);
-                              }}
+                              onPress={() => setSelectedSaveCadence(cadence)}
                               style={{
                                 borderWidth: 1,
                                 borderColor: selected ? "#2563eb" : "#d1d5db",
@@ -1314,71 +1345,6 @@ export default function ComposeScreen() {
                             </Pressable>
                           );
                         })}
-                      </View>
-
-                      <Text
-                        style={{
-                          fontSize: 12,
-                          fontWeight: "600",
-                          color: "#475569",
-                          marginTop: 4,
-                          marginBottom: 4,
-                        }}
-                      >
-                        Select reminder
-                      </Text>
-
-                      <View style={{ gap: 8 }}>
-                        {saveModalReminderGroups.length === 0 ? (
-                          <View
-                            style={{
-                              borderWidth: 1,
-                              borderColor: "#d1d5db",
-                              borderRadius: 12,
-                              paddingHorizontal: 12,
-                              paddingVertical: 12,
-                              backgroundColor: "white",
-                            }}
-                          >
-                            <Text
-                              style={{
-                                fontSize: 14,
-                                color: "#6b7280",
-                              }}
-                            >
-                              No reminders available for this cadence
-                            </Text>
-                          </View>
-                        ) : (
-                          saveModalReminderGroups.map((group) => {
-                            const selected = selectedReminderGroupId === group.id;
-
-                            return (
-                              <Pressable
-                                key={group.id}
-                                onPress={() => setSelectedReminderGroupId(group.id)}
-                                style={{
-                                  borderWidth: 1,
-                                  borderColor: selected ? "#2563eb" : "#d1d5db",
-                                  borderRadius: 12,
-                                  paddingHorizontal: 12,
-                                  paddingVertical: 12,
-                                  backgroundColor: selected ? "#eff6ff" : "white",
-                                }}
-                              >
-                                <Text
-                                  style={{
-                                    fontSize: 14,
-                                    fontWeight: "600",
-                                    color: selected ? "#1d4ed8" : "#111827",
-                                  }}
-                                >
-                                  {group.name}
-                                </Text>
-                              </Pressable>
-                            );
-                          })
-                        )}
                       </View>
                     </View>
                   ) : null}
