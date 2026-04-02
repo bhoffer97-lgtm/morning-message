@@ -23,6 +23,7 @@ type CustomScheduleMode = "daily_time" | "fixed_date" | "interval" | "annual_dat
 type EntryIntervalUnit = "days" | "weeks" | "months" | "years";
 type DigestAssignment = "none" | "daily" | "weekly" | "monthly" | "quarterly" | "yearly";
 type WeekdayValue = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+type TimePeriod = "AM" | "PM";
 
 type ProfileDigestSettings = {
   daily_digest_time: string | null;
@@ -70,6 +71,34 @@ function weekdayLabel(day: WeekdayValue) {
   return ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][day];
 }
 
+function parseTimeForForm(time: string | null, fallback = "07:00") {
+  const safeTime = time && time.includes(":") ? time : fallback;
+  const [hours, minutes] = safeTime.split(":");
+  const hourNum = Number(hours);
+  const minuteNum = Number(minutes);
+
+  const period: TimePeriod = hourNum >= 12 ? "PM" : "AM";
+  const hour12 = hourNum % 12 === 0 ? 12 : hourNum % 12;
+
+  return {
+    hour: String(hour12),
+    minute: String(minuteNum).padStart(2, "0"),
+    period,
+  };
+}
+
+function build24HourTime(hour: string, minute: string, period: TimePeriod) {
+  const cleanHour = Math.min(12, Math.max(1, Number(hour) || 12));
+  const cleanMinute = Math.min(59, Math.max(0, Number(minute) || 0));
+
+  let hour24 = cleanHour % 12;
+  if (period === "PM") {
+    hour24 += 12;
+  }
+
+  return `${String(hour24).padStart(2, "0")}:${String(cleanMinute).padStart(2, "0")}`;
+}
+
 function sanitizeCustomHourInput(value: string) {
   const digits = value.replace(/\D/g, "").slice(0, 2);
   if (!digits) return "";
@@ -79,11 +108,7 @@ function sanitizeCustomHourInput(value: string) {
 }
 
 function sanitizeCustomMinuteInput(value: string) {
-  const digits = value.replace(/\D/g, "").slice(0, 2);
-  if (!digits) return "";
-  const parsed = parseInt(digits, 10);
-  if (Number.isNaN(parsed)) return "";
-  return String(Math.min(59, Math.max(0, parsed))).padStart(2, "0");
+  return value.replace(/\D/g, "").slice(0, 2);
 }
 
 function getSuggestedTitle(text: string) {
@@ -188,7 +213,7 @@ function getSuggestedTitle(text: string) {
 }
 
 export default function ComposeScreen() {
-   const params = useLocalSearchParams<{
+  const params = useLocalSearchParams<{
     mode?: string;
     entryId?: string;
   }>();
@@ -220,11 +245,15 @@ export default function ComposeScreen() {
     weekly_digest_day_of_week: null,
     weekly_digest_time: null,
   });
-  const [customScheduleMode, setCustomScheduleMode] = useState<CustomScheduleMode>("daily_time");
+  const [customScheduleMode, setCustomScheduleMode] =
+    useState<CustomScheduleMode>("daily_time");
   const [customScheduleTime, setCustomScheduleTime] = useState("07:00");
   const [customTimeHour, setCustomTimeHour] = useState("7");
   const [customTimeMinute, setCustomTimeMinute] = useState("00");
-  const [customTimePeriod, setCustomTimePeriod] = useState<"AM" | "PM">("AM");
+  const [customTimePeriod, setCustomTimePeriod] = useState<TimePeriod>("AM");
+  const [showCustomTimeModal, setShowCustomTimeModal] = useState(false);
+  const [draftCustomTimeHour, setDraftCustomTimeHour] = useState("7");
+  const [draftCustomTimeMinute, setDraftCustomTimeMinute] = useState("00");
   const [customIntervalValue, setCustomIntervalValue] = useState("1");
   const [customIntervalUnit, setCustomIntervalUnit] = useState<EntryIntervalUnit>("weeks");
   const [customDueDate, setCustomDueDate] = useState(getLocalDateString());
@@ -259,20 +288,7 @@ export default function ComposeScreen() {
   }, []);
 
   useEffect(() => {
-    const hourNumber = parseInt(customTimeHour || "7", 10);
-    const minuteValue = (customTimeMinute || "00").padStart(2, "0");
-    const safeHour = Number.isFinite(hourNumber) ? hourNumber : 7;
-
-    let hour24 = safeHour % 12;
-    if (customTimePeriod === "PM") {
-      hour24 += 12;
-    }
-
-    setCustomScheduleTime(`${String(hour24).padStart(2, "0")}:${minuteValue}`);
-  }, [customTimeHour, customTimeMinute, customTimePeriod]);
-
-    useEffect(() => {
-     async function initialize() {
+    async function initialize() {
       if (composeMode === "edit" && editingEntryId) {
         await loadEntryForEdit(editingEntryId);
         return;
@@ -307,7 +323,7 @@ export default function ComposeScreen() {
 
     const { data, error } = await supabase
       .from("entries")
-       .select(
+      .select(
         "id, title, content, type, digest_assignment, schedule_mode, due_date, due_time, interval_value, interval_unit, annual_month, annual_day, anchor_date"
       )
       .eq("id", entryId)
@@ -333,7 +349,7 @@ export default function ComposeScreen() {
         : "prayer"
     );
 
-     if (
+    if (
       entry.digest_assignment === "daily" ||
       entry.digest_assignment === "weekly" ||
       entry.digest_assignment === "monthly" ||
@@ -355,14 +371,12 @@ export default function ComposeScreen() {
       setCustomScheduleMode(entry.schedule_mode);
 
       const baseTime = entry.due_time ? entry.due_time.slice(0, 5) : "07:00";
-      const [hourRaw = "07", minuteRaw = "00"] = baseTime.split(":");
-      const hour24 = parseInt(hourRaw, 10);
-      const hour12 = hour24 % 12 || 12;
+      const form = parseTimeForForm(baseTime);
 
       setCustomScheduleTime(baseTime);
-      setCustomTimeHour(String(hour12));
-      setCustomTimeMinute(minuteRaw);
-      setCustomTimePeriod(hour24 >= 12 ? "PM" : "AM");
+      setCustomTimeHour(form.hour);
+      setCustomTimeMinute(form.minute);
+      setCustomTimePeriod(form.period);
 
       const baseDate = entry.due_date || entry.anchor_date || getLocalDateString();
       setCustomDueDate(baseDate);
@@ -387,7 +401,7 @@ export default function ComposeScreen() {
     setSaveScheduleSource("none");
   }
 
-    function startAIDotsAnimation() {
+  function startAIDotsAnimation() {
     dotAnim1.stopAnimation();
     dotAnim2.stopAnimation();
     dotAnim3.stopAnimation();
@@ -449,6 +463,16 @@ export default function ComposeScreen() {
     ).start();
   }
 
+    function openCustomTimeEditor() {
+    const form = parseTimeForForm(customScheduleTime);
+    setCustomTimeHour(form.hour);
+    setCustomTimeMinute(form.minute);
+    setCustomTimePeriod(form.period);
+    setDraftCustomTimeHour(form.hour);
+    setDraftCustomTimeMinute(form.minute);
+    setShowCustomTimeModal(true);
+  }
+
   async function loadProfileDigestSettings() {
     const {
       data: { user },
@@ -470,11 +494,6 @@ export default function ComposeScreen() {
       console.log("Load profile digest settings error:", error.message);
       return;
     }
-
-    console.log("PROFILE_DIGEST_SETTINGS_LOAD", {
-      userId: user.id,
-      data,
-    });
 
     setProfileDigestSettings({
       daily_digest_time: data?.daily_digest_time ?? null,
@@ -573,7 +592,7 @@ export default function ComposeScreen() {
     setShowAITypeModal(true);
   }
 
-   function closeCompose() {
+  function closeCompose() {
     Keyboard.dismiss();
 
     if (router.canGoBack()) {
@@ -589,7 +608,7 @@ export default function ComposeScreen() {
     });
   }
 
-    async function openSaveEntryModal() {
+  async function openSaveEntryModal() {
     if (!text.trim() || isSaving || isLoadingEntry) return;
 
     if (!title.trim()) {
@@ -603,6 +622,7 @@ export default function ComposeScreen() {
 
   function resetSaveEntryState() {
     setShowSaveEntryModal(false);
+    setShowCustomTimeModal(false);
 
     if (composeMode === "edit") {
       return;
@@ -649,7 +669,7 @@ export default function ComposeScreen() {
       const parsedAnnualDay = parseInt(customAnnualDay, 10);
       const anchorDate = customDueDate.trim() || getLocalDateString();
 
-       const payload: any = {
+      const payload: any = {
         title: titleToSave,
         content: text.trim(),
         type: selectedAIMode,
@@ -723,20 +743,21 @@ export default function ComposeScreen() {
           status: "active",
           ...payload,
         });
-   
+
         if (error) {
           Alert.alert("Could not save entry", error.message);
           return;
         }
       }
 
-       try {
+      try {
         await syncLocalNotifications();
       } catch (syncError) {
         console.log("Compose notification sync error:", syncError);
       }
 
       setShowSaveEntryModal(false);
+      setShowCustomTimeModal(false);
       setShowRevertAI(false);
       setPreAIText(null);
       setPreAITitle(null);
@@ -759,7 +780,7 @@ export default function ComposeScreen() {
     }
   }
 
-const selectedDigestDescription = useMemo(() => {
+  const selectedDigestDescription = useMemo(() => {
     if (selectedSaveCadence === "daily") {
       return `Appears in the Daily Reminder at ${formatDisplayTime(
         profileDigestSettings.daily_digest_time ?? "07:00:00"
@@ -785,54 +806,55 @@ const selectedDigestDescription = useMemo(() => {
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
       <SafeAreaView style={{ flex: 1, backgroundColor: "white" }}>
-  <View
-  style={{
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 18,
-    paddingTop: 8,
-    paddingBottom: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: "#e5e7eb",
-    backgroundColor: "white",
-  }}
->
-  <View style={{ width: 56 }} />
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            paddingHorizontal: 18,
+            paddingTop: 8,
+            paddingBottom: 10,
+            borderBottomWidth: 1,
+            borderBottomColor: "#e5e7eb",
+            backgroundColor: "white",
+          }}
+        >
+          <View style={{ width: 56 }} />
 
-  <Text
-    style={{
-      fontSize: 20,
-      fontWeight: "700",
-      color: "black",
-    }}
-  >
-    {composeMode === "edit" ? "Edit Entry" : "Journal Entry"}
-  </Text>
+          <Text
+            style={{
+              fontSize: 20,
+              fontWeight: "700",
+              color: "black",
+            }}
+          >
+            {composeMode === "edit" ? "Edit Entry" : "Journal Entry"}
+          </Text>
 
-  <Pressable
-    onPress={openSaveEntryModal}
-    disabled={!text.trim() || isSaving || isLoadingEntry}
-    style={{
-      minHeight: 36,
-      borderRadius: 18,
-      alignItems: "center",
-      justifyContent: "center",
-      backgroundColor: !text.trim() || isSaving || isLoadingEntry ? "#c7d2fe" : "#2e6cff",
-      paddingHorizontal: 14,
-    }}
-  >
-    <Text
-      style={{
-        color: "white",
-        fontSize: 13,
-        fontWeight: "700",
-      }}
-    >
-      Save
-    </Text>
-  </Pressable>
-</View>
+          <Pressable
+            onPress={openSaveEntryModal}
+            disabled={!text.trim() || isSaving || isLoadingEntry}
+            style={{
+              minHeight: 36,
+              borderRadius: 18,
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor:
+                !text.trim() || isSaving || isLoadingEntry ? "#c7d2fe" : "#2e6cff",
+              paddingHorizontal: 14,
+            }}
+          >
+            <Text
+              style={{
+                color: "white",
+                fontSize: 13,
+                fontWeight: "700",
+              }}
+            >
+              Save
+            </Text>
+          </Pressable>
+        </View>
 
         <View
           style={{
@@ -1239,9 +1261,16 @@ const selectedDigestDescription = useMemo(() => {
                     Reminder
                   </Text>
 
-                  <View style={{ flexDirection: "row", gap: 8, marginBottom: 18, flexWrap: "wrap" }}>
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      gap: 8,
+                      marginBottom: 18,
+                      flexWrap: "wrap",
+                    }}
+                  >
                     {(
-                       [
+                      [
                         { key: "none", label: "None" },
                         { key: "digest", label: "Assign to Reminder" },
                         { key: "custom", label: "Custom" },
@@ -1281,7 +1310,7 @@ const selectedDigestDescription = useMemo(() => {
                     ))}
                   </View>
 
-                   {saveScheduleSource === "digest" ? (
+                  {saveScheduleSource === "digest" ? (
                     <View
                       style={{
                         backgroundColor: "#f8fafc",
@@ -1313,6 +1342,7 @@ const selectedDigestDescription = useMemo(() => {
                       >
                         Choose which reminder this item belongs to by default
                       </Text>
+
                       <Text
                         style={{
                           fontSize: 13,
@@ -1323,36 +1353,39 @@ const selectedDigestDescription = useMemo(() => {
                       >
                         {selectedDigestDescription}
                       </Text>
-                      <View style={{ gap: 8 }}>
-                        {(["daily", "weekly", "monthly", "quarterly", "yearly"] as const).map((cadence) => {
-                          const selected = selectedSaveCadence === cadence;
 
-                          return (
-                            <Pressable
-                              key={cadence}
-                              onPress={() => setSelectedSaveCadence(cadence)}
-                              style={{
-                                borderWidth: 1,
-                                borderColor: selected ? "#2563eb" : "#d1d5db",
-                                borderRadius: 12,
-                                paddingHorizontal: 12,
-                                paddingVertical: 12,
-                                backgroundColor: selected ? "#eff6ff" : "white",
-                              }}
-                            >
-                              <Text
+                      <View style={{ gap: 8 }}>
+                        {(["daily", "weekly", "monthly", "quarterly", "yearly"] as const).map(
+                          (cadence) => {
+                            const selected = selectedSaveCadence === cadence;
+
+                            return (
+                              <Pressable
+                                key={cadence}
+                                onPress={() => setSelectedSaveCadence(cadence)}
                                 style={{
-                                  fontSize: 14,
-                                  fontWeight: "600",
-                                  color: selected ? "#1d4ed8" : "#111827",
-                                  textTransform: "capitalize",
+                                  borderWidth: 1,
+                                  borderColor: selected ? "#2563eb" : "#d1d5db",
+                                  borderRadius: 12,
+                                  paddingHorizontal: 12,
+                                  paddingVertical: 12,
+                                  backgroundColor: selected ? "#eff6ff" : "white",
                                 }}
                               >
-                                {cadence}
-                              </Text>
-                            </Pressable>
-                          );
-                        })}
+                                <Text
+                                  style={{
+                                    fontSize: 14,
+                                    fontWeight: "600",
+                                    color: selected ? "#1d4ed8" : "#111827",
+                                    textTransform: "capitalize",
+                                  }}
+                                >
+                                  {cadence}
+                                </Text>
+                              </Pressable>
+                            );
+                          }
+                        )}
                       </View>
                     </View>
                   ) : null}
@@ -1420,74 +1453,40 @@ const selectedDigestDescription = useMemo(() => {
                           Time
                         </Text>
 
-                        <View style={{ flexDirection: "row", gap: 10 }}>
-                          <TextInput
-                            value={customTimeHour}
-                            onChangeText={(value) => setCustomTimeHour(sanitizeCustomHourInput(value))}
-                            keyboardType="number-pad"
-                            placeholder="7"
-                            placeholderTextColor="#9ca3af"
+                        <Pressable
+                          onPress={openCustomTimeEditor}
+                          style={{
+                            borderWidth: 1,
+                            borderColor: "#d1d5db",
+                            borderRadius: 12,
+                            paddingHorizontal: 14,
+                            paddingVertical: 12,
+                            backgroundColor: "white",
+                            flexDirection: "row",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                          }}
+                        >
+                          <Text
                             style={{
-                              flex: 1,
-                              borderWidth: 1,
-                              borderColor: "#d1d5db",
-                              borderRadius: 12,
-                              paddingHorizontal: 12,
-                              paddingVertical: 10,
-                              backgroundColor: "white",
-                              color: "black",
                               fontSize: 14,
-                            }}
-                          />
-
-                          <TextInput
-                            value={customTimeMinute}
-                            onChangeText={(value) =>
-                              setCustomTimeMinute(sanitizeCustomMinuteInput(value))
-                            }
-                            keyboardType="number-pad"
-                            placeholder="00"
-                            placeholderTextColor="#9ca3af"
-                            style={{
-                              flex: 1,
-                              borderWidth: 1,
-                              borderColor: "#d1d5db",
-                              borderRadius: 12,
-                              paddingHorizontal: 12,
-                              paddingVertical: 10,
-                              backgroundColor: "white",
-                              color: "black",
-                              fontSize: 14,
-                            }}
-                          />
-
-                          <Pressable
-                            onPress={() =>
-                              setCustomTimePeriod((current) => (current === "AM" ? "PM" : "AM"))
-                            }
-                            style={{
-                              minWidth: 72,
-                              borderWidth: 1,
-                              borderColor: "#d1d5db",
-                              borderRadius: 12,
-                              paddingHorizontal: 12,
-                              paddingVertical: 10,
-                              backgroundColor: "white",
-                              alignItems: "center",
-                              justifyContent: "center",
+                              fontWeight: "600",
+                              color: "#111827",
                             }}
                           >
-                            <Text
-                              style={{
-                                fontSize: 14,
-                                fontWeight: "600",
-                                color: "#111827",
-                              }}
-                            >
-                              {customTimePeriod}
-                            </Text>
-                          </Pressable>
-                        </View>
+                            {formatDisplayTime(`${customScheduleTime}:00`)}
+                          </Text>
+
+                          <Text
+                            style={{
+                              fontSize: 14,
+                              fontWeight: "700",
+                              color: "#6b7280",
+                            }}
+                          >
+                            ›
+                          </Text>
+                        </Pressable>
                       </View>
 
                       <Text
@@ -1686,6 +1685,304 @@ const selectedDigestDescription = useMemo(() => {
                       ) : null}
                     </View>
                   ) : null}
+
+                  <Modal visible={showCustomTimeModal} transparent animationType="slide">
+                    <Pressable
+                      onPress={() => setShowCustomTimeModal(false)}
+                      style={{
+                        flex: 1,
+                        backgroundColor: "rgba(0,0,0,0.25)",
+                        justifyContent: "flex-end",
+                      }}
+                    >
+                      <Pressable
+                        onPress={() => {}}
+                        style={{
+                          backgroundColor: "white",
+                          borderTopLeftRadius: 20,
+                          borderTopRightRadius: 20,
+                          paddingTop: 20,
+                          paddingHorizontal: 20,
+                          paddingBottom: 18,
+                          maxHeight: "82%",
+                        }}
+                      >
+                        <Text
+                          style={{
+                            fontSize: 22,
+                            fontWeight: "700",
+                            color: "#111827",
+                            marginBottom: 8,
+                          }}
+                        >
+                          Select time
+                        </Text>
+
+                        <Text
+                          style={{
+                            fontSize: 14,
+                            color: "#475569",
+                            marginBottom: 8,
+                          }}
+                        >
+                          Choose a quick time or enter a custom one.
+                        </Text>
+
+                        <Text
+                          style={{
+                            fontSize: 15,
+                            fontWeight: "700",
+                            color: "#111827",
+                            marginBottom: 14,
+                          }}
+                        >
+               Selected: {draftCustomTimeHour || "12"}:{(draftCustomTimeMinute || "00").padStart(2, "0")} {customTimePeriod}
+                        </Text>
+
+                        <View
+                          style={{
+                            flexDirection: "row",
+                            gap: 10,
+                            marginBottom: 14,
+                          }}
+                        >
+                          <Pressable
+                            onPress={() => setCustomTimePeriod("AM")}
+                            style={{
+                              flex: 1,
+                              paddingVertical: 12,
+                              borderRadius: 12,
+                              alignItems: "center",
+                              backgroundColor:
+                                customTimePeriod === "AM" ? "#2563eb" : "#eef2ff",
+                            }}
+                          >
+                            <Text
+                              style={{
+                                fontSize: 14,
+                                fontWeight: "700",
+                                color: customTimePeriod === "AM" ? "white" : "#1e3a8a",
+                              }}
+                            >
+                              AM
+                            </Text>
+                          </Pressable>
+
+                          <Pressable
+                            onPress={() => setCustomTimePeriod("PM")}
+                            style={{
+                              flex: 1,
+                              paddingVertical: 12,
+                              borderRadius: 12,
+                              alignItems: "center",
+                              backgroundColor:
+                                customTimePeriod === "PM" ? "#2563eb" : "#eef2ff",
+                            }}
+                          >
+                            <Text
+                              style={{
+                                fontSize: 14,
+                                fontWeight: "700",
+                                color: customTimePeriod === "PM" ? "white" : "#1e3a8a",
+                              }}
+                            >
+                              PM
+                            </Text>
+                          </Pressable>
+                        </View>
+
+                        <Text
+                          style={{
+                            fontSize: 13,
+                            fontWeight: "600",
+                            color: "#475569",
+                            marginBottom: 8,
+                          }}
+                        >
+                          Quick pick
+                        </Text>
+
+                        <ScrollView
+                          showsVerticalScrollIndicator={false}
+                          contentContainerStyle={{
+                            paddingBottom: 12,
+                            gap: 8,
+                          }}
+                          style={{ maxHeight: 280, marginBottom: 14 }}
+                        >
+                          {Array.from({ length: 48 }, (_, index) => {
+                            const hour = Math.floor(index / 4) === 0 ? 12 : Math.floor(index / 4);
+                            const minute = (index % 4) * 15;
+                            const minuteText = String(minute).padStart(2, "0");
+                            const selected =
+                              draftCustomTimeHour === String(hour) &&
+                              draftCustomTimeMinute === minuteText;
+
+                            return (
+                              <Pressable
+                                key={`${hour}:${minuteText}`}
+                                onPress={() => {
+                                  setDraftCustomTimeHour(String(hour));
+                                  setDraftCustomTimeMinute(minuteText);
+                                }}
+                                style={{
+                                  borderWidth: 1,
+                                  borderColor: selected ? "#2563eb" : "#d1d5db",
+                                  borderRadius: 12,
+                                  paddingVertical: 12,
+                                  paddingHorizontal: 14,
+                                  backgroundColor: selected ? "#eff6ff" : "white",
+                                }}
+                              >
+                                <Text
+                                  style={{
+                                    fontSize: 14,
+                                    fontWeight: "600",
+                                    color: selected ? "#1d4ed8" : "#111827",
+                                  }}
+                                >
+                                  {hour}:{minuteText} {customTimePeriod}
+                                </Text>
+                              </Pressable>
+                            );
+                          })}
+                        </ScrollView>
+
+                        <View
+                          style={{
+                            borderWidth: 1,
+                            borderColor: "#d1d5db",
+                            borderRadius: 14,
+                            padding: 12,
+                            backgroundColor: "#f8fafc",
+                            marginBottom: 14,
+                          }}
+                        >
+                          <Text
+                            style={{
+                              fontSize: 13,
+                              fontWeight: "600",
+                              color: "#475569",
+                              marginBottom: 8,
+                            }}
+                          >
+                            Custom time
+                          </Text>
+
+                          <View style={{ flexDirection: "row", gap: 10 }}>
+                          <TextInput
+                            value={draftCustomTimeHour}
+                            onChangeText={(value) =>
+                              setDraftCustomTimeHour(value.replace(/\D/g, "").slice(0, 2))
+                            }
+                            keyboardType="number-pad"
+                            placeholder="12"
+                            placeholderTextColor="#9ca3af"
+                            style={{
+                              flex: 1,
+                              borderWidth: 1,
+                              borderColor: "#d1d5db",
+                              borderRadius: 12,
+                              paddingHorizontal: 12,
+                              paddingVertical: 12,
+                              backgroundColor: "white",
+                              color: "black",
+                              fontSize: 15,
+                              textAlign: "center",
+                            }}
+                          />
+
+                          <TextInput
+                            value={draftCustomTimeMinute}
+                            onChangeText={(value) =>
+                              setDraftCustomTimeMinute(value.replace(/\D/g, "").slice(0, 2))
+                            }
+                            keyboardType="number-pad"
+                            placeholder="00"
+                            placeholderTextColor="#9ca3af"
+                            style={{
+                              flex: 1,
+                              borderWidth: 1,
+                              borderColor: "#d1d5db",
+                              borderRadius: 12,
+                              paddingHorizontal: 12,
+                              paddingVertical: 12,
+                              backgroundColor: "white",
+                              color: "black",
+                              fontSize: 15,
+                              textAlign: "center",
+                            }}
+                          />
+                          </View>
+                        </View>
+
+                        <View
+                          style={{
+                            flexDirection: "row",
+                            gap: 10,
+                            marginTop: 4,
+                          }}
+                        >
+                          <Pressable
+                            onPress={() => setShowCustomTimeModal(false)}
+                            style={{
+                              flex: 1,
+                              paddingVertical: 13,
+                              borderRadius: 12,
+                              backgroundColor: "#f3f4f6",
+                              alignItems: "center",
+                            }}
+                          >
+                            <Text
+                              style={{
+                                fontSize: 14,
+                                fontWeight: "600",
+                                color: "#374151",
+                              }}
+                            >
+                              Cancel
+                            </Text>
+                          </Pressable>
+
+                          <Pressable
+                            onPress={() => {
+                              const parsedHour = Math.min(12, Math.max(1, Number(draftCustomTimeHour || "12")));
+                              const normalizedHour = String(parsedHour);
+
+                              const parsedMinute = Math.min(59, Math.max(0, Number(draftCustomTimeMinute || "0")));
+                              const normalizedMinute = String(parsedMinute).padStart(2, "0");
+
+                              setCustomTimeHour(normalizedHour);
+                              setCustomTimeMinute(normalizedMinute);
+                              setDraftCustomTimeHour(normalizedHour);
+                              setDraftCustomTimeMinute(normalizedMinute);
+                              setCustomScheduleTime(
+                                build24HourTime(normalizedHour, normalizedMinute, customTimePeriod)
+                              );
+                              setShowCustomTimeModal(false);
+                            }}
+                            style={{
+                              flex: 1,
+                              paddingVertical: 13,
+                              borderRadius: 12,
+                              backgroundColor: "#2563eb",
+                              alignItems: "center",
+                            }}
+                          >
+                            <Text
+                              style={{
+                                fontSize: 14,
+                                fontWeight: "700",
+                                color: "white",
+                              }}
+                            >
+                              OK
+                            </Text>
+                          </Pressable>
+                        </View>
+                      </Pressable>
+                    </Pressable>
+                  </Modal>
 
                   <View
                     style={{

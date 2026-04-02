@@ -1,8 +1,10 @@
-import { useFocusEffect, useRoute } from "@react-navigation/native";
+import { useFocusEffect } from "@react-navigation/native";
 import { LinearGradient } from "expo-linear-gradient";
-import { router } from "expo-router";
+import * as Notifications from "expo-notifications";
+import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Alert,
   Animated,
   Dimensions,
   ImageBackground,
@@ -210,6 +212,7 @@ export default function HomeScreen() {
   const [currentMessageIndex, setCurrentMessageIndex] = useState(0);
   const [verseText, setVerseText] = useState<string | null>(null);
   const [showVerseModal, setShowVerseModal] = useState(false);
+  const [showMessageModal, setShowMessageModal] = useState(false);
   const [showCadenceMenu, setShowCadenceMenu] = useState(false);
   const [activeEntries, setActiveEntries] = useState<Entry[]>([]);
   const [selectedCadenceFilter, setSelectedCadenceFilter] = useState<
@@ -218,23 +221,24 @@ export default function HomeScreen() {
   const [selectedEntry, setSelectedEntry] = useState<UpcomingEntry | null>(null);
   const [showEntryModal, setShowEntryModal] = useState(false);
   const [searchText, setSearchText] = useState("");
-  const [showSearch, setShowSearch] = useState(false);
-  const [scrollY, setScrollY] = useState(0);
   const [messageSectionHeight, setMessageSectionHeight] = useState(0);
 
   const [isRegeneratingMessage, setIsRegeneratingMessage] = useState(false);
-  const [isBrowseMode, setIsBrowseMode] = useState(false);
   const scrollViewRef = useRef<ScrollView | null>(null);
   const messageScrollRef = useRef<ScrollView | null>(null);
   const searchInputRef = useRef<TextInput | null>(null);
   const hasAutoScrolledSearchRef = useRef(false);
-  const suppressAutoBrowseModeRef = useRef(false);
-  const route = useRoute();
-  const resetHomeAt =
-    typeof (route.params as { resetHomeAt?: number | string } | undefined)?.resetHomeAt !== "undefined"
-      ? (route.params as { resetHomeAt?: number | string }).resetHomeAt
-      : undefined;
+  const params = useLocalSearchParams<{
+    resetHomeAt?: string;
+    notificationCadence?: "daily" | "weekly" | "monthly" | "quarterly" | "yearly" | "custom";
+    notificationEntryId?: string;
+    notificationOpenAt?: string;
+  }>();
 
+  const resetHomeAt = params.resetHomeAt;
+  const notificationCadence = params.notificationCadence;
+  const notificationEntryId = params.notificationEntryId;
+  const notificationOpenAt = params.notificationOpenAt;
   const messageFadeAnim = useRef(new Animated.Value(0)).current;
   const [backgroundImage] = useState(
     morningImages[Math.floor(Math.random() * morningImages.length)]
@@ -247,8 +251,7 @@ const hasActiveSearch = searchText.trim().length > 0;
 const hasActiveFilter = selectedCadenceFilter !== "all";
 const shouldPinFloatingHeader = hasActiveSearch || hasActiveFilter;
 
-const showFloatingHeader = isBrowseMode || shouldPinFloatingHeader;
-  const [profileDigestSettings, setProfileDigestSettings] = useState<ProfileDigestSettings>({
+const [profileDigestSettings, setProfileDigestSettings] = useState<ProfileDigestSettings>({
     daily_digest_time: null,
     weekly_digest_day_of_week: null,
     weekly_digest_time: null,
@@ -264,27 +267,154 @@ function openComposeModal() {
   });
 }
 
+const handledNotificationOpenAtRef = useRef<string | null>(null);
+const injectedNotificationHandledRef = useRef(false);
+
 useEffect(() => {
   if (!resetHomeAt) return;
 
-  suppressAutoBrowseModeRef.current = true;
-  setShowSearch(false);
   setSearchText("");
   setSelectedCadenceFilter("all");
-  setScrollY(0);
-  setIsBrowseMode(false);
+  setSelectedEntry(null);
+  setShowEntryModal(false);
   Keyboard.dismiss();
   scrollViewRef.current?.scrollTo({ y: 0, animated: false });
 }, [resetHomeAt]);
 
 useEffect(() => {
-  if (shouldPinFloatingHeader) return;
+  let isActive = true;
 
-  if (!isBrowseMode && scrollY >= 40) {
-    setIsBrowseMode(true);
+  async function hydrateNotificationFromLastResponse() {
+    if (injectedNotificationHandledRef.current) return;
+
+    const response = await Notifications.getLastNotificationResponseAsync();
+    if (!isActive || !response) return;
+
+    const data = response.notification.request.content.data as {
+      kind?: string;
+      cadence?: string;
+      entryId?: string;
+    };
+
+    console.log("HOME_LAST_NOTIFICATION_DEBUG", {
+      kind: data?.kind ?? null,
+      cadence: data?.cadence ?? null,
+      entryId: data?.entryId ?? null,
+    });
+
+    injectedNotificationHandledRef.current = true;
+    await Notifications.clearLastNotificationResponseAsync();
+
+    if (
+      data?.kind === "cadence" &&
+      (data.cadence === "daily" ||
+        data.cadence === "weekly" ||
+        data.cadence === "monthly" ||
+        data.cadence === "quarterly" ||
+        data.cadence === "yearly" ||
+        data.cadence === "custom")
+    ) {
+      setSearchText("");
+      Keyboard.dismiss();
+      setSelectedCadenceFilter(data.cadence);
+      setSelectedEntry(null);
+      setShowEntryModal(false);
+      return;
+    }
+
+    if (data?.kind === "entry" && typeof data.entryId === "string") {
+      if (activeEntries.length === 0) {
+        injectedNotificationHandledRef.current = false;
+        return;
+      }
+
+      const matchingEntry = activeEntries.find((entry) => entry.id === data.entryId);
+      if (!matchingEntry) {
+        injectedNotificationHandledRef.current = false;
+        return;
+      }
+
+      setSearchText("");
+      Keyboard.dismiss();
+      setSelectedCadenceFilter("custom");
+      setSelectedEntry(null);
+      setShowEntryModal(false);
+
+      setTimeout(() => {
+        openEntry({
+          ...matchingEntry,
+          cadence: "custom",
+          next_run_at: matchingEntry.next_due_at ? new Date(matchingEntry.next_due_at) : null,
+          surface_label:
+            matchingEntry.schedule_mode !== "none" ? "Custom schedule" : "Ungrouped",
+        });
+      }, 150);
+    }
   }
-}, [scrollY, isBrowseMode, shouldPinFloatingHeader]);
 
+  hydrateNotificationFromLastResponse();
+
+  return () => {
+    isActive = false;
+  };
+}, [activeEntries]);
+
+useEffect(() => {
+  if (!notificationOpenAt) return;
+  if (handledNotificationOpenAtRef.current === notificationOpenAt) return;
+
+  setSearchText("");
+  Keyboard.dismiss();
+
+  if (
+    notificationCadence === "daily" ||
+    notificationCadence === "weekly" ||
+    notificationCadence === "monthly" ||
+    notificationCadence === "quarterly" ||
+    notificationCadence === "yearly" ||
+    notificationCadence === "custom"
+  ) {
+    handledNotificationOpenAtRef.current = notificationOpenAt;
+
+    setSelectedCadenceFilter(notificationCadence);
+    setSelectedEntry(null);
+    setShowEntryModal(false);
+    return;
+  }
+
+  if (!notificationEntryId) {
+    handledNotificationOpenAtRef.current = notificationOpenAt;
+    return;
+  }
+
+  if (activeEntries.length === 0) return;
+
+  const matchingEntry = activeEntries.find((entry) => entry.id === notificationEntryId);
+  if (!matchingEntry) return;
+
+  handledNotificationOpenAtRef.current = notificationOpenAt;
+
+  setSelectedCadenceFilter("custom");
+  setSelectedEntry(null);
+  setShowEntryModal(false);
+
+  const timer = setTimeout(() => {
+    openEntry({
+      ...matchingEntry,
+      cadence: "custom",
+      next_run_at: matchingEntry.next_due_at ? new Date(matchingEntry.next_due_at) : null,
+      surface_label:
+        matchingEntry.schedule_mode !== "none" ? "Custom schedule" : "Ungrouped",
+    });
+  }, 150);
+
+  return () => clearTimeout(timer);
+}, [
+  notificationOpenAt,
+  notificationCadence,
+  notificationEntryId,
+  activeEntries,
+]);
 
   async function loadProfileDigestSettings() {
     const {
@@ -661,32 +791,27 @@ useEffect(() => {
   });
 }, [selectedCadenceFilter, messageSectionHeight]);
 
-      useEffect(() => {
-        const query = searchText.trim();
+   useEffect(() => {
+    const query = searchText.trim();
 
-        if (!showSearch) {
-          hasAutoScrolledSearchRef.current = false;
-          return;
-        }
+    if (!query) {
+      hasAutoScrolledSearchRef.current = false;
+      return;
+    }
 
-        if (!query) {
-          hasAutoScrolledSearchRef.current = false;
-          return;
-        }
+    if (hasAutoScrolledSearchRef.current) return;
 
-        if (hasAutoScrolledSearchRef.current) return;
+    const targetY = Math.max(140, messageSectionHeight - 40);
 
-        const targetY = Math.max(140, messageSectionHeight - 40);
+    hasAutoScrolledSearchRef.current = true;
 
-        hasAutoScrolledSearchRef.current = true;
-
-        requestAnimationFrame(() => {
-          scrollViewRef.current?.scrollTo({
-            y: targetY,
-            animated: true,
-          });
-        });
-      }, [searchText, showSearch, messageSectionHeight]);
+    requestAnimationFrame(() => {
+      scrollViewRef.current?.scrollTo({
+        y: targetY,
+        animated: true,
+      });
+    });
+  }, [searchText, messageSectionHeight]);
 
   const filteredActiveEntries = useMemo(() => {
     const query = searchText.toLowerCase();
@@ -845,158 +970,135 @@ const groupedUpcomingEntries = useMemo<EntryGroup[]>(() => {
   return allGroups.filter((group) => group.key === selectedCadenceFilter && group.entries.length > 0);
 }, [filteredActiveEntries, selectedCadenceFilter, profileDigestSettings, reminderScheduleStatuses]);
  
-   function renderHomeHeaderContent(isFloating = Boolean) {
-    return (
-      <>
-        {!isFloating && (
-          <View
+function renderHomeHeaderContent() {
+  return (
+    <>
+      <View
+        style={{
+          backgroundColor: "rgba(255,255,255,0.7)",
+          borderRadius: 14,
+          borderWidth: 1,
+          borderColor: "rgba(255,255,255,0.7)",
+          shadowColor: "#000",
+          shadowOpacity: 0.06,
+          shadowRadius: 8,
+          shadowOffset: { width: 0, height: 3 },
+          elevation: 2,
+          marginBottom: 10,
+        }}
+      >
+        <Pressable
+          onPress={openComposeModal}
+          style={{
+            padding: 12,
+            justifyContent: "center",
+          }}
+        >
+          <Text
             style={{
-              backgroundColor: "rgba(255,255,255,0.7)",
-              borderRadius: 14,
-              borderWidth: 1,
-              borderColor: "rgba(255,255,255,0.7)",
-              shadowColor: "#000",
-              shadowOpacity: 0.06,
-              shadowRadius: 8,
-              shadowOffset: { width: 0, height: 3 },
-              elevation: 2,
-              marginBottom: 14,
+              color: "#5f6368",
+              lineHeight: 21,
+              fontSize: 15,
+            }}
+            numberOfLines={1}
+          >
+            Tap to write...
+          </Text>
+        </Pressable>
+      </View>
+
+      <View
+        style={{
+          backgroundColor: "rgba(255,255,255,0.7)",
+          borderRadius: 14,
+          padding: 12,
+          borderWidth: 1,
+          borderColor: "#e5e7eb",
+          shadowColor: "#000",
+          shadowOpacity: 0.06,
+          shadowRadius: 8,
+          shadowOffset: { width: 0, height: 3 },
+          elevation: 2,
+          marginBottom: 10,
+        }}
+      >
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 10,
+          }}
+        >
+          <Pressable
+            onPress={() => {
+              setShowCadenceMenu(true);
+            }}
+            style={{
+              paddingVertical: 11,
+              paddingHorizontal: 13,
+              borderRadius: 10,
+              backgroundColor: "rgba(40,40,40,0.85)",
             }}
           >
-            <Pressable
-              onPress={openComposeModal}
-              style={{
-                padding: 14,
-                minHeight: 100,
-                justifyContent: "center",
-              }}
-            >
-              <Text
-                style={{
-                  color: "#5f6368",
-                  lineHeight: 26,
-                  fontSize: 16,
-                }}
-                numberOfLines={4}
-              >
-                Tap to write what's on your mind... a prayer, goal, affirmation or just a reminder.
-              </Text>
-            </Pressable>
-          </View>
-        )}
+            <Text style={{ fontSize: 14, fontWeight: "600", color: "white" }}>
+              {selectedCadenceFilter === "all"
+                ? "All"
+                : selectedCadenceFilter === "daily"
+                ? "Daily"
+                : selectedCadenceFilter === "weekly"
+                ? "Weekly"
+                : selectedCadenceFilter === "monthly"
+                ? "Monthly"
+                : selectedCadenceFilter === "quarterly"
+                ? "Quarterly"
+                : selectedCadenceFilter === "yearly"
+                ? "Yearly"
+                : "Custom"} ▼
+            </Text>
+          </Pressable>
 
-        {isFloating && (
-          <View
-            style={{
-              marginBottom: 8,
-              padding: 0,
-            }}
-          >
-            <View
+          <View style={{ flex: 1, position: "relative" }}>
+            <TextInput
+              ref={searchInputRef}
+              placeholder="Search entries..."
+              value={searchText}
+              onChangeText={setSearchText}
               style={{
-                flexDirection: "row",
-                alignItems: "center",
-                marginBottom: 12,
+                backgroundColor: "white",
+                borderWidth: 1,
+                borderColor: "#d8d8d8",
+                borderRadius: 10,
+                paddingHorizontal: 12,
+                paddingRight: 44,
+                paddingVertical: 11,
+                fontSize: 15,
+                color: "black",
               }}
-            >
+            />
+
+            {!!searchText.trim() && (
               <Pressable
                 onPress={() => {
-                  setShowCadenceMenu(true);
-                }}
-                style={{
-                  paddingVertical: 9,
-                  paddingHorizontal: 13,
-                  borderRadius: 10,
-                  backgroundColor: "rgba(40,40,40,0.85)",
-                  marginRight: 12,
-                }}
-              >
-                <Text style={{ fontSize: 14, fontWeight: "600", color: "white" }}>
-                   {selectedCadenceFilter === "all"
-                    ? "All"
-                    : selectedCadenceFilter === "daily"
-                    ? "Daily"
-                    : selectedCadenceFilter === "weekly"
-                    ? "Weekly"
-                    : selectedCadenceFilter === "monthly"
-                    ? "Monthly"
-                    : selectedCadenceFilter === "quarterly"
-                    ? "Quarterly"
-                    : selectedCadenceFilter === "yearly"
-                    ? "Yearly"
-                    : "Custom"} ▼
-                </Text>
-              </Pressable>
-
-              <View style={{ flex: 1 }} />
-
-              <Pressable
-                onPress={() => {
-                  suppressAutoBrowseModeRef.current = true;
-                  setShowSearch(false);
                   setSearchText("");
-                  setSelectedCadenceFilter("all");
-                  setScrollY(0);
-                  setIsBrowseMode(false);
-                  Keyboard.dismiss();
-                  scrollViewRef.current?.scrollTo({ y: 0, animated: false });
+                  searchInputRef.current?.focus();
                 }}
+                hitSlop={10}
                 style={{
-                  marginLeft: 8,
-                  borderRadius: 10,
-                  paddingVertical: 10,
-                  paddingHorizontal: 12,
-                  backgroundColor: "rgba(40,40,40,0.85)",
+                  position: "absolute",
+                  right: 12,
+                  top: 11,
+                  padding: 2,
                 }}
               >
-                <Text style={{ fontSize: 14, fontWeight: "600", color: "white" }}>
-                  Close/Return
-                </Text>
+                <Text style={{ fontSize: 16, color: "#777", fontWeight: "600" }}>×</Text>
               </Pressable>
-            </View>
-
-            <View style={{ marginBottom: 14, position: "relative" }}>
-              <TextInput
-                ref={searchInputRef}
-                placeholder="Search entries..."
-                value={searchText}
-                onChangeText={setSearchText}
-                style={{
-                  backgroundColor: "white",
-                  borderWidth: 1,
-                  borderColor: "#d8d8d8",
-                  borderRadius: 10,
-                  paddingHorizontal: 12,
-                  paddingRight: 44,
-                  paddingVertical: 12,
-                  fontSize: 15,
-                  color: "black",
-                }}
-              />
-
-              {!!searchText.trim() && (
-                <Pressable
-                  onPress={() => {
-                    setSearchText("");
-                    searchInputRef.current?.focus();
-                  }}
-                  hitSlop={10}
-                  style={{
-                    position: "absolute",
-                    right: 12,
-                    top: 12,
-                    padding: 2,
-                  }}
-                >
-                  <Text style={{ fontSize: 16, color: "#777", fontWeight: "600" }}>×</Text>
-                </Pressable>
-              )}
-            </View>
+            )}
           </View>
-        )}
-      </>
-    );
-  }
+        </View>
+      </View>
+    </>
+  );
+}
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
  <ImageBackground
@@ -1022,33 +1124,13 @@ const groupedUpcomingEntries = useMemo<EntryGroup[]>(() => {
   behavior={Platform.OS === "ios" ? "padding" : "height"}
 >
   <View style={{ flex: 1 }}>
-<ScrollView
-  ref={scrollViewRef}
-  keyboardShouldPersistTaps="handled"
-  keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
-  showsVerticalScrollIndicator={false}
-  onScroll={(event) => {
-    const nextScrollY = event.nativeEvent.contentOffset.y;
-    setScrollY(nextScrollY);
-
-    if (suppressAutoBrowseModeRef.current) {
-      if (nextScrollY <= 8) {
-        suppressAutoBrowseModeRef.current = false;
-      }
-      return;
-    }
-
-     if (!isBrowseMode && nextScrollY >= 40) {
-      setIsBrowseMode(true);
-    }
-  }}
-  scrollEventThrottle={16}
-  contentContainerStyle={{ paddingBottom: 240 }}
->
-  {!showFloatingHeader && (
+<View style={{ flex: 1 }}>
+  <View style={{ paddingBottom: 10 }}>
     <View>
-      <Pressable
-        onPress={() => generateDailyMessage(true)}
+       <Pressable
+        onPress={() => {
+          generateDailyMessage(true);
+        }}
         style={{
           marginHorizontal: 20,
           marginBottom: 10,
@@ -1058,7 +1140,7 @@ const groupedUpcomingEntries = useMemo<EntryGroup[]>(() => {
         <Text
           style={{
             textAlign: "center",
-            fontSize: 18,
+            fontSize: 16,
             fontWeight: "700",
             color: "#111",
             letterSpacing: 0.2,
@@ -1071,156 +1153,121 @@ const groupedUpcomingEntries = useMemo<EntryGroup[]>(() => {
         </Text>
       </Pressable>
 
-      <View
+       <Pressable
+        onPress={() => {
+          if (dailyMessages.length > 0) {
+            setShowMessageModal(true);
+          }
+        }}
         onLayout={(event) => {
           setMessageSectionHeight(event.nativeEvent.layout.height + 58);
         }}
         style={{
-          marginBottom: 24,
+          marginBottom: 12,
           marginHorizontal: 20,
-          minHeight: 240,
+          minHeight: 84,
           justifyContent: "center",
           backgroundColor: "rgba(255,255,255,0.7)",
           borderRadius: 18,
           borderWidth: 1,
           borderColor: "rgba(255,255,255,0.70)",
           overflow: "hidden",
-          paddingVertical: 18,
+          paddingVertical: 10,
+          paddingHorizontal: 14,
         }}
       >
-          {dailyMessages.length > 0 ? (
-          <>
-            <ScrollView
-              ref={messageScrollRef}
-              horizontal
-              pagingEnabled
-              showsHorizontalScrollIndicator={false}
-              onMomentumScrollEnd={(event) => {
-                const screenWidth = event.nativeEvent.layoutMeasurement.width;
-                const index = Math.round(
-                  event.nativeEvent.contentOffset.x / screenWidth
-                );
-                setCurrentMessageIndex(index);
-              }}
-              style={{ width: "100%" }}
-              contentContainerStyle={{ alignItems: "stretch" }}
-            >
-              {dailyMessages.map((item, index) => (
-                <View
-                  key={item.id ?? `${item.message_date}-${index}`}
-                  style={{
-                    width: messageCardWidth,
-                    paddingHorizontal: 18,
-                    justifyContent: "center",
-                    alignItems: "center",
-                  }}
-                >
-                     <Animated.Text
-                      style={{
-                        fontSize: 18,
-                        textAlign: "center",
-                        color: "#111",
-                        lineHeight: 26,
-                        marginBottom: 10,
-                        fontWeight: "500",
-                        opacity: messageFadeAnim,
-                      }}
-                    >
-                      {item.message}
-                    </Animated.Text>
-
-                  <Pressable
-                    hitSlop={12}
-                    onPress={() => {
-                      if (item.verse_reference) {
-                        loadVerse(item.verse_reference);
-                      }
-                    }}
-                    style={{
-                      marginTop: 6,
-                      paddingVertical: 8,
-                      paddingHorizontal: 12,
-                    }}
-                  >
-                    <Text
-                      style={{
-                        fontSize: 13,
-                        color: "#111",
-                        textAlign: "center",
-                        letterSpacing: 0.3,
-                        textDecorationLine: "underline",
-                        fontWeight: "600",
-                      }}
-                    >
-                      {item.verse_reference ? `Read ${item.verse_reference}` : " "}
-                    </Text>
-                  </Pressable>
-                </View>
-              ))}
-            </ScrollView>
-
-            <View
+        {dailyMessages.length > 0 ? (
+          <View
+            style={{
+              justifyContent: "center",
+            }}
+          >
+            <Text
               style={{
-                flexDirection: "row",
-                justifyContent: "center",
-                alignItems: "center",
-                marginTop: 10,
-                gap: 8,
+                fontSize: 15,
+                textAlign: "center",
+                color: "#111",
+                lineHeight: 22,
+                fontWeight: "500",
               }}
+              numberOfLines={3}
             >
-              {dailyMessages.map((_, index) => (
-                <View
-                  key={index}
-                  style={{
-                    width: index === currentMessageIndex ? 18 : 7,
-                    height: 7,
-                    borderRadius: 999,
-                    backgroundColor:
-                      index === currentMessageIndex
-                        ? "rgba(17,17,17,0.9)"
-                        : "rgba(17,17,17,0.3)",
-                  }}
-                />
-              ))}
-            </View>
-           </>
+              {currentDailyMessage?.message || "Preparing your morning message…"}
+            </Text>
+
+            {!!currentDailyMessage?.verse_reference && (
+              <Text
+                style={{
+                  marginTop: 8,
+                  fontSize: 12,
+                  color: "#111",
+                  textAlign: "center",
+                  textDecorationLine: "underline",
+                  fontWeight: "600",
+                }}
+              >
+                {currentDailyMessage.verse_reference}
+              </Text>
+            )}
+          </View>
         ) : (
           <Text
             style={{
-              fontSize: 18,
+              fontSize: 15,
               textAlign: "center",
               color: "#111",
-              lineHeight: 26,
-              marginBottom: 10,
+              lineHeight: 22,
               fontWeight: "500",
               maxWidth: 320,
               opacity: 0.7,
-              paddingHorizontal: 18,
             }}
           >
             Preparing your morning message…
           </Text>
         )}
-   
-          </View>
-           </View>
-      )}
+      </Pressable>
+    </View>
 
-       <View
-        style={{
-          paddingHorizontal: 20,
-          paddingTop: 10,
-          paddingBottom: 14,
+    <View
+      style={{
+        paddingHorizontal: 20,
+        paddingTop: 10,
+        paddingBottom: 14,
+      }}
+    >
+        {renderHomeHeaderContent()}
+    </View>
+  </View>
+
+  <View
+    style={{
+      flex: 1,
+      paddingHorizontal: 20,
+      paddingBottom: 10,
+    }}
+  >
+    <View
+      style={{
+        flex: 1,
+        backgroundColor: "rgba(255,255,255,0.18)",
+        borderRadius: 18,
+      }}
+    >
+       <ScrollView
+        ref={scrollViewRef}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+        showsVerticalScrollIndicator={false}
+        scrollEventThrottle={16}
+        contentContainerStyle={{
+          paddingTop: 8,
+          paddingBottom: 240,
         }}
       >
-        {renderHomeHeaderContent(false)}
-      </View>
-
-       <View style={{ paddingHorizontal: 20, marginTop: 10, paddingBottom: 10 }}>
         {groupedUpcomingEntries.length === 0 ? (
           <View
             style={{
-              backgroundColor: "rgba(255,255,255,0.92)",
+              backgroundColor: "rgba(255,255,255,0.7)",
               borderRadius: 14,
               padding: 14,
               marginBottom: 10,
@@ -1241,7 +1288,7 @@ const groupedUpcomingEntries = useMemo<EntryGroup[]>(() => {
           <>
             {groupedUpcomingEntries.map((group) => (
               <View key={group.key} style={{ marginBottom: 18 }}>
-                 <View
+                <View
                   style={{
                     alignItems: "center",
                     marginBottom: 10,
@@ -1339,8 +1386,10 @@ const groupedUpcomingEntries = useMemo<EntryGroup[]>(() => {
                         }}
                         numberOfLines={1}
                       >
-                          {(entry.title?.trim() || "Untitled Entry") +
-                          (group.key === "custom" && entry.schedule_mode !== "none" ? " *" : "")}
+                        {(entry.title?.trim() || "Untitled Entry") +
+                          (group.key === "custom" && entry.schedule_mode !== "none"
+                            ? " *"
+                            : "")}
                       </Text>
                     </View>
                   </Pressable>
@@ -1349,40 +1398,11 @@ const groupedUpcomingEntries = useMemo<EntryGroup[]>(() => {
             ))}
           </>
         )}
-      </View>
-</ScrollView>
+      </ScrollView>
+    </View>
+  </View>
+</View>
 
-    {showFloatingHeader && (
-      <View
-        pointerEvents="box-none"
-        style={{
-          position: "absolute",
-          top: 0,
-          left: 0,
-          right: 0,
-          zIndex: 50,
-          elevation: 50,
-        }}
-      >
-         <View
-          style={{
-            paddingHorizontal: 20,
-            paddingTop: 10,
-            paddingBottom: 6,
-            backgroundColor: "rgba(255,255,255,0.92)",
-            overflow: "hidden",
-            borderBottomWidth: 0.5,
-            borderBottomColor: "#e5e7eb",
-            shadowColor: "#000",
-            shadowOpacity: 0.04,
-            shadowRadius: 6,
-            shadowOffset: { width: 0, height: 2 },
-          }}
-        >
-          {renderHomeHeaderContent(true)}
-        </View>
-      </View>
-    )}
   </View>
     
 </KeyboardAvoidingView>
@@ -1664,6 +1684,112 @@ onPress={() => {
       </KeyboardAvoidingView>
     </View>
 </Modal>
+
+        <Modal visible={showMessageModal} transparent animationType="fade">
+          <Pressable
+            onPress={() => setShowMessageModal(false)}
+            style={{
+              flex: 1,
+              backgroundColor: "rgba(0,0,0,0.22)",
+              justifyContent: "center",
+              paddingHorizontal: 20,
+              paddingVertical: 40,
+            }}
+          >
+            <Pressable
+              onPress={() => {}}
+              style={{
+                backgroundColor: "rgba(255,255,255,0.96)",
+                borderRadius: 22,
+                padding: 22,
+                borderWidth: 1,
+                borderColor: "rgba(255,255,255,0.95)",
+              }}
+            >
+              <Pressable
+                onPress={() => setShowMessageModal(false)}
+                hitSlop={10}
+                style={{
+                  position: "absolute",
+                  top: 14,
+                  right: 14,
+                  zIndex: 2,
+                  width: 28,
+                  height: 28,
+                  borderRadius: 14,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  backgroundColor: "rgba(0,0,0,0.08)",
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 16,
+                    fontWeight: "700",
+                    color: "#444",
+                    lineHeight: 16,
+                  }}
+                >
+                  ×
+                </Text>
+              </Pressable>
+
+              <Text
+                style={{
+                  fontSize: 18,
+                  fontWeight: "700",
+                  color: "#111",
+                  textAlign: "center",
+                  marginBottom: 14,
+                  paddingHorizontal: 20,
+                }}
+              >
+                Morning Message
+              </Text>
+
+              <Text
+                style={{
+                  fontSize: 17,
+                  lineHeight: 28,
+                  color: "#111",
+                  textAlign: "center",
+                  fontWeight: "500",
+                  marginBottom: 14,
+                }}
+              >
+                {currentDailyMessage?.message || "Preparing your morning message…"}
+              </Text>
+
+              {!!currentDailyMessage?.verse_reference && (
+                <Pressable
+                  hitSlop={12}
+                  onPress={() => {
+                    setShowMessageModal(false);
+                    if (currentDailyMessage?.verse_reference) {
+                      loadVerse(currentDailyMessage.verse_reference);
+                    }
+                  }}
+                  style={{
+                    paddingTop: 4,
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 13,
+                      color: "#111",
+                      textAlign: "center",
+                      textDecorationLine: "underline",
+                      fontWeight: "600",
+                    }}
+                  >
+                    Read {currentDailyMessage.verse_reference}
+                  </Text>
+                </Pressable>
+              )}
+            </Pressable>
+          </Pressable>
+        </Modal>
+
 
         <Modal visible={showVerseModal} transparent animationType="slide">
           <Pressable

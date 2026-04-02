@@ -171,6 +171,7 @@ async function scheduleCadenceReminder(schedule: ReminderScheduleRow) {
         kind: "cadence",
         cadence: schedule.cadence,
         scheduleId: schedule.id,
+      url: `/?notificationCadence=${schedule.cadence}&notificationOpenAt=${Date.now()}`,
       },
     },
     trigger: {
@@ -190,7 +191,7 @@ async function scheduleCustomEntryReminder(entry: EntryRow) {
   if (nextTriggerAt <= new Date()) return;
 
   await Notifications.scheduleNotificationAsync({
-    content: {
+     content: {
       title: buildCustomEntryTitle(entry),
       body: buildCustomEntryBody(entry),
       sound: true,
@@ -198,6 +199,7 @@ async function scheduleCustomEntryReminder(entry: EntryRow) {
         scope: `${NOTIFICATION_SCOPE_PREFIX}entry`,
         kind: "entry",
         entryId: entry.id,
+      url: `/?notificationEntryId=${entry.id}&notificationOpenAt=${Date.now()}`,
       },
     },
     trigger: {
