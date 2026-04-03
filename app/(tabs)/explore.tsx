@@ -1,4 +1,5 @@
 import { useFocusEffect } from "@react-navigation/native";
+import { router } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
 import {
   Alert,
@@ -11,7 +12,10 @@ import {
   View
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { syncLocalNotifications } from "../../lib/notifications/syncNotifications";
+import {
+  getManagedScheduledNotifications,
+  syncLocalNotifications,
+} from "../../lib/notifications/syncNotifications";
 import { supabase } from "../../lib/supabase";
 
 const reminderBackground = require("../../assets/images/morning-nature-2.jpg");
@@ -262,7 +266,7 @@ export default function ReminderGroupsScreen() {
   const [pendingTimeMinute, setPendingTimeMinute] = useState("00");
   const [pendingTimePeriod, setPendingTimePeriod] = useState<TimePeriod>("AM");
 
-  async function loadReminderSchedules() {
+   async function loadReminderSchedules() {
     const {
       data: { user },
       error: userError,
@@ -270,6 +274,18 @@ export default function ReminderGroupsScreen() {
 
     if (userError || !user) {
       console.log("Load reminder schedules user error:", userError?.message);
+      return;
+    }
+
+    const { error: ensureError } = await supabase.rpc(
+      "ensure_default_reminder_schedules",
+      {
+        p_user_id: user.id,
+      }
+    );
+
+    if (ensureError) {
+      console.log("Ensure default reminder schedules error:", ensureError.message);
       return;
     }
 
@@ -296,6 +312,17 @@ export default function ReminderGroupsScreen() {
     }, [])
   );
 
+  async function handleSignOut() {
+    const { error } = await supabase.auth.signOut();
+
+    if (error) {
+      Alert.alert("Could not sign out", error.message);
+      return;
+    }
+
+    router.replace("/(auth)");
+  }
+
   const schedulesByCadence = useMemo(() => {
     return {
       daily: schedules.find((item) => item.cadence === "daily") ?? null,
@@ -306,7 +333,7 @@ export default function ReminderGroupsScreen() {
     };
   }, [schedules]);
 
-  async function updateSchedule(
+    async function updateSchedule(
     cadence: ReminderCadence,
     patch: Partial<ReminderSchedule>
   ) {
@@ -325,7 +352,7 @@ export default function ReminderGroupsScreen() {
 
     setSavingKey(cadence);
 
-     const { error } = await supabase
+    const { error } = await supabase
       .from("reminder_schedules")
       .update({
         is_enabled: optimistic.is_enabled,
@@ -343,8 +370,21 @@ export default function ReminderGroupsScreen() {
       return;
     }
 
-     try {
+    try {
       await syncLocalNotifications();
+
+      const scheduled = await getManagedScheduledNotifications();
+
+      console.log(
+        "REMINDER_SCHEDULE_DEBUG",
+        scheduled.map((item) => ({
+          id: item.identifier,
+          title: item.content.title,
+          body: item.content.body,
+          data: item.content.data,
+          trigger: item.trigger,
+        }))
+      );
     } catch (syncError) {
       console.log("Reminder notification sync error:", syncError);
       Alert.alert("Reminder saved", "Your reminder was saved, but notifications could not be refreshed.");
@@ -794,29 +834,60 @@ export default function ReminderGroupsScreen() {
               borderBottomColor: "rgba(255,255,255,0.4)",
             }}
           >
-            <Text
+            <View
               style={{
-                fontSize: 28,
-                fontWeight: "700",
-                color: "#111",
-                textShadowColor: "rgba(255,255,255,0.4)",
-                textShadowOffset: { width: 0, height: 1 },
-                textShadowRadius: 2,
-                marginBottom: 8,
+                flexDirection: "row",
+                alignItems: "flex-start",
+                justifyContent: "space-between",
+                gap: 12,
               }}
             >
-              Reminders
-            </Text>
+              <View style={{ flex: 1 }}>
+                <Text
+                  style={{
+                    fontSize: 28,
+                    fontWeight: "700",
+                    color: "#111",
+                    textShadowColor: "rgba(255,255,255,0.4)",
+                    textShadowOffset: { width: 0, height: 1 },
+                    textShadowRadius: 2,
+                    marginBottom: 8,
+                  }}
+                >
+                  Reminders
+                </Text>
 
-            <Text
-              style={{
-                fontSize: 15,
-                color: "black",
-                lineHeight: 22,
-              }}
-            >
-              Set when your reminders should appear.
-            </Text>
+                <Text
+                  style={{
+                    fontSize: 15,
+                    color: "black",
+                    lineHeight: 22,
+                  }}
+                >
+                  Set when your reminders should appear.
+                </Text>
+              </View>
+
+              <Pressable
+                onPress={handleSignOut}
+                style={{
+                  paddingVertical: 10,
+                  paddingHorizontal: 12,
+                  borderRadius: 12,
+                  backgroundColor: "rgba(40,40,40,0.85)",
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 13,
+                    fontWeight: "700",
+                    color: "white",
+                  }}
+                >
+                  Sign Out
+                </Text>
+              </Pressable>
+            </View>
           </View>
 
           <ScrollView

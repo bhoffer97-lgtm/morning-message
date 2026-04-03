@@ -75,10 +75,11 @@ type UpcomingEntry = Entry & {
 
 type WeekdayValue = 0 | 1 | 2 | 3 | 4 | 5 | 6;
 
-type ProfileDigestSettings = {
-  daily_digest_time: string | null;
-  weekly_digest_day_of_week: WeekdayValue | null;
-  weekly_digest_time: string | null;
+type ReminderScheduleRow = {
+  cadence: "daily" | "weekly" | "monthly" | "quarterly" | "yearly";
+  is_enabled: boolean;
+  anchor_date: string;
+  time_of_day: string;
 };
 
 type ReminderScheduleStatus = {
@@ -228,17 +229,10 @@ export default function HomeScreen() {
   const messageScrollRef = useRef<ScrollView | null>(null);
   const searchInputRef = useRef<TextInput | null>(null);
   const hasAutoScrolledSearchRef = useRef(false);
-  const params = useLocalSearchParams<{
+   const params = useLocalSearchParams<{
     resetHomeAt?: string;
-    notificationCadence?: "daily" | "weekly" | "monthly" | "quarterly" | "yearly" | "custom";
-    notificationEntryId?: string;
-    notificationOpenAt?: string;
   }>();
-
   const resetHomeAt = params.resetHomeAt;
-  const notificationCadence = params.notificationCadence;
-  const notificationEntryId = params.notificationEntryId;
-  const notificationOpenAt = params.notificationOpenAt;
   const messageFadeAnim = useRef(new Animated.Value(0)).current;
   const [backgroundImage] = useState(
     morningImages[Math.floor(Math.random() * morningImages.length)]
@@ -251,12 +245,8 @@ const hasActiveSearch = searchText.trim().length > 0;
 const hasActiveFilter = selectedCadenceFilter !== "all";
 const shouldPinFloatingHeader = hasActiveSearch || hasActiveFilter;
 
-const [profileDigestSettings, setProfileDigestSettings] = useState<ProfileDigestSettings>({
-    daily_digest_time: null,
-    weekly_digest_day_of_week: null,
-    weekly_digest_time: null,
-  });
-  const [reminderScheduleStatuses, setReminderScheduleStatuses] = useState<ReminderScheduleStatus[]>([]);
+const [reminderSchedules, setReminderSchedules] = useState<ReminderScheduleRow[]>([]);
+const [reminderScheduleStatuses, setReminderScheduleStatuses] = useState<ReminderScheduleStatus[]>([]);
 
 function openComposeModal() {
   router.push({
@@ -267,22 +257,56 @@ function openComposeModal() {
   });
 }
 
-const handledNotificationOpenAtRef = useRef<string | null>(null);
 const injectedNotificationHandledRef = useRef(false);
 
 useEffect(() => {
-  if (!resetHomeAt) return;
-
-  setSearchText("");
-  setSelectedCadenceFilter("all");
-  setSelectedEntry(null);
-  setShowEntryModal(false);
-  Keyboard.dismiss();
-  scrollViewRef.current?.scrollTo({ y: 0, animated: false });
-}, [resetHomeAt]);
-
-useEffect(() => {
   let isActive = true;
+
+  async function handleNotificationData(data: {
+    kind?: string;
+    cadence?: string;
+    entryId?: string;
+  }) {
+    setSearchText("");
+    Keyboard.dismiss();
+
+    if (
+      data?.kind === "cadence" &&
+      (data.cadence === "daily" ||
+        data.cadence === "weekly" ||
+        data.cadence === "monthly" ||
+        data.cadence === "quarterly" ||
+        data.cadence === "yearly" ||
+        data.cadence === "custom")
+    ) {
+      setSelectedCadenceFilter(data.cadence);
+      setSelectedEntry(null);
+      setShowEntryModal(false);
+      return;
+    }
+
+    if (data?.kind === "entry" && typeof data.entryId === "string") {
+      const matchingEntry = activeEntries.find((entry) => entry.id === data.entryId);
+
+      if (!matchingEntry) {
+        return;
+      }
+
+      setSelectedCadenceFilter("custom");
+      setSelectedEntry(null);
+      setShowEntryModal(false);
+
+      setTimeout(() => {
+        openEntry({
+          ...matchingEntry,
+          cadence: "custom",
+          next_run_at: matchingEntry.next_due_at ? new Date(matchingEntry.next_due_at) : null,
+          surface_label:
+            matchingEntry.schedule_mode !== "none" ? "Custom schedule" : "Ungrouped",
+        });
+      }, 150);
+    }
+  }
 
   async function hydrateNotificationFromLastResponse() {
     if (injectedNotificationHandledRef.current) return;
@@ -302,153 +326,91 @@ useEffect(() => {
       entryId: data?.entryId ?? null,
     });
 
-    injectedNotificationHandledRef.current = true;
-    await Notifications.clearLastNotificationResponseAsync();
-
     if (
-      data?.kind === "cadence" &&
-      (data.cadence === "daily" ||
-        data.cadence === "weekly" ||
-        data.cadence === "monthly" ||
-        data.cadence === "quarterly" ||
-        data.cadence === "yearly" ||
-        data.cadence === "custom")
+      data?.kind === "entry" &&
+      typeof data.entryId === "string" &&
+      activeEntries.length === 0
     ) {
-      setSearchText("");
-      Keyboard.dismiss();
-      setSelectedCadenceFilter(data.cadence);
-      setSelectedEntry(null);
-      setShowEntryModal(false);
       return;
     }
 
-    if (data?.kind === "entry" && typeof data.entryId === "string") {
-      if (activeEntries.length === 0) {
-        injectedNotificationHandledRef.current = false;
-        return;
-      }
-
-      const matchingEntry = activeEntries.find((entry) => entry.id === data.entryId);
-      if (!matchingEntry) {
-        injectedNotificationHandledRef.current = false;
-        return;
-      }
-
-      setSearchText("");
-      Keyboard.dismiss();
-      setSelectedCadenceFilter("custom");
-      setSelectedEntry(null);
-      setShowEntryModal(false);
-
-      setTimeout(() => {
-        openEntry({
-          ...matchingEntry,
-          cadence: "custom",
-          next_run_at: matchingEntry.next_due_at ? new Date(matchingEntry.next_due_at) : null,
-          surface_label:
-            matchingEntry.schedule_mode !== "none" ? "Custom schedule" : "Ungrouped",
-        });
-      }, 150);
-    }
+    injectedNotificationHandledRef.current = true;
+    await Notifications.clearLastNotificationResponseAsync();
+    await handleNotificationData(data);
   }
+
+  const responseListener = Notifications.addNotificationResponseReceivedListener(
+    async (response) => {
+      const data = response.notification.request.content.data as {
+        kind?: string;
+        cadence?: string;
+        entryId?: string;
+      };
+
+      console.log("HOME_NOTIFICATION_RESPONSE_DEBUG", {
+        kind: data?.kind ?? null,
+        cadence: data?.cadence ?? null,
+        entryId: data?.entryId ?? null,
+      });
+
+      if (
+        data?.kind === "entry" &&
+        typeof data.entryId === "string" &&
+        activeEntries.length === 0
+      ) {
+        return;
+      }
+
+      await Notifications.clearLastNotificationResponseAsync();
+      await handleNotificationData(data);
+    }
+  );
 
   hydrateNotificationFromLastResponse();
 
   return () => {
     isActive = false;
+    responseListener.remove();
   };
 }, [activeEntries]);
 
-useEffect(() => {
-  if (!notificationOpenAt) return;
-  if (handledNotificationOpenAtRef.current === notificationOpenAt) return;
-
-  setSearchText("");
-  Keyboard.dismiss();
-
-  if (
-    notificationCadence === "daily" ||
-    notificationCadence === "weekly" ||
-    notificationCadence === "monthly" ||
-    notificationCadence === "quarterly" ||
-    notificationCadence === "yearly" ||
-    notificationCadence === "custom"
-  ) {
-    handledNotificationOpenAtRef.current = notificationOpenAt;
-
-    setSelectedCadenceFilter(notificationCadence);
-    setSelectedEntry(null);
-    setShowEntryModal(false);
-    return;
-  }
-
-  if (!notificationEntryId) {
-    handledNotificationOpenAtRef.current = notificationOpenAt;
-    return;
-  }
-
-  if (activeEntries.length === 0) return;
-
-  const matchingEntry = activeEntries.find((entry) => entry.id === notificationEntryId);
-  if (!matchingEntry) return;
-
-  handledNotificationOpenAtRef.current = notificationOpenAt;
-
-  setSelectedCadenceFilter("custom");
-  setSelectedEntry(null);
-  setShowEntryModal(false);
-
-  const timer = setTimeout(() => {
-    openEntry({
-      ...matchingEntry,
-      cadence: "custom",
-      next_run_at: matchingEntry.next_due_at ? new Date(matchingEntry.next_due_at) : null,
-      surface_label:
-        matchingEntry.schedule_mode !== "none" ? "Custom schedule" : "Ungrouped",
-    });
-  }, 150);
-
-  return () => clearTimeout(timer);
-}, [
-  notificationOpenAt,
-  notificationCadence,
-  notificationEntryId,
-  activeEntries,
-]);
-
-  async function loadProfileDigestSettings() {
+    async function loadProfileDigestSettings() {
     const {
       data: { user },
       error: userError,
     } = await supabase.auth.getUser();
 
     if (userError || !user) {
-      console.log("Load profile digest settings user error:", userError?.message);
+      console.log("Load reminder schedules for home user error:", userError?.message);
+      return;
+    }
+
+    const { error: ensureError } = await supabase.rpc(
+      "ensure_default_reminder_schedules",
+      {
+        p_user_id: user.id,
+      }
+    );
+
+    if (ensureError) {
+      console.log("Ensure default reminder schedules for home labels error:", ensureError.message);
       return;
     }
 
     const { data, error } = await supabase
-      .from("profiles")
-      .select("daily_digest_time, weekly_digest_day_of_week, weekly_digest_time")
-      .eq("id", user.id)
-      .maybeSingle();
+      .from("reminder_schedules")
+      .select("cadence, is_enabled, anchor_date, time_of_day")
+      .eq("user_id", user.id);
 
     if (error) {
-      console.log("Load profile digest settings error:", error.message);
+      console.log("Load reminder schedules for home labels error:", error.message);
       return;
     }
 
-    setProfileDigestSettings({
-      daily_digest_time: data?.daily_digest_time ?? null,
-      weekly_digest_day_of_week:
-        typeof data?.weekly_digest_day_of_week === "number"
-          ? (data.weekly_digest_day_of_week as WeekdayValue)
-          : null,
-      weekly_digest_time: data?.weekly_digest_time ?? null,
-    });
+    setReminderSchedules((data as ReminderScheduleRow[]) ?? []);
   }
 
-  async function loadReminderScheduleStatuses() {
+    async function loadReminderScheduleStatuses() {
     const {
       data: { user },
       error: userError,
@@ -456,6 +418,18 @@ useEffect(() => {
 
     if (userError || !user) {
       console.log("Load reminder schedule statuses user error:", userError?.message);
+      return;
+    }
+
+    const { error: ensureError } = await supabase.rpc(
+      "ensure_default_reminder_schedules",
+      {
+        p_user_id: user.id,
+      }
+    );
+
+    if (ensureError) {
+      console.log("Ensure default reminder schedules on home error:", ensureError.message);
       return;
     }
 
@@ -746,11 +720,10 @@ const openEntry = async (entry: UpcomingEntry) => {
 
 useEffect(() => {
   async function initialize() {
-    const { data } = await supabase.auth.getSession();
+      const { data } = await supabase.auth.getSession();
 
     if (!data.session) {
-      await supabase.auth.signInAnonymously();
-      console.log("Anonymous user signed in");
+      return;
     }
 
     const foundMessage = await loadMessage();
@@ -758,9 +731,16 @@ useEffect(() => {
     if (!foundMessage) {
       await generateDailyMessage();
     }
-      await loadEntries();
-      await loadProfileDigestSettings();
-      await loadReminderScheduleStatuses();
+
+    await loadEntries();
+    await loadProfileDigestSettings();
+    await loadReminderScheduleStatuses();
+
+    try {
+      await syncLocalNotifications();
+    } catch (syncError) {
+      console.log("Initial notification sync error:", syncError);
+    }
   }
 
   initialize();
@@ -837,10 +817,13 @@ type EntryGroup = {
 const groupedUpcomingEntries = useMemo<EntryGroup[]>(() => {
   const now = new Date();
 
+  const dailySchedule = reminderSchedules.find((item) => item.cadence === "daily") ?? null;
+  const weeklySchedule = reminderSchedules.find((item) => item.cadence === "weekly") ?? null;
+
   const mappedEntries: UpcomingEntry[] = filteredActiveEntries.map((entry) => {
     const nextRun = entry.next_due_at ? new Date(entry.next_due_at) : null;
 
-     const cadence: UpcomingEntry["cadence"] =
+    const cadence: UpcomingEntry["cadence"] =
       entry.digest_assignment === "daily" ||
       entry.digest_assignment === "weekly" ||
       entry.digest_assignment === "monthly" ||
@@ -849,13 +832,18 @@ const groupedUpcomingEntries = useMemo<EntryGroup[]>(() => {
         ? entry.digest_assignment
         : "custom";
 
+    const weeklyAnchorDay =
+      weeklySchedule?.anchor_date
+        ? new Date(`${weeklySchedule.anchor_date}T00:00:00`).getDay()
+        : 0;
+
     const surfaceLabel =
       entry.digest_assignment === "daily"
-        ? `Daily Reminder • ${formatDisplayTime(profileDigestSettings.daily_digest_time ?? "07:00:00")}`
+        ? `Daily Reminder • ${formatDisplayTime(dailySchedule?.time_of_day ?? "07:00:00")}`
         : entry.digest_assignment === "weekly"
-        ? `Weekly Reminder • ${weekdayLabel(
-            profileDigestSettings.weekly_digest_day_of_week ?? 0
-          )} • ${formatDisplayTime(profileDigestSettings.weekly_digest_time ?? "08:00:00")}`
+        ? `Weekly Reminder • ${weekdayLabel(weeklyAnchorDay as WeekdayValue)} • ${formatDisplayTime(
+            weeklySchedule?.time_of_day ?? "08:00:00"
+          )}`
         : entry.digest_assignment === "monthly"
         ? "Monthly Reminder"
         : entry.digest_assignment === "yearly"
@@ -881,7 +869,7 @@ const groupedUpcomingEntries = useMemo<EntryGroup[]>(() => {
     custom: [],
   };
 
-   mappedEntries.forEach((entry) => {
+  mappedEntries.forEach((entry) => {
     if (entry.cadence === "daily") {
       grouped.daily.push(entry);
       return;
@@ -917,14 +905,14 @@ const groupedUpcomingEntries = useMemo<EntryGroup[]>(() => {
       )
     );
 
-   const getScheduleStatus = (
+  const getScheduleStatus = (
     cadence: "daily" | "weekly" | "monthly" | "quarterly" | "yearly"
   ) =>
     reminderScheduleStatuses.find((item) => item.cadence === cadence)?.is_enabled
       ? "Active"
       : "Inactive";
 
-   const allGroups: EntryGroup[] = [
+  const allGroups: EntryGroup[] = [
     {
       key: "daily",
       title: "Daily Reminders",
@@ -967,8 +955,10 @@ const groupedUpcomingEntries = useMemo<EntryGroup[]>(() => {
     return allGroups.filter((group) => group.entries.length > 0);
   }
 
-  return allGroups.filter((group) => group.key === selectedCadenceFilter && group.entries.length > 0);
-}, [filteredActiveEntries, selectedCadenceFilter, profileDigestSettings, reminderScheduleStatuses]);
+  return allGroups.filter(
+    (group) => group.key === selectedCadenceFilter && group.entries.length > 0
+  );
+}, [filteredActiveEntries, selectedCadenceFilter, reminderSchedules, reminderScheduleStatuses]);
  
 function renderHomeHeaderContent() {
   return (

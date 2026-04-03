@@ -25,10 +25,11 @@ type DigestAssignment = "none" | "daily" | "weekly" | "monthly" | "quarterly" | 
 type WeekdayValue = 0 | 1 | 2 | 3 | 4 | 5 | 6;
 type TimePeriod = "AM" | "PM";
 
-type ProfileDigestSettings = {
-  daily_digest_time: string | null;
-  weekly_digest_day_of_week: WeekdayValue | null;
-  weekly_digest_time: string | null;
+type ReminderScheduleRow = {
+  cadence: "daily" | "weekly" | "monthly" | "quarterly" | "yearly";
+  is_enabled: boolean;
+  anchor_date: string;
+  time_of_day: string;
 };
 
 type EntryRecord = {
@@ -240,11 +241,7 @@ export default function ComposeScreen() {
   const [selectedSaveCadence, setSelectedSaveCadence] = useState<
     "daily" | "weekly" | "monthly" | "quarterly" | "yearly"
   >("daily");
-  const [profileDigestSettings, setProfileDigestSettings] = useState<ProfileDigestSettings>({
-    daily_digest_time: null,
-    weekly_digest_day_of_week: null,
-    weekly_digest_time: null,
-  });
+   const [reminderSchedules, setReminderSchedules] = useState<ReminderScheduleRow[]>([]);
   const [customScheduleMode, setCustomScheduleMode] =
     useState<CustomScheduleMode>("daily_time");
   const [customScheduleTime, setCustomScheduleTime] = useState("07:00");
@@ -473,36 +470,40 @@ export default function ComposeScreen() {
     setShowCustomTimeModal(true);
   }
 
-  async function loadProfileDigestSettings() {
+    async function loadProfileDigestSettings() {
     const {
       data: { user },
       error: userError,
     } = await supabase.auth.getUser();
 
     if (userError || !user) {
-      console.log("Load profile digest settings user error:", userError?.message);
+      console.log("Load reminder schedules in compose user error:", userError?.message);
+      return;
+    }
+
+    const { error: ensureError } = await supabase.rpc(
+      "ensure_default_reminder_schedules",
+      {
+        p_user_id: user.id,
+      }
+    );
+
+    if (ensureError) {
+      console.log("Ensure default reminder schedules in compose error:", ensureError.message);
       return;
     }
 
     const { data, error } = await supabase
-      .from("profiles")
-      .select("daily_digest_time, weekly_digest_day_of_week, weekly_digest_time")
-      .eq("id", user.id)
-      .maybeSingle();
+      .from("reminder_schedules")
+      .select("cadence, is_enabled, anchor_date, time_of_day")
+      .eq("user_id", user.id);
 
     if (error) {
-      console.log("Load profile digest settings error:", error.message);
+      console.log("Load reminder schedules in compose error:", error.message);
       return;
     }
 
-    setProfileDigestSettings({
-      daily_digest_time: data?.daily_digest_time ?? null,
-      weekly_digest_day_of_week:
-        typeof data?.weekly_digest_day_of_week === "number"
-          ? (data.weekly_digest_day_of_week as WeekdayValue)
-          : null,
-      weekly_digest_time: data?.weekly_digest_time ?? null,
-    });
+    setReminderSchedules((data as ReminderScheduleRow[]) ?? []);
   }
 
   async function runAIHelpForType(aiType: AIWriteMode) {
@@ -780,25 +781,39 @@ export default function ComposeScreen() {
     }
   }
 
-  const selectedDigestDescription = useMemo(() => {
+    const selectedDigestDescription = useMemo(() => {
+    const dailySchedule =
+      reminderSchedules.find((item) => item.cadence === "daily") ?? null;
+    const weeklySchedule =
+      reminderSchedules.find((item) => item.cadence === "weekly") ?? null;
+
     if (selectedSaveCadence === "daily") {
       return `Appears in the Daily Reminder at ${formatDisplayTime(
-        profileDigestSettings.daily_digest_time ?? "07:00:00"
+        dailySchedule?.time_of_day ?? "07:00:00"
       )}`;
     }
 
     if (selectedSaveCadence === "weekly") {
+      const weeklyAnchorDay =
+        weeklySchedule?.anchor_date
+          ? new Date(`${weeklySchedule.anchor_date}T00:00:00`).getDay()
+          : 0;
+
       return `Appears in the Weekly Reminder on ${weekdayLabel(
-        profileDigestSettings.weekly_digest_day_of_week ?? 0
-      )} at ${formatDisplayTime(profileDigestSettings.weekly_digest_time ?? "08:00:00")}`;
+        weeklyAnchorDay as WeekdayValue
+      )} at ${formatDisplayTime(weeklySchedule?.time_of_day ?? "08:00:00")}`;
     }
 
     if (selectedSaveCadence === "monthly") {
-      return "Will appear in the Monthly Reminder when monthly reminder support is added.";
+      return "Appears in the Monthly Reminder.";
     }
 
-    return "Will appear in the Yearly Reminder when yearly reminder support is added.";
-  }, [selectedSaveCadence, profileDigestSettings]);
+    if (selectedSaveCadence === "quarterly") {
+      return "Appears in the Quarterly Reminder.";
+    }
+
+    return "Appears in the Yearly Reminder.";
+  }, [selectedSaveCadence, reminderSchedules]);
 
   return (
     <KeyboardAvoidingView
