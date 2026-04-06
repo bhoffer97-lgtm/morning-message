@@ -10,10 +10,6 @@ import { useColorScheme } from "@/hooks/use-color-scheme";
 import { syncLocalNotifications } from "../lib/notifications/syncNotifications";
 import { supabase } from "../lib/supabase";
 
-export const unstable_settings = {
-  anchor: "(tabs)",
-};
-
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowBanner: true,
@@ -30,7 +26,7 @@ export default function RootLayout() {
 
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [session, setSession] = useState<any>(null);
-  const isFinalizingAuthRef = useRef(false);
+  const hasRunPostAuthSetupForUserRef = useRef<string | null>(null);
 
   useEffect(() => {
     LogBox.ignoreLogs([
@@ -54,12 +50,6 @@ export default function RootLayout() {
 
       if (error || !user) {
         console.log("Invalid stored session, signing out:", error?.message);
-        await supabase.auth.signOut();
-        return null;
-      }
-
-      if ((user as any).is_anonymous) {
-        console.log("Signing out anonymous session before auth flow:", user.id);
         await supabase.auth.signOut();
         return null;
       }
@@ -88,6 +78,7 @@ export default function RootLayout() {
       const validSession = await resolveValidSession(nextSession);
 
       if (!isMounted) return;
+
       setSession(validSession);
       setIsAuthReady(true);
     });
@@ -100,80 +91,75 @@ export default function RootLayout() {
 
   useEffect(() => {
     if (!isAuthReady) return;
-    if (isFinalizingAuthRef.current) return;
 
-    let cancelled = false;
+    const currentUser = session?.user ?? null;
+    const inAuthGroup = segments[0] === "(auth)";
 
-    async function routeAndFinalize() {
-      isFinalizingAuthRef.current = true;
+    if (!currentUser) {
+      hasRunPostAuthSetupForUserRef.current = null;
+
+      syncLocalNotifications().catch((error) => {
+        console.log("No-session notification sync error:", error);
+      });
+
+      if (!inAuthGroup) {
+        router.replace("/(auth)");
+      }
+      return;
+    }
+
+    if (inAuthGroup) {
+      router.replace("/(tabs)");
+    }
+  }, [isAuthReady, session?.user?.id, segments]);
+
+  useEffect(() => {
+    if (!isAuthReady) return;
+
+    const currentUserId = session?.user?.id ?? null;
+
+    if (!currentUserId) {
+      return;
+    }
+
+    if (hasRunPostAuthSetupForUserRef.current === currentUserId) {
+      return;
+    }
+
+    hasRunPostAuthSetupForUserRef.current = currentUserId;
+
+    async function runPostAuthSetup() {
+      const { error: profileError } = await supabase
+        .from("profiles")
+        .upsert({ id: currentUserId }, { onConflict: "id" });
+
+      if (profileError) {
+        console.log("Ensure profile error:", profileError.message);
+      }
+
+      const { error: ensureSchedulesError } = await supabase.rpc(
+        "ensure_default_reminder_schedules",
+        {
+          p_user_id: currentUserId,
+        }
+      );
+
+      if (ensureSchedulesError) {
+        console.log(
+          "Ensure default reminder schedules after auth error:",
+          ensureSchedulesError.message
+        );
+      }
 
       try {
-        const currentUser = session?.user ?? null;
-        const inAuthGroup = segments[0] === "(auth)";
-
-        if (!currentUser) {
-          if (!inAuthGroup && !cancelled) {
-            router.replace("/(auth)");
-          }
-          return;
-        }
-
-        const {
-          data: { user: verifiedUser },
-          error: verifiedUserError,
-        } = await supabase.auth.getUser();
-
-        if (verifiedUserError || !verifiedUser) {
-          console.log("Verified user lookup failed, signing out:", verifiedUserError?.message);
-          await supabase.auth.signOut();
-          if (!cancelled) {
-            router.replace("/(auth)");
-          }
-          return;
-        }
-
-        const { error: profileError } = await supabase
-          .from("profiles")
-          .upsert({ id: verifiedUser.id }, { onConflict: "id" });
-
-        if (profileError) {
-          console.log("Ensure profile error:", profileError.message);
-        }
-
-        const { error: ensureSchedulesError } = await supabase.rpc(
-          "ensure_default_reminder_schedules",
-          {
-            p_user_id: verifiedUser.id,
-          }
-        );
-
-        if (ensureSchedulesError) {
-          console.log(
-            "Ensure default reminder schedules after auth error:",
-            ensureSchedulesError.message
-          );
-        }
-
-        try {
-          await syncLocalNotifications();
-        } catch (syncError) {
-          console.log("Post-auth notification sync error:", syncError);
-        }
-
-        if (inAuthGroup && !cancelled) {
-          router.replace("/(tabs)");
-        }
-      } finally {
-        isFinalizingAuthRef.current = false;
+        await syncLocalNotifications();
+      } catch (syncError) {
+        console.log("Post-auth notification sync error:", syncError);
       }
     }
 
-    routeAndFinalize();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isAuthReady, session?.user?.id, segments, router]);
+    runPostAuthSetup();
+  }, [isAuthReady, session?.user?.id]);
 
   if (!isAuthReady) {
     return <View style={{ flex: 1, backgroundColor: "white" }} />;

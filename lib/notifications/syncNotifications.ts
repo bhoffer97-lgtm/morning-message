@@ -98,11 +98,7 @@ function getNextReminderScheduleOccurrence(schedule: ReminderScheduleRow) {
   return cursor;
 }
 
-function buildReminderTitle(cadence: ReminderCadence) {
-  if (cadence === "daily") return "Morning Message";
-  if (cadence === "weekly") return "Morning Message";
-  if (cadence === "monthly") return "Morning Message";
-  if (cadence === "quarterly") return "Morning Message";
+function buildReminderTitle(_cadence: ReminderCadence) {
   return "Morning Message";
 }
 
@@ -135,11 +131,11 @@ async function ensureNotificationSetup(): Promise<boolean> {
     }
   }
 
-   await Notifications.setNotificationChannelAsync(NOTIFICATION_CHANNEL_ID, {
+  await Notifications.setNotificationChannelAsync(NOTIFICATION_CHANNEL_ID, {
     name: "Reminders",
     importance: Notifications.AndroidImportance.HIGH,
   });
-  
+
   return true;
 }
 
@@ -240,6 +236,7 @@ export async function syncLocalNotifications() {
       } = await supabase.auth.getUser();
 
       if (userError || !user) {
+        await cancelManagedNotifications();
         return;
       }
 
