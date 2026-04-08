@@ -843,7 +843,7 @@ export default function ReminderGroupsScreen() {
               }}
             >
               <View style={{ flex: 1 }}>
-                <Text
+                 <Text
                   style={{
                     fontSize: 28,
                     fontWeight: "700",
@@ -854,7 +854,7 @@ export default function ReminderGroupsScreen() {
                     marginBottom: 8,
                   }}
                 >
-                  Reminders
+                  Cadence
                 </Text>
 
                 <Text
@@ -864,7 +864,7 @@ export default function ReminderGroupsScreen() {
                     lineHeight: 22,
                   }}
                 >
-                  Set when your reminders should appear.
+                  Set your notification cadence and timing.
                 </Text>
               </View>
 
@@ -968,7 +968,7 @@ export default function ReminderGroupsScreen() {
                   maxHeight: "82%",
                 }}
               >
-                <Text
+                 <Text
                   style={{
                     fontSize: 22,
                     fontWeight: "700",
@@ -976,136 +976,8 @@ export default function ReminderGroupsScreen() {
                     marginBottom: 8,
                   }}
                 >
-                  Select time
+                  Enter Custom Time
                 </Text>
-
-                 <Text
-                  style={{
-                    fontSize: 14,
-                    color: "#475569",
-                    marginBottom: 8,
-                  }}
-                >
-                  Choose a quick time or enter a custom one.
-                </Text>
-
-                <Text
-                  style={{
-                    fontSize: 15,
-                    fontWeight: "700",
-                    color: "#111827",
-                    marginBottom: 14,
-                  }}
-                >
-                  Selected: {pendingTimeHour}:{pendingTimeMinute} {pendingTimePeriod}
-                </Text>
-
-                <View
-                  style={{
-                    flexDirection: "row",
-                    gap: 10,
-                    marginBottom: 14,
-                  }}
-                >
-                  <Pressable
-                    onPress={() => setPendingTimePeriod("AM")}
-                    style={{
-                      flex: 1,
-                      paddingVertical: 12,
-                      borderRadius: 12,
-                      alignItems: "center",
-                      backgroundColor: pendingTimePeriod === "AM" ? "#2563eb" : "#eef2ff",
-                    }}
-                  >
-                    <Text
-                      style={{
-                        fontSize: 14,
-                        fontWeight: "700",
-                        color: pendingTimePeriod === "AM" ? "white" : "#1e3a8a",
-                      }}
-                    >
-                      AM
-                    </Text>
-                  </Pressable>
-
-                  <Pressable
-                    onPress={() => setPendingTimePeriod("PM")}
-                    style={{
-                      flex: 1,
-                      paddingVertical: 12,
-                      borderRadius: 12,
-                      alignItems: "center",
-                      backgroundColor: pendingTimePeriod === "PM" ? "#2563eb" : "#eef2ff",
-                    }}
-                  >
-                    <Text
-                      style={{
-                        fontSize: 14,
-                        fontWeight: "700",
-                        color: pendingTimePeriod === "PM" ? "white" : "#1e3a8a",
-                      }}
-                    >
-                      PM
-                    </Text>
-                  </Pressable>
-                </View>
-
-                <Text
-                  style={{
-                    fontSize: 13,
-                    fontWeight: "600",
-                    color: "#475569",
-                    marginBottom: 8,
-                  }}
-                >
-                  Quick pick
-                </Text>
-
-                <ScrollView
-                  showsVerticalScrollIndicator={false}
-                  contentContainerStyle={{
-                    paddingBottom: 12,
-                    gap: 8,
-                  }}
-                  style={{ maxHeight: 280, marginBottom: 14 }}
-                >
-                  {Array.from({ length: 48 }, (_, index) => {
-                    const hour = Math.floor(index / 4) === 0 ? 12 : Math.floor(index / 4);
-                    const minute = (index % 4) * 15;
-                    const minuteText = String(minute).padStart(2, "0");
-                    const selected =
-                      pendingTimeHour === String(hour) &&
-                      pendingTimeMinute === minuteText;
-
-                    return (
-                      <Pressable
-                        key={`${hour}:${minuteText}`}
-                        onPress={() => {
-                          setPendingTimeHour(String(hour));
-                          setPendingTimeMinute(minuteText);
-                        }}
-                        style={{
-                          borderWidth: 1,
-                          borderColor: selected ? "#2563eb" : "#d1d5db",
-                          borderRadius: 12,
-                          paddingVertical: 12,
-                          paddingHorizontal: 14,
-                          backgroundColor: selected ? "#eff6ff" : "white",
-                        }}
-                      >
-                        <Text
-                          style={{
-                            fontSize: 14,
-                            fontWeight: "600",
-                            color: selected ? "#1d4ed8" : "#111827",
-                          }}
-                        >
-                          {hour}:{minuteText} {pendingTimePeriod}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </ScrollView>
 
                 <View
                   style={{
@@ -1119,21 +991,22 @@ export default function ReminderGroupsScreen() {
                 >
                   <Text
                     style={{
-                      fontSize: 13,
-                      fontWeight: "600",
-                      color: "#475569",
-                      marginBottom: 8,
+                      fontSize: 15,
+                      fontWeight: "700",
+                      color: "#111827",
+                      marginBottom: 12,
                     }}
                   >
-                    Custom time
+                    Selected: {pendingTimeHour}:{pendingTimeMinute} {pendingTimePeriod}
                   </Text>
 
-                  <View style={{ flexDirection: "row", gap: 10 }}>
+                  <View style={{ flexDirection: "row", gap: 10, marginBottom: 12 }}>
                     <TextInput
                       value={pendingTimeHour}
                       onChangeText={(value) => setPendingTimeHour(sanitizeHourInput(value))}
                       keyboardType="number-pad"
                       placeholder="12"
+                      placeholderTextColor="#9ca3af"
                       style={{
                         flex: 1,
                         borderWidth: 1,
@@ -1153,6 +1026,7 @@ export default function ReminderGroupsScreen() {
                       onChangeText={(value) => setPendingTimeMinute(sanitizeMinuteInput(value))}
                       keyboardType="number-pad"
                       placeholder="00"
+                      placeholderTextColor="#9ca3af"
                       style={{
                         flex: 1,
                         borderWidth: 1,
@@ -1167,9 +1041,62 @@ export default function ReminderGroupsScreen() {
                       }}
                     />
                   </View>
+
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      backgroundColor: "#e5e7eb",
+                      borderRadius: 12,
+                      padding: 4,
+                    }}
+                  >
+                    <Pressable
+                      onPress={() => setPendingTimePeriod("AM")}
+                      style={{
+                        flex: 1,
+                        paddingVertical: 9,
+                        borderRadius: 9,
+                        alignItems: "center",
+                        backgroundColor:
+                          pendingTimePeriod === "AM" ? "white" : "transparent",
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 13,
+                          fontWeight: "700",
+                          color: pendingTimePeriod === "AM" ? "#111827" : "#6b7280",
+                        }}
+                      >
+                        AM
+                      </Text>
+                    </Pressable>
+
+                    <Pressable
+                      onPress={() => setPendingTimePeriod("PM")}
+                      style={{
+                        flex: 1,
+                        paddingVertical: 9,
+                        borderRadius: 9,
+                        alignItems: "center",
+                        backgroundColor:
+                          pendingTimePeriod === "PM" ? "white" : "transparent",
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 13,
+                          fontWeight: "700",
+                          color: pendingTimePeriod === "PM" ? "#111827" : "#6b7280",
+                        }}
+                      >
+                        PM
+                      </Text>
+                    </Pressable>
+                  </View>
                 </View>
 
-                <View
+                 <View
                   style={{
                     flexDirection: "row",
                     gap: 10,
@@ -1218,6 +1145,64 @@ export default function ReminderGroupsScreen() {
                     </Text>
                   </Pressable>
                 </View>
+
+                <Text
+                  style={{
+                    fontSize: 13,
+                    fontWeight: "600",
+                    color: "#475569",
+                    marginBottom: 8,
+                    marginTop: 12,
+                  }}
+                >
+                  Quick pick
+                </Text>
+
+                <ScrollView
+                  showsVerticalScrollIndicator={false}
+                  contentContainerStyle={{
+                    paddingBottom: 12,
+                    gap: 8,
+                  }}
+                  style={{ maxHeight: 280, marginBottom: 36 }}
+                >
+                  {Array.from({ length: 48 }, (_, index) => {
+                    const hour = Math.floor(index / 4) === 0 ? 12 : Math.floor(index / 4);
+                    const minute = (index % 4) * 15;
+                    const minuteText = String(minute).padStart(2, "0");
+                    const selected =
+                      pendingTimeHour === String(hour) &&
+                      pendingTimeMinute === minuteText;
+
+                    return (
+                      <Pressable
+                        key={`${hour}:${minuteText}`}
+                        onPress={() => {
+                          setPendingTimeHour(String(hour));
+                          setPendingTimeMinute(minuteText);
+                        }}
+                        style={{
+                          borderWidth: 1,
+                          borderColor: selected ? "#2563eb" : "#d1d5db",
+                          borderRadius: 12,
+                          paddingVertical: 12,
+                          paddingHorizontal: 14,
+                          backgroundColor: selected ? "#eff6ff" : "white",
+                        }}
+                      >
+                        <Text
+                          style={{
+                            fontSize: 14,
+                            fontWeight: "600",
+                            color: selected ? "#1d4ed8" : "#111827",
+                          }}
+                        >
+                          {hour}:{minuteText} {pendingTimePeriod}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
               </Pressable>
             </Pressable>
           </Modal>

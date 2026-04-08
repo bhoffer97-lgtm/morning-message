@@ -1,0 +1,1718 @@
+import { useFocusEffect } from "@react-navigation/native";
+import { router } from "expo-router";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Alert,
+  ImageBackground,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { syncLocalNotifications } from "../../lib/notifications/syncNotifications";
+import { supabase } from "../../lib/supabase";
+
+const reminderBackground = require("../../assets/images/morning-nature-3.jpg");
+
+type Entry = {
+  id: string;
+  title: string | null;
+  content: string;
+  type: string | null;
+  status: string;
+  created_at: string | null;
+  updated_at: string | null;
+  resolution_note: string | null;
+  archived_at: string | null;
+  retired_at: string | null;
+  needs_read: boolean;
+  last_read_at: string | null;
+  last_completed_at: string | null;
+  last_completed_due_at: string | null;
+  next_due_at: string | null;
+  schedule_mode: string;
+  due_date: string | null;
+  due_time: string | null;
+  interval_value: number | null;
+  interval_unit: string | null;
+  annual_month: number | null;
+  annual_day: number | null;
+  anchor_date: string | null;
+  digest_assignment: "none" | "daily" | "weekly" | "monthly" | "quarterly" | "yearly";
+  last_surface_at: string | null;
+  last_surface_window_key: string | null;
+};
+
+type UpcomingEntry = Entry & {
+  cadence: "daily" | "weekly" | "monthly" | "quarterly" | "yearly" | "custom";
+  next_run_at: Date | null;
+  last_completed_at_date: Date | null;
+  last_completed_due_at_date: Date | null;
+  surface_label: string;
+};
+
+type WeekdayValue = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+
+type ReminderScheduleRow = {
+  cadence: "daily" | "weekly" | "monthly" | "quarterly" | "yearly";
+  is_enabled: boolean;
+  anchor_date: string;
+  time_of_day: string;
+};
+
+type ReminderScheduleStatus = {
+  cadence: "daily" | "weekly" | "monthly" | "quarterly" | "yearly";
+  is_enabled: boolean;
+};
+
+type EntryGroupKey =
+  | "daily"
+  | "weekly"
+  | "monthly"
+  | "quarterly"
+  | "yearly"
+  | "custom"
+  | "handled";
+
+type EntryGroup = {
+  key: EntryGroupKey;
+  title: string;
+  statusText?: string;
+  showCustomNote?: boolean;
+  entries: UpcomingEntry[];
+};
+
+type CadenceFilterOption =
+  | "all"
+  | "daily"
+  | "weekly"
+  | "monthly"
+  | "quarterly"
+  | "yearly"
+  | "custom"
+  | "handled";
+
+function formatTimeLabel(time?: string | null) {
+  if (!time) return "";
+
+  const parts = time.split(":");
+  if (parts.length < 2) return time;
+
+  const hour24 = Number(parts[0]);
+  const minute = parts[1];
+
+  if (Number.isNaN(hour24)) return time;
+
+  const hour12 = hour24 % 12 || 12;
+  const ampm = hour24 >= 12 ? "PM" : "AM";
+
+  return `${hour12}:${minute} ${ampm}`;
+}
+
+function formatDisplayTime(time: string | null) {
+  if (!time) return "Not set";
+
+  const [hours, minutes] = time.split(":");
+  const hourNum = Number(hours);
+  const minuteNum = Number(minutes);
+
+  const suffix = hourNum >= 12 ? "PM" : "AM";
+  const displayHour = hourNum % 12 === 0 ? 12 : hourNum % 12;
+
+  return `${displayHour}:${String(minuteNum).padStart(2, "0")} ${suffix}`;
+}
+
+function weekdayLabel(day: WeekdayValue) {
+  return ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][day];
+}
+
+function getEntryScheduleSummary(entry: Entry | UpcomingEntry) {
+  if (entry.digest_assignment !== "none" && entry.schedule_mode === "none") {
+    return null;
+  }
+
+  if (entry.schedule_mode === "daily_time") {
+    return entry.due_time ? `Daily at ${formatTimeLabel(entry.due_time)}` : "Daily";
+  }
+
+  if (entry.schedule_mode === "fixed_date") {
+    if (!entry.due_date) return "One date";
+
+    const dateText = new Date(`${entry.due_date}T00:00:00`).toLocaleDateString();
+    return entry.due_time ? `${dateText} at ${formatTimeLabel(entry.due_time)}` : dateText;
+  }
+
+  if (entry.schedule_mode === "interval") {
+    if (!entry.interval_value || !entry.interval_unit) return "Repeats";
+
+    const unit =
+      entry.interval_value === 1
+        ? entry.interval_unit.replace(/s$/, "")
+        : entry.interval_unit;
+
+    return `Every ${entry.interval_value} ${unit}`;
+  }
+
+  if (entry.schedule_mode === "annual_date") {
+    if (!entry.annual_month || !entry.annual_day) return "Yearly";
+
+    const dateText = new Date(
+      2026,
+      Math.max(0, entry.annual_month - 1),
+      entry.annual_day
+    ).toLocaleDateString(undefined, {
+      month: "long",
+      day: "numeric",
+    });
+
+    return entry.due_time
+      ? `Every year on ${dateText} at ${formatTimeLabel(entry.due_time)}`
+      : `Every year on ${dateText}`;
+  }
+
+  return "No schedule";
+}
+
+function formatUpcomingLabel(nextRunAt: Date | null) {
+  if (!nextRunAt) return "";
+
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const targetStart = new Date(
+    nextRunAt.getFullYear(),
+    nextRunAt.getMonth(),
+    nextRunAt.getDate()
+  );
+
+  const dayDiff = Math.round(
+    (targetStart.getTime() - todayStart.getTime()) / (1000 * 60 * 60 * 24)
+  );
+
+  const timeLabel = nextRunAt.toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+
+  if (dayDiff === 0) return `Today • ${timeLabel}`;
+  if (dayDiff === 1) return `Tomorrow • ${timeLabel}`;
+  if (dayDiff > 1 && dayDiff <= 7) return `In ${dayDiff} days • ${timeLabel}`;
+
+  return nextRunAt.toLocaleDateString([], {
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function getCustomInlineSummary(entry: UpcomingEntry) {
+  if (entry.schedule_mode === "none") {
+    return "No schedule";
+  }
+
+  const dueLabel = entry.next_run_at
+    ? `Due ${entry.next_run_at.toLocaleDateString([], {
+        month: "numeric",
+        day: "numeric",
+        year: "2-digit",
+      })}${entry.next_run_at ? ` • ${entry.next_run_at.toLocaleTimeString([], {
+        hour: "numeric",
+        minute: "2-digit",
+      })}` : ""}`
+    : null;
+
+  const scheduleSummary = getEntryScheduleSummary(entry);
+
+  if (entry.schedule_mode === "fixed_date") {
+    return dueLabel || scheduleSummary || "Custom schedule";
+  }
+
+  if (dueLabel && scheduleSummary) {
+    return `${dueLabel} • ${scheduleSummary}`;
+  }
+
+  if (dueLabel) {
+    return dueLabel;
+  }
+
+  if (scheduleSummary) {
+    return scheduleSummary;
+  }
+
+  return "Custom schedule";
+}
+
+function formatCadenceHeaderLabel(
+  cadence: "daily" | "weekly" | "monthly" | "quarterly" | "yearly",
+  schedules: ReminderScheduleRow[]
+) {
+  const schedule = schedules.find((item) => item.cadence === cadence) ?? null;
+
+  if (!schedule) {
+    return cadence.charAt(0).toUpperCase() + cadence.slice(1);
+  }
+
+  const timeLabel = formatDisplayTime(schedule.time_of_day);
+
+  if (cadence === "daily") {
+    return `Daily - ${timeLabel}`;
+  }
+
+  if (cadence === "weekly") {
+    const weeklyAnchorDay = schedule.anchor_date
+      ? new Date(`${schedule.anchor_date}T00:00:00`).getDay()
+      : 0;
+
+    return `Weekly - ${weekdayLabel(weeklyAnchorDay as WeekdayValue)} @ ${timeLabel}`;
+  }
+
+  if (cadence === "monthly") {
+    const monthlyDay = schedule.anchor_date
+      ? new Date(`${schedule.anchor_date}T00:00:00`).getDate()
+      : 1;
+
+    return `Monthly - Day ${monthlyDay} @ ${timeLabel}`;
+  }
+
+  const recurringDate = schedule.anchor_date
+    ? new Date(`${schedule.anchor_date}T00:00:00`)
+    : new Date("2026-01-01T00:00:00");
+
+  const monthDay = recurringDate.toLocaleDateString([], {
+    month: "long",
+    day: "numeric",
+  });
+
+  if (cadence === "quarterly") {
+    return `Quarterly - ${monthDay} @ ${timeLabel}`;
+  }
+
+  return `Yearly - ${monthDay} @ ${timeLabel}`;
+}
+
+function getCadenceSummaryText(
+  cadence: "daily" | "weekly" | "monthly" | "quarterly" | "yearly",
+  schedules: ReminderScheduleRow[]
+) {
+  const schedule = schedules.find((item) => item.cadence === cadence) ?? null;
+
+  if (!schedule) {
+    return "";
+  }
+
+  const timeLabel = formatDisplayTime(schedule.time_of_day);
+
+  let firstSentence = "";
+
+  if (cadence === "daily") {
+    firstSentence = `Daily entries are scheduled for ${timeLabel}.`;
+  } else if (cadence === "weekly") {
+    const weeklyAnchorDay = schedule.anchor_date
+      ? new Date(`${schedule.anchor_date}T00:00:00`).getDay()
+      : 0;
+
+    firstSentence = `Weekly entries are scheduled for ${weekdayLabel(
+      weeklyAnchorDay as WeekdayValue
+    )} at ${timeLabel}.`;
+  } else if (cadence === "monthly") {
+    const monthlyDay = schedule.anchor_date
+      ? new Date(`${schedule.anchor_date}T00:00:00`).getDate()
+      : 1;
+
+    firstSentence = `Monthly entries are scheduled for day ${monthlyDay} at ${timeLabel}.`;
+  } else {
+    const recurringDate = schedule.anchor_date
+      ? new Date(`${schedule.anchor_date}T00:00:00`)
+      : new Date("2026-01-01T00:00:00");
+
+    const monthDay = recurringDate.toLocaleDateString([], {
+      month: "long",
+      day: "numeric",
+    });
+
+    firstSentence =
+      cadence === "quarterly"
+        ? `Quarterly entries are scheduled for ${monthDay} at ${timeLabel}.`
+        : `Yearly entries are scheduled for ${monthDay} at ${timeLabel}.`;
+  }
+
+  if (!schedule.is_enabled) {
+    return `${firstSentence} ${cadence.charAt(0).toUpperCase() + cadence.slice(1)} cadence notifications are currently turned off.`;
+  }
+
+  return firstSentence;
+}
+
+function addDays(date: Date, days: number) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function addMonths(date: Date, months: number) {
+  const next = new Date(date);
+  const originalDay = next.getDate();
+  next.setDate(1);
+  next.setMonth(next.getMonth() + months);
+  const daysInMonth = new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate();
+  next.setDate(Math.min(originalDay, daysInMonth));
+  return next;
+}
+
+function addYears(date: Date, years: number) {
+  const next = new Date(date);
+  const originalMonth = next.getMonth();
+  const originalDay = next.getDate();
+  next.setDate(1);
+  next.setFullYear(next.getFullYear() + years);
+  next.setMonth(originalMonth);
+  const daysInMonth = new Date(next.getFullYear(), originalMonth + 1, 0).getDate();
+  next.setDate(Math.min(originalDay, daysInMonth));
+  return next;
+}
+
+function getNextCadenceOccurrence(anchorDate: string, timeOfDay: string, cadence: ReminderScheduleRow["cadence"]) {
+  const [year, month, day] = anchorDate.split("-").map(Number);
+  const [hour, minute] = timeOfDay.split(":").map(Number);
+
+  let cursor = new Date(year, month - 1, day, hour, minute, 0, 0);
+  const now = new Date();
+
+  while (cursor <= now) {
+    if (cadence === "daily") {
+      cursor = addDays(cursor, 1);
+    } else if (cadence === "weekly") {
+      cursor = addDays(cursor, 7);
+    } else if (cadence === "monthly") {
+      cursor = addMonths(cursor, 1);
+    } else if (cadence === "quarterly") {
+      cursor = addMonths(cursor, 3);
+    } else {
+      cursor = addYears(cursor, 1);
+    }
+  }
+
+  return cursor;
+}
+
+function getHandledInlineSummary(entry: UpcomingEntry) {
+  const handledDate = entry.last_completed_at_date
+    ? entry.last_completed_at_date.toLocaleDateString([], {
+        month: "numeric",
+        day: "numeric",
+        year: "2-digit",
+      })
+    : null;
+
+  const dueDate = entry.last_completed_due_at_date
+    ? entry.last_completed_due_at_date.toLocaleDateString([], {
+        month: "numeric",
+        day: "numeric",
+        year: "2-digit",
+      })
+    : null;
+
+  if (dueDate && handledDate) {
+    return `Due ${dueDate} • Handled ${handledDate}`;
+  }
+
+  if (dueDate) {
+    return `Due ${dueDate}`;
+  }
+
+  if (handledDate) {
+    return `Handled ${handledDate}`;
+  }
+
+  return "Handled";
+}
+
+function getEntryModalMeta(entry: UpcomingEntry) {
+  if (entry.digest_assignment === "daily") {
+    return entry.surface_label;
+  }
+
+  if (entry.digest_assignment === "weekly") {
+    return entry.surface_label;
+  }
+
+  if (entry.digest_assignment === "monthly") {
+    const anchor = entry.anchor_date ? new Date(`${entry.anchor_date}T00:00:00`) : null;
+    const dayOfMonth = anchor ? anchor.getDate() : null;
+
+    if (dayOfMonth && entry.due_time) {
+      return `Monthly Reminder • Day ${dayOfMonth} • ${formatTimeLabel(entry.due_time)}`;
+    }
+
+    if (dayOfMonth) {
+      return `Monthly Reminder • Day ${dayOfMonth}`;
+    }
+
+    return "Monthly Reminder";
+  }
+
+  if (entry.digest_assignment === "quarterly" || entry.digest_assignment === "yearly") {
+    const anchor = entry.anchor_date ? new Date(`${entry.anchor_date}T00:00:00`) : null;
+    const monthDay = anchor
+      ? anchor.toLocaleDateString([], { month: "long", day: "numeric" })
+      : null;
+
+    const prefix = entry.digest_assignment === "quarterly" ? "Quarterly Reminder" : "Yearly Reminder";
+
+    if (monthDay && entry.due_time) {
+      return `${prefix} • ${monthDay} • ${formatTimeLabel(entry.due_time)}`;
+    }
+
+    if (monthDay) {
+      return `${prefix} • ${monthDay}`;
+    }
+
+    return prefix;
+  }
+
+  if (entry.schedule_mode !== "none") {
+    return getEntryScheduleSummary(entry) || "Custom Reminder";
+  }
+
+  return "No schedule";
+}
+
+export default function RemindersScreen() {
+  const [activeEntries, setActiveEntries] = useState<Entry[]>([]);
+  const [selectedCadenceFilter, setSelectedCadenceFilter] =
+    useState<CadenceFilterOption>("all");
+  const [showCadenceMenu, setShowCadenceMenu] = useState(false);
+  const [searchText, setSearchText] = useState("");
+  const [selectedEntry, setSelectedEntry] = useState<UpcomingEntry | null>(null);
+  const [showEntryModal, setShowEntryModal] = useState(false);
+  const [isArchivingEntry, setIsArchivingEntry] = useState(false);
+  const [reminderSchedules, setReminderSchedules] = useState<ReminderScheduleRow[]>([]);
+  const [reminderScheduleStatuses, setReminderScheduleStatuses] = useState<
+    ReminderScheduleStatus[]
+  >([]);
+
+  const scrollViewRef = useRef<ScrollView | null>(null);
+  const searchInputRef = useRef<TextInput | null>(null);
+
+  async function loadEntries() {
+    const { data, error } = await supabase
+      .from("entries")
+      .select(
+         "id, title, content, type, status, created_at, updated_at, resolution_note, archived_at, retired_at, needs_read, last_read_at, last_completed_at, last_completed_due_at, next_due_at, schedule_mode, due_date, due_time, interval_value, interval_unit, annual_month, annual_day, anchor_date, digest_assignment, last_surface_at, last_surface_window_key"
+      )
+      .eq("status", "active")
+      .order("updated_at", { ascending: false });
+
+    if (error) {
+      console.log("Load active entries error:", error.message);
+      return;
+    }
+
+    setActiveEntries((data as Entry[]) ?? []);
+  }
+
+  async function loadProfileDigestSettings() {
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      console.log("Load reminder schedules for reminders user error:", userError?.message);
+      return;
+    }
+
+    const { error: ensureError } = await supabase.rpc(
+      "ensure_default_reminder_schedules",
+      {
+        p_user_id: user.id,
+      }
+    );
+
+    if (ensureError) {
+      console.log("Ensure default reminder schedules for reminders error:", ensureError.message);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("reminder_schedules")
+      .select("cadence, is_enabled, anchor_date, time_of_day")
+      .eq("user_id", user.id);
+
+    if (error) {
+      console.log("Load reminder schedules for reminders error:", error.message);
+      return;
+    }
+
+    setReminderSchedules((data as ReminderScheduleRow[]) ?? []);
+  }
+
+  async function loadReminderScheduleStatuses() {
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      console.log("Load reminder schedule statuses user error:", userError?.message);
+      return;
+    }
+
+    const { error: ensureError } = await supabase.rpc(
+      "ensure_default_reminder_schedules",
+      {
+        p_user_id: user.id,
+      }
+    );
+
+    if (ensureError) {
+      console.log("Ensure default reminder schedules on reminders error:", ensureError.message);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("reminder_schedules")
+      .select("cadence, is_enabled")
+      .eq("user_id", user.id);
+
+    if (error) {
+      console.log("Load reminder schedule statuses error:", error.message);
+      return;
+    }
+
+    setReminderScheduleStatuses((data as ReminderScheduleStatus[]) ?? []);
+  }
+
+  const archiveEntry = async (id: string) => {
+    setIsArchivingEntry(true);
+
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        console.log("No user found for archive");
+        return;
+      }
+
+      const { error } = await supabase.rpc("archive_entry", {
+        p_entry_id: id,
+        p_user_id: user.id,
+      });
+
+      if (error) {
+        console.log("archive_entry error:", error.message);
+        Alert.alert("Unable to archive", error.message);
+        return;
+      }
+
+      if (selectedEntry?.id === id) {
+        setShowEntryModal(false);
+        setSelectedEntry(null);
+      }
+
+      await loadEntries();
+
+      try {
+        await syncLocalNotifications();
+      } catch (syncError) {
+        console.log("Archive notification sync error:", syncError);
+      }
+    } finally {
+      setIsArchivingEntry(false);
+    }
+  };
+
+  const deleteEntry = async (id: string) => {
+    const { error } = await supabase.from("entries").delete().eq("id", id);
+
+    if (error) {
+      console.log("Error deleting entry:", error.message);
+      return;
+    }
+
+    if (selectedEntry?.id === id) {
+      setShowEntryModal(false);
+      setSelectedEntry(null);
+    }
+
+    await loadEntries();
+
+    try {
+      await syncLocalNotifications();
+    } catch (syncError) {
+      console.log("Delete notification sync error:", syncError);
+    }
+  };
+
+  const confirmDeleteEntry = (id: string) => {
+    Alert.alert("Delete entry?", "This will permanently delete this entry.", [
+      {
+        text: "Cancel",
+        style: "cancel",
+      },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: () => deleteEntry(id),
+      },
+    ]);
+  };
+
+  const openEntry = async (entry: UpcomingEntry) => {
+    setSelectedEntry(entry);
+    setShowEntryModal(true);
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      console.log("No user found for view_entry");
+      return;
+    }
+
+    const { data, error } = await supabase.rpc("view_entry", {
+      p_entry_id: entry.id,
+      p_user_id: user.id,
+    });
+
+    if (error) {
+      console.log("view_entry error:", error.message);
+      return;
+    }
+
+    if (data) {
+      setSelectedEntry((current) =>
+        current
+          ? {
+              ...current,
+              ...data,
+              next_run_at: data.next_due_at ? new Date(data.next_due_at) : null,
+            }
+          : current
+      );
+    }
+
+    await loadEntries();
+
+    try {
+      await syncLocalNotifications();
+    } catch (syncError) {
+      console.log("Open entry notification sync error:", syncError);
+    }
+  };
+
+  useFocusEffect(
+    useCallback(() => {
+      loadEntries();
+      loadProfileDigestSettings();
+      loadReminderScheduleStatuses();
+
+      requestAnimationFrame(() => {
+        scrollViewRef.current?.scrollTo({ y: 0, animated: false });
+      });
+    }, [])
+  );
+
+  const filteredActiveEntries = useMemo(() => {
+    const query = searchText.trim().toLowerCase();
+
+    return activeEntries.filter((entry) => {
+      if (!query) return true;
+
+      return (
+        entry.content?.toLowerCase().includes(query) ||
+        entry.title?.toLowerCase().includes(query)
+      );
+    });
+  }, [activeEntries, searchText]);
+
+   const groupedUpcomingEntries = useMemo<EntryGroup[]>(() => {
+    const now = new Date();
+
+    const dailySchedule = reminderSchedules.find((item) => item.cadence === "daily") ?? null;
+    const weeklySchedule = reminderSchedules.find((item) => item.cadence === "weekly") ?? null;
+
+    const cadenceScheduleMap = new Map(
+      reminderSchedules.map((item) => [item.cadence, item] as const)
+    );
+
+    const mappedEntries: UpcomingEntry[] = filteredActiveEntries.map((entry) => {
+      const nextRun = entry.next_due_at ? new Date(entry.next_due_at) : null;
+      const lastCompletedAtDate = entry.last_completed_at ? new Date(entry.last_completed_at) : null;
+      const lastCompletedDueAtDate = entry.last_completed_due_at
+        ? new Date(entry.last_completed_due_at)
+        : null;
+
+      const cadence: UpcomingEntry["cadence"] =
+        entry.digest_assignment === "daily" ||
+        entry.digest_assignment === "weekly" ||
+        entry.digest_assignment === "monthly" ||
+        entry.digest_assignment === "quarterly" ||
+        entry.digest_assignment === "yearly"
+          ? entry.digest_assignment
+          : "custom";
+
+      const weeklyAnchorDay =
+        weeklySchedule?.anchor_date
+          ? new Date(`${weeklySchedule.anchor_date}T00:00:00`).getDay()
+          : 0;
+
+      const surfaceLabel =
+        entry.digest_assignment === "daily"
+          ? `Daily Reminder • ${formatDisplayTime(dailySchedule?.time_of_day ?? "07:00:00")}`
+          : entry.digest_assignment === "weekly"
+          ? `Weekly Reminder • ${weekdayLabel(
+              weeklyAnchorDay as WeekdayValue
+            )} • ${formatDisplayTime(weeklySchedule?.time_of_day ?? "08:00:00")}`
+          : entry.digest_assignment === "monthly"
+          ? "Monthly Reminder"
+          : entry.digest_assignment === "quarterly"
+          ? "Quarterly Reminder"
+          : entry.digest_assignment === "yearly"
+          ? "Yearly Reminder"
+          : entry.schedule_mode !== "none"
+          ? "Custom schedule"
+          : "Ungrouped";
+
+      return {
+        ...entry,
+        cadence,
+        next_run_at: nextRun,
+        last_completed_at_date: lastCompletedAtDate,
+        last_completed_due_at_date: lastCompletedDueAtDate,
+        surface_label: surfaceLabel,
+      };
+    });
+
+    function isCurrentlyHandled(entry: UpcomingEntry) {
+      if (!entry.last_completed_at_date) return false;
+
+      if (entry.digest_assignment === "none" && entry.schedule_mode === "none") {
+        return true;
+      }
+
+      if (entry.digest_assignment !== "none") {
+        const schedule = cadenceScheduleMap.get(entry.digest_assignment);
+        if (!schedule || !entry.last_completed_due_at_date) return false;
+
+        const nextOccurrence = getNextCadenceOccurrence(
+          schedule.anchor_date,
+          schedule.time_of_day,
+          schedule.cadence
+        );
+
+        return entry.last_completed_due_at_date.getTime() < nextOccurrence.getTime();
+      }
+
+      if (
+        entry.schedule_mode === "daily_time" ||
+        entry.schedule_mode === "interval" ||
+        entry.schedule_mode === "annual_date" ||
+        entry.schedule_mode === "holiday"
+      ) {
+        if (!entry.last_completed_due_at_date || !entry.next_run_at) return false;
+        return entry.last_completed_due_at_date.getTime() < entry.next_run_at.getTime();
+      }
+
+      if (entry.schedule_mode === "fixed_date") {
+        return true;
+      }
+
+      return false;
+    }
+
+    const activeOnlyEntries = mappedEntries.filter((entry) => !isCurrentlyHandled(entry));
+    const handledEntries = mappedEntries.filter((entry) => isCurrentlyHandled(entry));
+
+    const grouped: Record<EntryGroupKey, UpcomingEntry[]> = {
+      daily: [],
+      weekly: [],
+      monthly: [],
+      quarterly: [],
+      yearly: [],
+      custom: [],
+      handled: [],
+    };
+
+    activeOnlyEntries.forEach((entry) => {
+      grouped[entry.cadence].push(entry);
+    });
+
+    grouped.handled = handledEntries;
+
+    const sortAlphabetically = (entries: UpcomingEntry[]) =>
+      [...entries].sort((a, b) =>
+        (a.title?.trim() || "Untitled Entry").localeCompare(
+          b.title?.trim() || "Untitled Entry"
+        )
+      );
+
+    const sortCustomByNextDue = (entries: UpcomingEntry[]) =>
+      [...entries].sort((a, b) => {
+        const aTime = a.next_run_at ? a.next_run_at.getTime() : Number.MAX_SAFE_INTEGER;
+        const bTime = b.next_run_at ? b.next_run_at.getTime() : Number.MAX_SAFE_INTEGER;
+
+        if (aTime !== bTime) {
+          return aTime - bTime;
+        }
+
+        return (a.title?.trim() || "Untitled Entry").localeCompare(
+          b.title?.trim() || "Untitled Entry"
+        );
+      });
+
+    const sortHandledByMostRecent = (entries: UpcomingEntry[]) =>
+      [...entries].sort((a, b) => {
+        const aTime = a.last_completed_at_date
+          ? a.last_completed_at_date.getTime()
+          : 0;
+        const bTime = b.last_completed_at_date
+          ? b.last_completed_at_date.getTime()
+          : 0;
+
+        if (aTime !== bTime) {
+          return bTime - aTime;
+        }
+
+        return (a.title?.trim() || "Untitled Entry").localeCompare(
+          b.title?.trim() || "Untitled Entry"
+        );
+      });
+
+    const allGroups: EntryGroup[] = [
+      {
+        key: "daily",
+        title: formatCadenceHeaderLabel("daily", reminderSchedules),
+        entries: sortAlphabetically(grouped.daily),
+      },
+      {
+        key: "weekly",
+        title: formatCadenceHeaderLabel("weekly", reminderSchedules),
+        entries: sortAlphabetically(grouped.weekly),
+      },
+      {
+        key: "monthly",
+        title: formatCadenceHeaderLabel("monthly", reminderSchedules),
+        entries: sortAlphabetically(grouped.monthly),
+      },
+      {
+        key: "quarterly",
+        title: formatCadenceHeaderLabel("quarterly", reminderSchedules),
+        entries: sortAlphabetically(grouped.quarterly),
+      },
+      {
+        key: "yearly",
+        title: formatCadenceHeaderLabel("yearly", reminderSchedules),
+        entries: sortAlphabetically(grouped.yearly),
+      },
+      {
+        key: "custom",
+        title: "Custom",
+        showCustomNote: true,
+        entries: sortCustomByNextDue(grouped.custom),
+      },
+      {
+        key: "handled",
+        title: "Handled",
+        entries: sortHandledByMostRecent(grouped.handled),
+      },
+    ];
+
+    if (selectedCadenceFilter === "all") {
+      return allGroups.filter((group) => group.entries.length > 0);
+    }
+
+    return allGroups.filter(
+      (group) => group.key === selectedCadenceFilter && group.entries.length > 0
+    );
+  }, [filteredActiveEntries, selectedCadenceFilter, reminderSchedules]);
+
+  
+   const availableFilterOptions = useMemo<CadenceFilterOption[]>(() => {
+    const options: CadenceFilterOption[] = ["all"];
+
+    const cadenceScheduleMap = new Map(
+      reminderSchedules.map((item) => [item.cadence, item] as const)
+    );
+
+    function isCurrentlyHandled(entry: Entry) {
+      if (!entry.last_completed_at) return false;
+
+      if (entry.digest_assignment === "none" && entry.schedule_mode === "none") {
+        return true;
+      }
+
+      if (entry.digest_assignment !== "none") {
+        const schedule = cadenceScheduleMap.get(entry.digest_assignment);
+        if (!schedule || !entry.last_completed_due_at) return false;
+
+        const nextOccurrence = getNextCadenceOccurrence(
+          schedule.anchor_date,
+          schedule.time_of_day,
+          schedule.cadence
+        );
+
+        return new Date(entry.last_completed_due_at).getTime() < nextOccurrence.getTime();
+      }
+
+      if (
+        entry.schedule_mode === "daily_time" ||
+        entry.schedule_mode === "interval" ||
+        entry.schedule_mode === "annual_date" ||
+        entry.schedule_mode === "holiday"
+      ) {
+        if (!entry.last_completed_due_at || !entry.next_due_at) return false;
+        return new Date(entry.last_completed_due_at).getTime() < new Date(entry.next_due_at).getTime();
+      }
+
+      if (entry.schedule_mode === "fixed_date") {
+        return true;
+      }
+
+      return false;
+    }
+
+    const allGroups: EntryGroupKey[] = [
+      "daily",
+      "weekly",
+      "monthly",
+      "quarterly",
+      "yearly",
+      "custom",
+      "handled",
+    ];
+
+    allGroups.forEach((key) => {
+      const hasEntries = activeEntries.some((entry) => {
+        if (key === "handled") {
+          return isCurrentlyHandled(entry);
+        }
+
+        if (isCurrentlyHandled(entry)) {
+          return false;
+        }
+
+        const cadence =
+          entry.digest_assignment === "daily" ||
+          entry.digest_assignment === "weekly" ||
+          entry.digest_assignment === "monthly" ||
+          entry.digest_assignment === "quarterly" ||
+          entry.digest_assignment === "yearly"
+            ? entry.digest_assignment
+            : "custom";
+
+        return cadence === key;
+      });
+
+      if (hasEntries) {
+        options.push(key);
+      }
+    });
+
+    return options;
+  }, [activeEntries, reminderSchedules]);
+
+    const selectedCadenceSummary = useMemo(() => {
+    if (
+      selectedCadenceFilter === "all" ||
+      selectedCadenceFilter === "custom"
+    ) {
+      return "";
+    }
+
+    return getCadenceSummaryText(selectedCadenceFilter, reminderSchedules);
+  }, [selectedCadenceFilter, reminderSchedules]);
+
+  useEffect(() => {
+    if (!availableFilterOptions.includes(selectedCadenceFilter)) {
+      setSelectedCadenceFilter("all");
+    }
+  }, [availableFilterOptions, selectedCadenceFilter]);
+
+  return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <ImageBackground source={reminderBackground} resizeMode="cover" style={{ flex: 1 }}>
+        <View style={{ flex: 1, backgroundColor: "rgba(255,255,255,0.48)" }}>
+          <SafeAreaView style={{ flex: 1, backgroundColor: "transparent" }}>
+            <View
+              style={{
+                paddingHorizontal: 20,
+                paddingTop: 18,
+                paddingBottom: 12,
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 28,
+                  fontWeight: "700",
+                  color: "#111",
+                  marginBottom: 6,
+                }}
+              >
+                Reminders
+              </Text>
+
+              <Text
+                style={{
+                  fontSize: 15,
+                  color: "#111",
+                  lineHeight: 22,
+                  marginBottom: 14,
+                }}
+              >
+                Search and browse your full reminder library.
+              </Text>
+
+               <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 10,
+                }}
+              >
+                <Pressable
+                  onPress={() => setShowCadenceMenu(true)}
+                  style={{
+                    paddingVertical: 11,
+                    paddingHorizontal: 13,
+                    borderRadius: 10,
+                    backgroundColor: "#e5e7eb",
+                  }}
+                >
+                  <Text style={{ fontSize: 14, fontWeight: "600", color: "#374151" }}>
+                    {selectedCadenceFilter === "all"
+                      ? "All"
+                      : selectedCadenceFilter === "daily"
+                      ? "Daily"
+                      : selectedCadenceFilter === "weekly"
+                      ? "Weekly"
+                      : selectedCadenceFilter === "monthly"
+                      ? "Monthly"
+                      : selectedCadenceFilter === "quarterly"
+                      ? "Quarterly"
+                      : selectedCadenceFilter === "yearly"
+                      ? "Yearly"
+                      : selectedCadenceFilter === "handled"
+                      ? "Handled"
+                      : "Custom"}{" "}
+                    ▼
+                  </Text>
+                </Pressable>
+
+                <View style={{ flex: 1, position: "relative" }}>
+                  <TextInput
+                    ref={searchInputRef}
+                    placeholder="Search..."
+                    placeholderTextColor="#6b7280"
+                    value={searchText}
+                    onChangeText={setSearchText}
+                    style={{
+                      backgroundColor: "rgba(255,255,255,0.88)",
+                      borderWidth: 1,
+                      borderColor: "#d8d8d8",
+                      borderRadius: 10,
+                      paddingHorizontal: 12,
+                      paddingRight: 44,
+                      paddingVertical: 11,
+                      fontSize: 15,
+                      color: "black",
+                    }}
+                  />
+
+                  {!!searchText.trim() && (
+                    <Pressable
+                      onPress={() => {
+                        setSearchText("");
+                        searchInputRef.current?.focus();
+                      }}
+                      hitSlop={10}
+                      style={{
+                        position: "absolute",
+                        right: 12,
+                        top: 11,
+                        padding: 2,
+                      }}
+                    >
+                      <Text style={{ fontSize: 16, color: "#777", fontWeight: "600" }}>×</Text>
+                    </Pressable>
+                  )}
+                </View>
+              </View>
+
+              {!!selectedCadenceSummary ? (
+                <View
+                  style={{
+                    marginTop: 10,
+                    backgroundColor: "rgba(255,255,255,0.82)",
+                    borderRadius: 10,
+                    paddingVertical: 10,
+                    paddingHorizontal: 12,
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 13,
+                      lineHeight: 19,
+                      color: "#374151",
+                      fontWeight: "600",
+                    }}
+                  >
+                    {selectedCadenceSummary}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+
+            <ScrollView
+              ref={scrollViewRef}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{
+                paddingHorizontal: 20,
+                paddingBottom: 220,
+                paddingTop: 4,
+              }}
+            >
+              {groupedUpcomingEntries.length === 0 ? (
+                <View
+                  style={{
+                    backgroundColor: "rgba(255,255,255,0.7)",
+                    borderRadius: 14,
+                    padding: 14,
+                    marginBottom: 10,
+                    borderWidth: 1,
+                    borderColor: "rgba(255,255,255,0.75)",
+                  }}
+                >
+                  <Text style={{ fontSize: 14, color: "#666" }}>
+                    No entries for this filter yet.
+                  </Text>
+                </View>
+              ) : (
+                groupedUpcomingEntries.map((group) => (
+                  <View key={group.key} style={{ marginBottom: 18 }}>
+                     {selectedCadenceFilter === "all" ? (
+                      <View
+                        style={{
+                          alignItems: "center",
+                          marginBottom: 10,
+                        }}
+                      >
+                        <View
+                          style={{
+                            flexDirection: "row",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            flexWrap: "wrap",
+                            alignSelf: "center",
+                            backgroundColor: "rgba(255,255,255,0.88)",
+                            borderRadius: 8,
+                            paddingVertical: 4,
+                            paddingHorizontal: 10,
+                          }}
+                        >
+                          <Text
+                            style={{
+                              fontSize: 13,
+                              fontWeight: "700",
+                              color: "#111827",
+                            }}
+                          >
+                            {group.title}
+                          </Text>
+
+                          {group.showCustomNote ? (
+                            <Text
+                              style={{
+                                fontSize: 12,
+                                fontWeight: "700",
+                                color: "#2563eb",
+                                marginLeft: 8,
+                              }}
+                            >
+                              * notification enabled
+                            </Text>
+                          ) : null}
+                        </View>
+                      </View>
+                    ) : null}
+
+                     {group.entries.map((entry) => (
+                      <Pressable
+                        key={entry.id}
+                        onPress={() => openEntry(entry)}
+                        style={{
+                          marginBottom: 8,
+                          paddingVertical: 2,
+                          paddingHorizontal: 0,
+                        }}
+                      >
+                        <View
+                          style={{
+                            alignSelf: "flex-start",
+                            backgroundColor:
+                              entry.type === "reminder"
+                                ? entry.needs_read
+                                  ? "#2563eb"
+                                  : "rgba(219,234,254,0.95)"
+                                : entry.needs_read
+                                ? "rgba(0,0,0,0.82)"
+                                : "rgba(255,255,255,0.58)",
+                            borderRadius: 10,
+                            paddingVertical: 6,
+                            paddingHorizontal: 10,
+                          }}
+                        >
+                          <Text
+                            style={{
+                              fontSize: 16,
+                              fontWeight: "700",
+                              color:
+                                entry.type === "reminder"
+                                  ? entry.needs_read
+                                    ? "white"
+                                    : "#1d4ed8"
+                                  : entry.needs_read
+                                  ? "white"
+                                  : "black",
+                            }}
+                            numberOfLines={1}
+                          >
+                            {entry.title?.trim() || "Untitled Entry"}
+                          </Text>
+                        </View>
+
+                         {group.key === "custom" || group.key === "handled" ? (
+                          <View
+                            style={{
+                              alignSelf: "flex-start",
+                              marginTop: 5,
+                              backgroundColor: "rgba(107,114,128,0.72)",
+                              borderRadius: 10,
+                              paddingVertical: 5,
+                              paddingHorizontal: 8,
+                            }}
+                          >
+                            <Text
+                              style={{
+                                fontSize: 12,
+                                fontWeight: "600",
+                                color: "white",
+                              }}
+                            >
+                              {group.key === "custom"
+                                ? getCustomInlineSummary(entry)
+                                : getHandledInlineSummary(entry)}
+                            </Text>
+                          </View>
+                        ) : null}
+                      </Pressable>
+                    ))}
+                  </View>
+                ))
+              )}
+            </ScrollView>
+
+            {isArchivingEntry ? (
+              <View
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  zIndex: 50,
+                  elevation: 50,
+                  backgroundColor: "rgba(0,0,0,0.28)",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <View
+                  style={{
+                    minWidth: 180,
+                    paddingVertical: 16,
+                    paddingHorizontal: 22,
+                    borderRadius: 18,
+                    backgroundColor: "rgba(255,255,255,0.96)",
+                    borderWidth: 1,
+                    borderColor: "rgba(255,255,255,0.95)",
+                    alignItems: "center",
+                  }}
+                >
+                  <Text
+                    style={{
+                      color: "#111827",
+                      fontSize: 16,
+                      fontWeight: "700",
+                    }}
+                  >
+                    Archiving...
+                  </Text>
+                </View>
+              </View>
+            ) : null}
+
+            <Modal visible={showCadenceMenu} transparent animationType="fade">
+              <Pressable
+                onPress={() => setShowCadenceMenu(false)}
+                style={{
+                  flex: 1,
+                  backgroundColor: "rgba(0,0,0,0.18)",
+                  justifyContent: "flex-start",
+                  paddingTop: 180,
+                  paddingLeft: 20,
+                  paddingRight: 20,
+                }}
+              >
+                <Pressable
+                  onPress={() => {}}
+                  style={{
+                    alignSelf: "flex-start",
+                    backgroundColor: "white",
+                    borderRadius: 14,
+                    paddingVertical: 8,
+                    minWidth: 170,
+                    borderWidth: 1,
+                    borderColor: "#e5e7eb",
+                  }}
+                >
+                  {availableFilterOptions.map((option) => (
+                    <Pressable
+                      key={option}
+                      onPress={() => {
+                        setSelectedCadenceFilter(option);
+                        setShowCadenceMenu(false);
+                      }}
+                      style={{
+                        paddingVertical: 12,
+                        paddingHorizontal: 14,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 14,
+                          fontWeight: selectedCadenceFilter === option ? "700" : "500",
+                          color: "#111",
+                        }}
+                      >
+                        {option === "all"
+                          ? "All"
+                          : option.charAt(0).toUpperCase() + option.slice(1)}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </Pressable>
+              </Pressable>
+            </Modal>
+
+            <Modal visible={showEntryModal} animationType="slide" presentationStyle="fullScreen">
+              <View style={{ flex: 1 }}>
+                <ImageBackground
+                  source={reminderBackground}
+                  resizeMode="cover"
+                  style={{ flex: 1 }}
+                >
+                  <View style={{ flex: 1, backgroundColor: "rgba(255,255,255,0.58)" }}>
+                    <KeyboardAvoidingView
+                      style={{ flex: 1 }}
+                      behavior={Platform.OS === "ios" ? "padding" : undefined}
+                    >
+                      <SafeAreaView style={{ flex: 1, backgroundColor: "transparent" }}>
+                        <View
+                          style={{
+                            flex: 1,
+                            paddingHorizontal: 20,
+                            paddingTop: 8,
+                            paddingBottom: 20,
+                          }}
+                        >
+                          <View
+                            style={{
+                              flexDirection: "row",
+                              justifyContent: "flex-end",
+                              marginBottom: 8,
+                            }}
+                          >
+                            <Pressable
+                              onPress={() => {
+                                setShowEntryModal(false);
+                                setSelectedEntry(null);
+                              }}
+                              hitSlop={10}
+                              style={{
+                                width: 34,
+                                height: 34,
+                                borderRadius: 17,
+                                backgroundColor: "rgba(255,255,255,0.82)",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                borderWidth: 1,
+                                borderColor: "rgba(255,255,255,0.92)",
+                              }}
+                            >
+                              <Text
+                                style={{
+                                  fontSize: 18,
+                                  fontWeight: "700",
+                                  color: "#374151",
+                                  lineHeight: 18,
+                                }}
+                              >
+                                ×
+                              </Text>
+                            </Pressable>
+                          </View>
+
+                          <ScrollView
+                            keyboardShouldPersistTaps="handled"
+                            showsVerticalScrollIndicator={false}
+                            contentContainerStyle={{
+                              paddingBottom: 36,
+                              alignItems: "stretch",
+                            }}
+                          >
+                            {!!selectedEntry && (
+                              <>
+                                <View
+                                  style={{
+                                    alignItems: "center",
+                                    marginBottom: 18,
+                                    paddingHorizontal: 14,
+                                  }}
+                                >
+                                  <Text
+                                    style={{
+                                      fontSize: 12,
+                                      fontWeight: "700",
+                                      letterSpacing: 1.2,
+                                      color: "#4b5563",
+                                      textTransform: "uppercase",
+                                      marginBottom: 8,
+                                    }}
+                                  >
+                                    Reminder
+                                  </Text>
+
+                                  <Text
+                                    style={{
+                                      fontSize: 28,
+                                      fontWeight: "700",
+                                      color: "#111827",
+                                      textAlign: "center",
+                                      lineHeight: 34,
+                                      marginBottom: 10,
+                                    }}
+                                  >
+                                    {selectedEntry.title?.trim() || "Untitled Entry"}
+                                  </Text>
+
+                                  <View
+                                    style={{
+                                      backgroundColor: "rgba(255,255,255,0.78)",
+                                      borderRadius: 999,
+                                      paddingVertical: 7,
+                                      paddingHorizontal: 12,
+                                      alignSelf: "center",
+                                    }}
+                                  >
+                                   <Text
+                                    style={{
+                                      fontSize: 12,
+                                      fontWeight: "600",
+                                      color: "#4b5563",
+                                      textAlign: "center",
+                                    }}
+                                  >
+                                    {getEntryModalMeta(selectedEntry)}
+                                  </Text>
+                                  </View>
+
+                                  {selectedEntry.last_completed_at ? (
+                                    <Text
+                                      style={{
+                                        marginTop: 10,
+                                        fontSize: 12,
+                                        fontWeight: "600",
+                                        color: "#4b5563",
+                                      }}
+                                    >
+                                      Last handled •{" "}
+                                      {new Date(selectedEntry.last_completed_at).toLocaleDateString()}
+                                    </Text>
+                                  ) : null}
+                                </View>
+
+                                <View
+                                  style={{
+                                    backgroundColor: "rgba(255,255,255,0.88)",
+                                    borderRadius: 24,
+                                    paddingVertical: 28,
+                                    paddingHorizontal: 22,
+                                    borderWidth: 1,
+                                    borderColor: "rgba(255,255,255,0.95)",
+                                    shadowColor: "#000",
+                                    shadowOpacity: 0.08,
+                                    shadowRadius: 18,
+                                    shadowOffset: { width: 0, height: 8 },
+                                    elevation: 6,
+                                    marginBottom: 20,
+                                  }}
+                                >
+                                  <Text
+                                    style={{
+                                      fontSize: 19,
+                                      lineHeight: 33,
+                                      color: "#1f2937",
+                                      textAlign: "left",
+                                      fontWeight: "500",
+                                    }}
+                                  >
+                                    {selectedEntry.content}
+                                  </Text>
+                                </View>
+
+                                <View
+                                  style={{
+                                    flexDirection: "row",
+                                    flexWrap: "wrap",
+                                    justifyContent: "center",
+                                    gap: 10,
+                                    marginBottom: 14,
+                                  }}
+                                >
+                                  <Pressable
+                                    onPress={() => {
+                                      if (!selectedEntry) return;
+                                      setShowEntryModal(false);
+                                      router.push({
+                                        pathname: "/compose",
+                                        params: {
+                                          mode: "edit",
+                                          entryId: selectedEntry.id,
+                                        },
+                                      });
+                                    }}
+                                    style={{
+                                      backgroundColor: "rgba(255,255,255,0.86)",
+                                      paddingVertical: 11,
+                                      paddingHorizontal: 18,
+                                      borderRadius: 999,
+                                      borderWidth: 1,
+                                      borderColor: "rgba(255,255,255,0.95)",
+                                      minWidth: 110,
+                                      alignItems: "center",
+                                    }}
+                                  >
+                                    <Text
+                                      style={{
+                                        color: "#374151",
+                                        fontSize: 14,
+                                        fontWeight: "700",
+                                      }}
+                                    >
+                                      Edit
+                                    </Text>
+                                  </Pressable>
+
+                                  <Pressable
+                                    onPress={() => {
+                                      if (!selectedEntry) return;
+                                      setShowEntryModal(false);
+                                      archiveEntry(selectedEntry.id);
+                                    }}
+                                    style={{
+                                      backgroundColor: "rgba(255,255,255,0.86)",
+                                      paddingVertical: 11,
+                                      paddingHorizontal: 18,
+                                      borderRadius: 999,
+                                      borderWidth: 1,
+                                      borderColor: "rgba(255,255,255,0.95)",
+                                      minWidth: 110,
+                                      alignItems: "center",
+                                    }}
+                                  >
+                                    <Text
+                                      style={{
+                                        color: "#374151",
+                                        fontSize: 14,
+                                        fontWeight: "700",
+                                      }}
+                                    >
+                                      Archive
+                                    </Text>
+                                  </Pressable>
+
+                                  <Pressable
+                                    onPress={() => {
+                                      if (!selectedEntry) return;
+                                      confirmDeleteEntry(selectedEntry.id);
+                                    }}
+                                    style={{
+                                      backgroundColor: "rgba(255,255,255,0.72)",
+                                      paddingVertical: 11,
+                                      paddingHorizontal: 18,
+                                      borderRadius: 999,
+                                      borderWidth: 1,
+                                      borderColor: "rgba(255,255,255,0.92)",
+                                      minWidth: 110,
+                                      alignItems: "center",
+                                    }}
+                                  >
+                                    <Text
+                                      style={{
+                                        color: "#7f1d1d",
+                                        fontSize: 14,
+                                        fontWeight: "700",
+                                      }}
+                                    >
+                                      Delete
+                                    </Text>
+                                  </Pressable>
+                                </View>
+
+                                <Pressable
+                                  onPress={() => {
+                                    setShowEntryModal(false);
+                                    setSelectedEntry(null);
+                                  }}
+                                  style={{
+                                    alignSelf: "center",
+                                    paddingVertical: 10,
+                                    paddingHorizontal: 18,
+                                  }}
+                                >
+                                  <Text
+                                    style={{
+                                      fontSize: 14,
+                                      fontWeight: "700",
+                                      color: "#374151",
+                                    }}
+                                  >
+                                    Return
+                                  </Text>
+                                </Pressable>
+                              </>
+                            )}
+                          </ScrollView>
+                        </View>
+                      </SafeAreaView>
+                    </KeyboardAvoidingView>
+                  </View>
+                </ImageBackground>
+              </View>
+            </Modal>
+          </SafeAreaView>
+        </View>
+      </ImageBackground>
+    </GestureHandlerRootView>
+  );
+}
