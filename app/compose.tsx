@@ -1,4 +1,4 @@
-import { router, useLocalSearchParams } from "expo-router";
+import { router, Stack, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
@@ -217,13 +217,18 @@ export default function ComposeScreen() {
   const params = useLocalSearchParams<{
     mode?: string;
     entryId?: string;
+    returnTo?: string;
+    reminderEntryId?: string;
   }>();
 
   const inputRef = useRef<TextInput | null>(null);
 
   const composeMode = params.mode === "edit" ? "edit" : "create";
   const editingEntryId = typeof params.entryId === "string" ? params.entryId : null;
-
+  const shouldReturnToReminderDetail =
+    composeMode === "edit" &&
+    params.returnTo === "reminders" &&
+    typeof params.reminderEntryId === "string";
   const [text, setText] = useState("");
   const [title, setTitle] = useState("");
   const [selectedAIMode, setSelectedAIMode] = useState<AIWriteMode>("prayer");
@@ -284,7 +289,7 @@ export default function ComposeScreen() {
     };
   }, []);
 
-  useEffect(() => {
+   useEffect(() => {
     async function initialize() {
       if (composeMode === "edit" && editingEntryId) {
         await loadEntryForEdit(editingEntryId);
@@ -593,8 +598,20 @@ export default function ComposeScreen() {
     setShowAITypeModal(true);
   }
 
-  function closeCompose() {
+   function closeCompose() {
     Keyboard.dismiss();
+
+    if (shouldReturnToReminderDetail && params.reminderEntryId) {
+      router.replace({
+        pathname: "/reminders",
+        params: {
+          returnTo: "reminders",
+          reminderEntryId: params.reminderEntryId,
+          editReturnAt: String(Date.now()),
+        },
+      });
+      return;
+    }
 
     if (router.canGoBack()) {
       router.back();
@@ -842,11 +859,40 @@ export default function ComposeScreen() {
     return firstSentence;
   }, [selectedSaveCadence, reminderSchedules]);
 
-  return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: "white" }}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
+   return (
+    <>
+       <Stack.Screen
+        options={{
+          headerShown: true,
+          headerTitle: "",
+          headerBackTitle: "Back",
+          headerLeft: () => (
+            <Pressable
+              onPress={closeCompose}
+              hitSlop={10}
+              style={{
+                paddingVertical: 6,
+                paddingRight: 8,
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 16,
+                  fontWeight: "600",
+                  color: "#2563eb",
+                }}
+              >
+                Back
+              </Text>
+            </Pressable>
+          ),
+        }}
+      />
+
+      <KeyboardAvoidingView
+        style={{ flex: 1, backgroundColor: "white" }}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
       <SafeAreaView style={{ flex: 1, backgroundColor: "white" }}>
         <View
           style={{
@@ -1961,5 +2007,6 @@ export default function ComposeScreen() {
         </Modal>
       </SafeAreaView>
     </KeyboardAvoidingView>
+    </>
   );
 }

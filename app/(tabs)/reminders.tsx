@@ -1,5 +1,5 @@
 import { useFocusEffect } from "@react-navigation/native";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
@@ -113,6 +113,219 @@ function formatTimeLabel(time?: string | null) {
   const ampm = hour24 >= 12 ? "PM" : "AM";
 
   return `${hour12}:${minute} ${ampm}`;
+}
+
+function getEntryTypeLabel(type?: string | null) {
+  if (type === "prayer") return "Prayer";
+  if (type === "affirmation") return "Affirmation";
+  if (type === "goal") return "Goal";
+  if (type === "reminder") return "Reminder";
+  return "Entry";
+}
+
+function formatShortDateOnly(value?: string | Date | null) {
+  if (!value) return "";
+
+  const date = value instanceof Date ? value : new Date(value);
+
+  return date.toLocaleDateString([], {
+    month: "numeric",
+    day: "numeric",
+    year: "2-digit",
+  });
+}
+
+function getOrdinal(value: number) {
+  const mod10 = value % 10;
+  const mod100 = value % 100;
+
+  if (mod10 === 1 && mod100 !== 11) return `${value}st`;
+  if (mod10 === 2 && mod100 !== 12) return `${value}nd`;
+  if (mod10 === 3 && mod100 !== 13) return `${value}rd`;
+  return `${value}th`;
+}
+
+function getRepeatUnitLabel(unit?: string | null, value?: number | null) {
+  if (!unit) return "day";
+
+  const singular = unit.replace(/s$/, "");
+
+  if (value === 1) {
+    return singular;
+  }
+
+  return unit.toLowerCase();
+}
+
+function formatDateTimeLine(date: Date | null) {
+  if (!date) return "";
+
+  const dateText = date.toLocaleDateString([], {
+    month: "numeric",
+    day: "numeric",
+    year: "2-digit",
+  });
+
+  const timeText = date.toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+
+  return `${dateText} at ${timeText}`;
+}
+
+function getCadenceSchedule(
+  entry: UpcomingEntry,
+  schedules: ReminderScheduleRow[]
+) {
+  if (entry.digest_assignment === "none") return null;
+  return schedules.find((item) => item.cadence === entry.digest_assignment) ?? null;
+}
+
+function isEntryCurrentlyHandled(
+  entry: Entry | UpcomingEntry,
+  schedules: ReminderScheduleRow[]
+) {
+  if (!entry.last_completed_at) return false;
+
+  if (entry.digest_assignment === "none" && entry.schedule_mode === "none") {
+    return false;
+  }
+
+  if (entry.digest_assignment !== "none") {
+    const schedule = schedules.find((item) => item.cadence === entry.digest_assignment) ?? null;
+    if (!schedule || !entry.last_completed_due_at) return false;
+
+    const nextOccurrence = getNextCadenceOccurrence(
+      schedule.anchor_date,
+      schedule.time_of_day,
+      schedule.cadence
+    );
+
+    return new Date(entry.last_completed_due_at).getTime() < nextOccurrence.getTime();
+  }
+
+  if (
+    entry.schedule_mode === "daily_time" ||
+    entry.schedule_mode === "interval" ||
+    entry.schedule_mode === "annual_date" ||
+    entry.schedule_mode === "holiday"
+  ) {
+    if (!entry.last_completed_due_at || !entry.next_due_at) return false;
+    return new Date(entry.last_completed_due_at).getTime() < new Date(entry.next_due_at).getTime();
+  }
+
+  if (entry.schedule_mode === "fixed_date") {
+    return !!entry.last_completed_at;
+  }
+
+  return false;
+}
+
+function getEntryMetaLines(entry: UpcomingEntry, schedules: ReminderScheduleRow[]) {
+  const lines: string[] = [];
+  const createdDate = entry.created_at ? formatShortDateOnly(entry.created_at) : "";
+  const cadenceSchedule = getCadenceSchedule(entry, schedules);
+  const cadenceTime = cadenceSchedule ? formatTimeLabel(cadenceSchedule.time_of_day) : "";
+  const nextRunLine = formatDateTimeLine(entry.next_run_at);
+
+  const cadenceAnchorDate = cadenceSchedule?.anchor_date
+    ? formatShortDateOnly(`${cadenceSchedule.anchor_date}T00:00:00`)
+    : "";
+
+  const cadenceDateTimeLine = cadenceAnchorDate
+    ? `${cadenceAnchorDate}${cadenceTime ? ` at ${cadenceTime}` : ""}`
+    : nextRunLine;
+
+  if (entry.digest_assignment === "daily") {
+    lines.push(cadenceTime ? `Daily Reminder · ${cadenceTime}` : "Daily Reminder");
+    return lines;
+  }
+
+  if (entry.digest_assignment === "weekly") {
+    const weekday = cadenceSchedule?.anchor_date
+      ? new Date(`${cadenceSchedule.anchor_date}T00:00:00`).toLocaleDateString([], {
+          weekday: "long",
+        })
+      : "Sunday";
+
+    lines.push(
+      cadenceTime
+        ? `Weekly Reminder · ${weekday} at ${cadenceTime}`
+        : `Weekly Reminder · ${weekday}`
+    );
+    return lines;
+  }
+
+  if (entry.digest_assignment === "monthly") {
+    const dayOfMonth = cadenceSchedule?.anchor_date
+      ? new Date(`${cadenceSchedule.anchor_date}T00:00:00`).getDate()
+      : 1;
+
+    lines.push(
+      cadenceTime
+        ? `Monthly Reminder · ${getOrdinal(dayOfMonth)} at ${cadenceTime}`
+        : `Monthly Reminder · ${getOrdinal(dayOfMonth)}`
+    );
+    return lines;
+  }
+
+  if (entry.digest_assignment === "quarterly") {
+    lines.push(
+      cadenceDateTimeLine
+        ? `Quarterly Reminder · ${cadenceDateTimeLine}`
+        : "Quarterly Reminder"
+    );
+    return lines;
+  }
+
+  if (entry.digest_assignment === "yearly") {
+    lines.push(
+      cadenceDateTimeLine
+        ? `Yearly Reminder · ${cadenceDateTimeLine}`
+        : "Yearly Reminder"
+    );
+    return lines;
+  }
+
+  if (
+    entry.schedule_mode === "interval" ||
+    entry.schedule_mode === "daily_time" ||
+    entry.schedule_mode === "annual_date"
+  ) {
+    lines.push(nextRunLine ? `Custom Reminder · ${nextRunLine}` : "Custom Reminder");
+
+    if (entry.schedule_mode === "daily_time") {
+      lines.push("Repeats every day");
+      return lines;
+    }
+
+    if (entry.schedule_mode === "annual_date") {
+      lines.push("Repeats every year");
+      return lines;
+    }
+
+    const repeatValue = entry.interval_value ?? 1;
+    const repeatUnit = getRepeatUnitLabel(entry.interval_unit, repeatValue);
+    lines.push(`Repeats every ${repeatValue === 1 ? "" : `${repeatValue} `}${repeatUnit}`);
+    return lines;
+  }
+
+  if (entry.schedule_mode === "fixed_date") {
+    const dueDate = entry.due_date
+      ? `${formatShortDateOnly(`${entry.due_date}T00:00:00`)}${
+          entry.due_time ? ` at ${formatTimeLabel(entry.due_time)}` : ""
+        }`
+      : nextRunLine;
+
+    lines.push(dueDate ? `Custom Reminder · ${dueDate}` : "Custom Reminder");
+    lines.push(`Handled: ${entry.last_completed_at ? "Yes" : "Not Yet"}`);
+    return lines;
+  }
+
+  lines.push("No Scheduled Reminder");
+  lines.push(`Created ${createdDate}`);
+  return lines;
 }
 
 function formatDisplayTime(time: string | null) {
@@ -482,6 +695,12 @@ function getEntryModalMeta(entry: UpcomingEntry) {
 }
 
 export default function RemindersScreen() {
+  const params = useLocalSearchParams<{
+    returnTo?: string;
+    reminderEntryId?: string;
+    editReturnAt?: string;
+  }>();
+
   const [activeEntries, setActiveEntries] = useState<Entry[]>([]);
   const [selectedCadenceFilter, setSelectedCadenceFilter] =
     useState<CadenceFilterOption>("all");
@@ -489,7 +708,9 @@ export default function RemindersScreen() {
   const [searchText, setSearchText] = useState("");
   const [selectedEntry, setSelectedEntry] = useState<UpcomingEntry | null>(null);
   const [showEntryModal, setShowEntryModal] = useState(false);
+  const [isRestoringEntryDetail, setIsRestoringEntryDetail] = useState(false);
   const [isArchivingEntry, setIsArchivingEntry] = useState(false);
+  const [isCompletingEntryId, setIsCompletingEntryId] = useState<string | null>(null);
   const [reminderSchedules, setReminderSchedules] = useState<ReminderScheduleRow[]>([]);
   const [reminderScheduleStatuses, setReminderScheduleStatuses] = useState<
     ReminderScheduleStatus[]
@@ -497,6 +718,7 @@ export default function RemindersScreen() {
 
   const scrollViewRef = useRef<ScrollView | null>(null);
   const searchInputRef = useRef<TextInput | null>(null);
+  const handledEditReturnRef = useRef<string | null>(null);
 
   async function loadEntries() {
     const { data, error } = await supabase
@@ -515,7 +737,7 @@ export default function RemindersScreen() {
     setActiveEntries((data as Entry[]) ?? []);
   }
 
-  async function loadProfileDigestSettings() {
+   async function loadProfileDigestSettings() {
     const {
       data: { user },
       error: userError,
@@ -585,6 +807,64 @@ export default function RemindersScreen() {
     }
 
     setReminderScheduleStatuses((data as ReminderScheduleStatus[]) ?? []);
+  }
+
+  async function fetchEntryById(entryId: string) {
+    const { data, error } = await supabase
+      .from("entries")
+      .select(
+        "id, title, content, type, status, created_at, updated_at, resolution_note, archived_at, retired_at, needs_read, last_read_at, last_completed_at, last_completed_due_at, next_due_at, schedule_mode, due_date, due_time, interval_value, interval_unit, annual_month, annual_day, anchor_date, digest_assignment, last_surface_at, last_surface_window_key"
+      )
+      .eq("id", entryId)
+      .eq("status", "active")
+      .maybeSingle();
+
+    if (error) {
+      console.log("Fetch reminder entry by id error:", error.message);
+      return null;
+    }
+
+    if (!data) {
+      return null;
+    }
+
+    const entry = data as Entry;
+    const nextRun = entry.next_due_at ? new Date(entry.next_due_at) : null;
+    const lastCompletedAtDate = entry.last_completed_at ? new Date(entry.last_completed_at) : null;
+    const lastCompletedDueAtDate = entry.last_completed_due_at
+      ? new Date(entry.last_completed_due_at)
+      : null;
+
+    const cadence: UpcomingEntry["cadence"] =
+      entry.digest_assignment === "daily" ||
+      entry.digest_assignment === "weekly" ||
+      entry.digest_assignment === "monthly" ||
+      entry.digest_assignment === "quarterly" ||
+      entry.digest_assignment === "yearly"
+        ? entry.digest_assignment
+        : "custom";
+
+    return {
+      ...entry,
+      cadence,
+      next_run_at: nextRun,
+      last_completed_at_date: lastCompletedAtDate,
+      last_completed_due_at_date: lastCompletedDueAtDate,
+      surface_label:
+        entry.digest_assignment === "daily"
+          ? "Daily Reminder"
+          : entry.digest_assignment === "weekly"
+          ? "Weekly Reminder"
+          : entry.digest_assignment === "monthly"
+          ? "Monthly Reminder"
+          : entry.digest_assignment === "quarterly"
+          ? "Quarterly Reminder"
+          : entry.digest_assignment === "yearly"
+          ? "Yearly Reminder"
+          : entry.schedule_mode !== "none"
+          ? "Custom schedule"
+          : "Ungrouped",
+    } as UpcomingEntry;
   }
 
   const archiveEntry = async (id: string) => {
@@ -664,6 +944,24 @@ export default function RemindersScreen() {
     ]);
   };
 
+  const confirmArchiveEntry = (id: string) => {
+    Alert.alert(
+      "Are you sure you want to archive?",
+      'Please note, archived entries will no longer appear in your notifications but can be accessed under the "Archived" tab.',
+      [
+        {
+          text: "Cancel",
+          style: "cancel",
+        },
+        {
+          text: "Archive",
+          style: "default",
+          onPress: () => archiveEntry(id),
+        },
+      ]
+    );
+  };
+
   const openEntry = async (entry: UpcomingEntry) => {
     setSelectedEntry(entry);
     setShowEntryModal(true);
@@ -705,6 +1003,119 @@ export default function RemindersScreen() {
       await syncLocalNotifications();
     } catch (syncError) {
       console.log("Open entry notification sync error:", syncError);
+    }
+  };
+
+  const completeEntryCycle = async (entry: UpcomingEntry) => {
+    if (isCompletingEntryId) return;
+
+    setIsCompletingEntryId(entry.id);
+
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        console.log("No user found for complete_entry_cycle");
+        return;
+      }
+
+      const { data, error } = await supabase.rpc("complete_entry_cycle", {
+        p_entry_id: entry.id,
+        p_user_id: user.id,
+        p_completed_due_at: entry.next_run_at ? entry.next_run_at.toISOString() : null,
+      });
+
+      if (error) {
+        console.log("complete_entry_cycle error:", error.message);
+        Alert.alert("Unable to handle", error.message);
+        return;
+      }
+
+      if (selectedEntry?.id === entry.id && data) {
+        setSelectedEntry((current) =>
+          current
+            ? {
+                ...current,
+                ...data,
+                next_run_at: data.next_due_at ? new Date(data.next_due_at) : null,
+                last_completed_at_date: data.last_completed_at
+                  ? new Date(data.last_completed_at)
+                  : null,
+                last_completed_due_at_date: data.last_completed_due_at
+                  ? new Date(data.last_completed_due_at)
+                  : null,
+              }
+            : current
+        );
+      }
+
+      await loadEntries();
+
+      try {
+        await syncLocalNotifications();
+      } catch (syncError) {
+        console.log("Complete notification sync error:", syncError);
+      }
+    } finally {
+      setIsCompletingEntryId(null);
+    }
+  };
+
+  const uncompleteEntryCycle = async (entry: UpcomingEntry) => {
+    if (isCompletingEntryId) return;
+
+    setIsCompletingEntryId(entry.id);
+
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        console.log("No user found for uncomplete_entry_cycle");
+        return;
+      }
+
+      const { data, error } = await supabase.rpc("uncomplete_entry_cycle", {
+        p_entry_id: entry.id,
+        p_user_id: user.id,
+      });
+
+      if (error) {
+        console.log("uncomplete_entry_cycle error:", error.message);
+        Alert.alert("Unable to undo", error.message);
+        return;
+      }
+
+      if (selectedEntry?.id === entry.id && data) {
+        setSelectedEntry((current) =>
+          current
+            ? {
+                ...current,
+                ...data,
+                next_run_at: data.next_due_at ? new Date(data.next_due_at) : null,
+                last_completed_at_date: data.last_completed_at
+                  ? new Date(data.last_completed_at)
+                  : null,
+                last_completed_due_at_date: data.last_completed_due_at
+                  ? new Date(data.last_completed_due_at)
+                  : null,
+              }
+            : current
+        );
+      }
+
+      await loadEntries();
+
+      try {
+        await syncLocalNotifications();
+      } catch (syncError) {
+        console.log("Undo notification sync error:", syncError);
+      }
+    } finally {
+      setIsCompletingEntryId(null);
     }
   };
 
@@ -1019,7 +1430,7 @@ export default function RemindersScreen() {
     return options;
   }, [activeEntries, reminderSchedules]);
 
-    const selectedCadenceSummary = useMemo(() => {
+     const selectedCadenceSummary = useMemo(() => {
     if (
       selectedCadenceFilter === "all" ||
       selectedCadenceFilter === "custom"
@@ -1030,11 +1441,60 @@ export default function RemindersScreen() {
     return getCadenceSummaryText(selectedCadenceFilter, reminderSchedules);
   }, [selectedCadenceFilter, reminderSchedules]);
 
-  useEffect(() => {
+  const selectedEntryIsHandled = useMemo(() => {
+    return selectedEntry ? isEntryCurrentlyHandled(selectedEntry, reminderSchedules) : false;
+  }, [selectedEntry, reminderSchedules]);
+
+   useEffect(() => {
     if (!availableFilterOptions.includes(selectedCadenceFilter)) {
       setSelectedCadenceFilter("all");
     }
   }, [availableFilterOptions, selectedCadenceFilter]);
+
+   useEffect(() => {
+    const returnTo = typeof params.returnTo === "string" ? params.returnTo : null;
+    const reminderEntryId =
+      typeof params.reminderEntryId === "string" ? params.reminderEntryId : null;
+    const editReturnAt =
+      typeof params.editReturnAt === "string" ? params.editReturnAt : null;
+
+    if (returnTo !== "reminders" || !reminderEntryId || !editReturnAt) {
+      setIsRestoringEntryDetail(false);
+      return;
+    }
+
+    if (handledEditReturnRef.current === editReturnAt) {
+      return;
+    }
+
+    handledEditReturnRef.current = editReturnAt;
+    setIsRestoringEntryDetail(true);
+
+    let cancelled = false;
+
+    const reopenEntry = async () => {
+      const entry = await fetchEntryById(reminderEntryId);
+
+      if (cancelled) {
+        return;
+      }
+
+      router.replace("/reminders");
+
+      if (entry) {
+        setSelectedEntry(entry);
+        setShowEntryModal(true);
+      }
+
+      setIsRestoringEntryDetail(false);
+    };
+
+    reopenEntry();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [params.returnTo, params.reminderEntryId, params.editReturnAt]);
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
@@ -1170,7 +1630,7 @@ export default function RemindersScreen() {
               ) : null}
             </View>
 
-            <ScrollView
+             <ScrollView
               ref={scrollViewRef}
               keyboardShouldPersistTaps="handled"
               keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
@@ -1181,7 +1641,22 @@ export default function RemindersScreen() {
                 paddingTop: 4,
               }}
             >
-              {groupedUpcomingEntries.length === 0 ? (
+              {isRestoringEntryDetail ? (
+                <View
+                  style={{
+                    backgroundColor: "rgba(255,255,255,0.7)",
+                    borderRadius: 14,
+                    padding: 14,
+                    marginBottom: 10,
+                    borderWidth: 1,
+                    borderColor: "rgba(255,255,255,0.75)",
+                  }}
+                >
+                  <Text style={{ fontSize: 14, color: "#666" }}>
+                    Opening entry...
+                  </Text>
+                </View>
+              ) : groupedUpcomingEntries.length === 0 ? (
                 <View
                   style={{
                     backgroundColor: "rgba(255,255,255,0.7)",
@@ -1414,7 +1889,7 @@ export default function RemindersScreen() {
               </Pressable>
             </Modal>
 
-            <Modal visible={showEntryModal} animationType="slide" presentationStyle="fullScreen">
+             <Modal visible={showEntryModal} animationType="slide" presentationStyle="fullScreen">
               <View style={{ flex: 1 }}>
                 <ImageBackground
                   source={reminderBackground}
@@ -1427,130 +1902,100 @@ export default function RemindersScreen() {
                       behavior={Platform.OS === "ios" ? "padding" : undefined}
                     >
                       <SafeAreaView style={{ flex: 1, backgroundColor: "transparent" }}>
-                        <View
-                          style={{
-                            flex: 1,
-                            paddingHorizontal: 20,
-                            paddingTop: 8,
-                            paddingBottom: 20,
-                          }}
-                        >
+                        <View style={{ flex: 1 }}>
                           <View
                             style={{
-                              flexDirection: "row",
-                              justifyContent: "flex-end",
-                              marginBottom: 8,
+                              paddingHorizontal: 20,
+                              paddingTop: 8,
+                              paddingBottom: 10,
                             }}
                           >
-                            <Pressable
-                              onPress={() => {
-                                setShowEntryModal(false);
-                                setSelectedEntry(null);
-                              }}
-                              hitSlop={10}
+                            <View
                               style={{
-                                width: 34,
-                                height: 34,
-                                borderRadius: 17,
-                                backgroundColor: "rgba(255,255,255,0.82)",
-                                alignItems: "center",
-                                justifyContent: "center",
-                                borderWidth: 1,
-                                borderColor: "rgba(255,255,255,0.92)",
+                                flexDirection: "row",
+                                justifyContent: "flex-end",
+                                marginBottom: 8,
                               }}
                             >
-                              <Text
+                              <Pressable
+                                onPress={() => {
+                                  setShowEntryModal(false);
+                                  setSelectedEntry(null);
+                                }}
+                                hitSlop={10}
                                 style={{
-                                  fontSize: 18,
-                                  fontWeight: "700",
-                                  color: "#374151",
-                                  lineHeight: 18,
+                                  width: 34,
+                                  height: 34,
+                                  borderRadius: 17,
+                                  backgroundColor: "rgba(255,255,255,0.82)",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  borderWidth: 1,
+                                  borderColor: "rgba(255,255,255,0.92)",
                                 }}
                               >
-                                ×
-                              </Text>
-                            </Pressable>
+                                <Text
+                                  style={{
+                                    fontSize: 18,
+                                    fontWeight: "700",
+                                    color: "#374151",
+                                    lineHeight: 18,
+                                  }}
+                                >
+                                  ×
+                                </Text>
+                              </Pressable>
+                            </View>
+
+                            {!!selectedEntry && (
+                              <View
+                                style={{
+                                  alignItems: "center",
+                                  paddingHorizontal: 14,
+                                  marginBottom: 10,
+                                }}
+                              >
+                                <Text
+                                  style={{
+                                    fontSize: 12,
+                                    fontWeight: "700",
+                                    letterSpacing: 1.2,
+                                    color: "#4b5563",
+                                    textTransform: "uppercase",
+                                    marginBottom: 18,
+                                  }}
+                                >
+                                  {getEntryTypeLabel(selectedEntry.type)}
+                                </Text>
+
+                                <Text
+                                  style={{
+                                    fontSize: 28,
+                                    fontWeight: "700",
+                                    color: "#111827",
+                                    textAlign: "center",
+                                    lineHeight: 34,
+                                    marginBottom: 4,
+                                  }}
+                                >
+                                  {selectedEntry.title?.trim() || "Untitled Entry"}
+                                </Text>
+                              </View>
+                            )}
                           </View>
 
                           <ScrollView
                             keyboardShouldPersistTaps="handled"
                             showsVerticalScrollIndicator={false}
                             contentContainerStyle={{
-                              paddingBottom: 36,
+                              paddingHorizontal: 20,
+                              paddingTop: 4,
+                              paddingBottom: 170,
                               alignItems: "stretch",
                             }}
                           >
                             {!!selectedEntry && (
                               <>
-                                <View
-                                  style={{
-                                    alignItems: "center",
-                                    marginBottom: 18,
-                                    paddingHorizontal: 14,
-                                  }}
-                                >
-                                  <Text
-                                    style={{
-                                      fontSize: 12,
-                                      fontWeight: "700",
-                                      letterSpacing: 1.2,
-                                      color: "#4b5563",
-                                      textTransform: "uppercase",
-                                      marginBottom: 8,
-                                    }}
-                                  >
-                                    Reminder
-                                  </Text>
-
-                                  <Text
-                                    style={{
-                                      fontSize: 28,
-                                      fontWeight: "700",
-                                      color: "#111827",
-                                      textAlign: "center",
-                                      lineHeight: 34,
-                                      marginBottom: 10,
-                                    }}
-                                  >
-                                    {selectedEntry.title?.trim() || "Untitled Entry"}
-                                  </Text>
-
-                                  <View
-                                    style={{
-                                      backgroundColor: "rgba(255,255,255,0.78)",
-                                      borderRadius: 999,
-                                      paddingVertical: 7,
-                                      paddingHorizontal: 12,
-                                      alignSelf: "center",
-                                    }}
-                                  >
-                                   <Text
-                                    style={{
-                                      fontSize: 12,
-                                      fontWeight: "600",
-                                      color: "#4b5563",
-                                      textAlign: "center",
-                                    }}
-                                  >
-                                    {getEntryModalMeta(selectedEntry)}
-                                  </Text>
-                                  </View>
-
-                                  {selectedEntry.last_completed_at ? (
-                                    <Text
-                                      style={{
-                                        marginTop: 10,
-                                        fontSize: 12,
-                                        fontWeight: "600",
-                                        color: "#4b5563",
-                                      }}
-                                    >
-                                      Last handled •{" "}
-                                      {new Date(selectedEntry.last_completed_at).toLocaleDateString()}
-                                    </Text>
-                                  ) : null}
-                                </View>
-
                                 <View
                                   style={{
                                     backgroundColor: "rgba(255,255,255,0.88)",
@@ -1564,7 +2009,7 @@ export default function RemindersScreen() {
                                     shadowRadius: 18,
                                     shadowOffset: { width: 0, height: 8 },
                                     elevation: 6,
-                                    marginBottom: 20,
+                                    marginBottom: 18,
                                   }}
                                 >
                                   <Text
@@ -1582,127 +2027,204 @@ export default function RemindersScreen() {
 
                                 <View
                                   style={{
-                                    flexDirection: "row",
-                                    flexWrap: "wrap",
-                                    justifyContent: "center",
-                                    gap: 10,
-                                    marginBottom: 14,
+                                    alignItems: "center",
+                                    marginBottom: 18,
+                                    paddingHorizontal: 14,
                                   }}
                                 >
-                                  <Pressable
-                                    onPress={() => {
-                                      if (!selectedEntry) return;
-                                      setShowEntryModal(false);
-                                      router.push({
-                                        pathname: "/compose",
-                                        params: {
-                                          mode: "edit",
-                                          entryId: selectedEntry.id,
-                                        },
-                                      });
-                                    }}
-                                    style={{
-                                      backgroundColor: "rgba(255,255,255,0.86)",
-                                      paddingVertical: 11,
-                                      paddingHorizontal: 18,
-                                      borderRadius: 999,
-                                      borderWidth: 1,
-                                      borderColor: "rgba(255,255,255,0.95)",
-                                      minWidth: 110,
-                                      alignItems: "center",
-                                    }}
-                                  >
+                                  {getEntryMetaLines(selectedEntry, reminderSchedules).map((line, index) => (
                                     <Text
+                                      key={`${selectedEntry.id}-meta-${index}`}
                                       style={{
-                                        color: "#374151",
-                                        fontSize: 14,
-                                        fontWeight: "700",
+                                        fontSize: 13,
+                                        fontWeight: "600",
+                                        color: "#4b5563",
+                                        textAlign: "center",
+                                        lineHeight: 21,
+                                        marginTop: index === 0 ? 0 : 2,
                                       }}
                                     >
-                                      Edit
+                                      {line}
                                     </Text>
-                                  </Pressable>
-
-                                  <Pressable
-                                    onPress={() => {
-                                      if (!selectedEntry) return;
-                                      setShowEntryModal(false);
-                                      archiveEntry(selectedEntry.id);
-                                    }}
-                                    style={{
-                                      backgroundColor: "rgba(255,255,255,0.86)",
-                                      paddingVertical: 11,
-                                      paddingHorizontal: 18,
-                                      borderRadius: 999,
-                                      borderWidth: 1,
-                                      borderColor: "rgba(255,255,255,0.95)",
-                                      minWidth: 110,
-                                      alignItems: "center",
-                                    }}
-                                  >
-                                    <Text
-                                      style={{
-                                        color: "#374151",
-                                        fontSize: 14,
-                                        fontWeight: "700",
-                                      }}
-                                    >
-                                      Archive
-                                    </Text>
-                                  </Pressable>
-
-                                  <Pressable
-                                    onPress={() => {
-                                      if (!selectedEntry) return;
-                                      confirmDeleteEntry(selectedEntry.id);
-                                    }}
-                                    style={{
-                                      backgroundColor: "rgba(255,255,255,0.72)",
-                                      paddingVertical: 11,
-                                      paddingHorizontal: 18,
-                                      borderRadius: 999,
-                                      borderWidth: 1,
-                                      borderColor: "rgba(255,255,255,0.92)",
-                                      minWidth: 110,
-                                      alignItems: "center",
-                                    }}
-                                  >
-                                    <Text
-                                      style={{
-                                        color: "#7f1d1d",
-                                        fontSize: 14,
-                                        fontWeight: "700",
-                                      }}
-                                    >
-                                      Delete
-                                    </Text>
-                                  </Pressable>
+                                  ))}
                                 </View>
 
+                                 <View style={{ height: 6 }} />
+                              </>
+                            )}
+                          </ScrollView>
+
+                          {!!selectedEntry && (
+                            <View
+                              style={{
+                                position: "absolute",
+                                left: 0,
+                                right: 0,
+                                bottom: 0,
+                                paddingHorizontal: 18,
+                                paddingTop: 14,
+                                paddingBottom: 20,
+                                backgroundColor: "rgba(255,255,255,0.82)",
+                                borderTopWidth: 1,
+                                borderTopColor: "rgba(255,255,255,0.95)",
+                              }}
+                            >
+                              <View
+                                style={{
+                                  flexDirection: "row",
+                                  alignItems: "flex-start",
+                                  justifyContent: "space-between",
+                                  gap: 6,
+                                }}
+                              >
                                 <Pressable
                                   onPress={() => {
                                     setShowEntryModal(false);
                                     setSelectedEntry(null);
                                   }}
+                                  hitSlop={10}
                                   style={{
-                                    alignSelf: "center",
-                                    paddingVertical: 10,
-                                    paddingHorizontal: 18,
+                                    flex: 1,
+                                    paddingVertical: 6,
+                                    paddingHorizontal: 4,
+                                    alignItems: "center",
                                   }}
                                 >
                                   <Text
                                     style={{
-                                      fontSize: 14,
-                                      fontWeight: "700",
                                       color: "#374151",
+                                      fontSize: 12,
+                                      fontWeight: "700",
+                                      textAlign: "center",
+                                      lineHeight: 16,
                                     }}
                                   >
                                     Return
                                   </Text>
                                 </Pressable>
-                              </>
-                            )}
-                          </ScrollView>
+
+                                <Pressable
+                                  onPress={() => {
+                                    if (!selectedEntry) return;
+
+                                    if (selectedEntryIsHandled) {
+                                      uncompleteEntryCycle(selectedEntry);
+                                    } else {
+                                      completeEntryCycle(selectedEntry);
+                                    }
+
+                                    setShowEntryModal(false);
+                                  }}
+                                  hitSlop={10}
+                                  style={{
+                                    flex: 1,
+                                    paddingVertical: 6,
+                                    paddingHorizontal: 4,
+                                    alignItems: "center",
+                                  }}
+                                >
+                                  <Text
+                                    style={{
+                                      color: "#166534",
+                                      fontSize: 12,
+                                      fontWeight: "700",
+                                      textAlign: "center",
+                                      lineHeight: 16,
+                                    }}
+                                  >
+                                    {selectedEntryIsHandled ? "Undo Handled" : "Mark Handled"}
+                                  </Text>
+                                </Pressable>
+
+                                <Pressable
+                                  onPress={() => {
+                                    if (!selectedEntry) return;
+                                    setShowEntryModal(false);
+                                    router.push({
+                                      pathname: "/compose",
+                                      params: {
+                                        mode: "edit",
+                                        entryId: selectedEntry.id,
+                                        returnTo: "reminders",
+                                        reminderEntryId: selectedEntry.id,
+                                      },
+                                    });
+                                  }}
+                                  hitSlop={10}
+                                  style={{
+                                    flex: 1,
+                                    paddingVertical: 6,
+                                    paddingHorizontal: 4,
+                                    alignItems: "center",
+                                  }}
+                                >
+                                  <Text
+                                    style={{
+                                      color: "#374151",
+                                      fontSize: 12,
+                                      fontWeight: "700",
+                                      textAlign: "center",
+                                      lineHeight: 16,
+                                    }}
+                                  >
+                                    Edit
+                                  </Text>
+                                </Pressable>
+
+                                <Pressable
+                                  onPress={() => {
+                                    if (!selectedEntry) return;
+                                    confirmArchiveEntry(selectedEntry.id);
+                                  }}
+                                  hitSlop={10}
+                                  style={{
+                                    flex: 1,
+                                    paddingVertical: 6,
+                                    paddingHorizontal: 4,
+                                    alignItems: "center",
+                                  }}
+                                >
+                                  <Text
+                                    style={{
+                                      color: "#374151",
+                                      fontSize: 12,
+                                      fontWeight: "700",
+                                      textAlign: "center",
+                                      lineHeight: 16,
+                                    }}
+                                  >
+                                    Archive
+                                  </Text>
+                                </Pressable>
+
+                                <Pressable
+                                  onPress={() => {
+                                    if (!selectedEntry) return;
+                                    confirmDeleteEntry(selectedEntry.id);
+                                  }}
+                                  hitSlop={10}
+                                  style={{
+                                    flex: 1,
+                                    paddingVertical: 6,
+                                    paddingHorizontal: 4,
+                                    alignItems: "center",
+                                  }}
+                                >
+                                  <Text
+                                    style={{
+                                      color: "#7f1d1d",
+                                      fontSize: 12,
+                                      fontWeight: "700",
+                                      textAlign: "center",
+                                      lineHeight: 16,
+                                    }}
+                                  >
+                                    Delete
+                                  </Text>
+                                </Pressable>
+                              </View>
+                            </View>
+                          )}
                         </View>
                       </SafeAreaView>
                     </KeyboardAvoidingView>

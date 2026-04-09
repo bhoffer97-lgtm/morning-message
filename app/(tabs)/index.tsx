@@ -114,6 +114,133 @@ function formatTimeLabel(time?: string | null) {
   return `${hour12}:${minute} ${ampm}`;
 }
 
+function getEntryTypeLabel(type?: string | null) {
+  if (type === "prayer") return "Prayer";
+  if (type === "affirmation") return "Affirmation";
+  if (type === "goal") return "Goal";
+  if (type === "reminder") return "Reminder";
+  return "Entry";
+}
+
+function formatShortDateOnly(value?: string | Date | null) {
+  if (!value) return "";
+
+  const date = value instanceof Date ? value : new Date(value);
+
+  return date.toLocaleDateString([], {
+    month: "numeric",
+    day: "numeric",
+    year: "2-digit",
+  });
+}
+
+function getOrdinal(value: number) {
+  const mod10 = value % 10;
+  const mod100 = value % 100;
+
+  if (mod10 === 1 && mod100 !== 11) return `${value}st`;
+  if (mod10 === 2 && mod100 !== 12) return `${value}nd`;
+  if (mod10 === 3 && mod100 !== 13) return `${value}rd`;
+  return `${value}th`;
+}
+
+function getRepeatUnitLabel(unit?: string | null, value?: number | null) {
+  if (!unit) return "day";
+
+  const singular = unit.replace(/s$/, "");
+
+  if (value === 1) {
+    return singular;
+  }
+
+  return unit.toLowerCase();
+}
+
+function getEntryMetaLines(entry: DisplayEntry) {
+  const lines: string[] = [];
+  const createdDate = entry.created_at ? formatShortDateOnly(entry.created_at) : "";
+  const nextRunLine = entry.next_run_at
+    ? `${formatShortDateOnly(entry.next_run_at)} at ${entry.next_run_at.toLocaleTimeString([], {
+        hour: "numeric",
+        minute: "2-digit",
+      })}`
+    : "";
+
+  if (entry.digest_assignment === "daily") {
+    lines.push(`Daily Reminder · ${formatTimeLabel(entry.due_time)}`);
+    return lines;
+  }
+
+  if (entry.digest_assignment === "weekly") {
+    const weekday = entry.anchor_date
+      ? new Date(`${entry.anchor_date}T00:00:00`).toLocaleDateString([], {
+          weekday: "long",
+        })
+      : "Sunday";
+
+    lines.push(`Weekly Reminder · ${weekday} at ${formatTimeLabel(entry.due_time)}`);
+    return lines;
+  }
+
+  if (entry.digest_assignment === "monthly") {
+    const dayOfMonth = entry.anchor_date
+      ? new Date(`${entry.anchor_date}T00:00:00`).getDate()
+      : 1;
+
+    lines.push(`Monthly Reminder · ${getOrdinal(dayOfMonth)} at ${formatTimeLabel(entry.due_time)}`);
+    return lines;
+  }
+
+  if (entry.digest_assignment === "quarterly") {
+    lines.push(`Quarterly Reminder · ${nextRunLine}`);
+    return lines;
+  }
+
+  if (entry.digest_assignment === "yearly") {
+    lines.push(`Yearly Reminder · ${nextRunLine}`);
+    return lines;
+  }
+
+  if (
+    entry.schedule_mode === "interval" ||
+    entry.schedule_mode === "daily_time" ||
+    entry.schedule_mode === "annual_date"
+  ) {
+    lines.push(`Custom Reminder · ${nextRunLine}`);
+
+    if (entry.schedule_mode === "daily_time") {
+      lines.push("Repeats every day");
+      return lines;
+    }
+
+    if (entry.schedule_mode === "annual_date") {
+      lines.push("Repeats every year");
+      return lines;
+    }
+
+    const repeatValue = entry.interval_value ?? 1;
+    const repeatUnit = getRepeatUnitLabel(entry.interval_unit, repeatValue);
+    lines.push(`Repeats every ${repeatValue === 1 ? "" : `${repeatValue} `}${repeatUnit}`);
+    return lines;
+  }
+
+  if (entry.schedule_mode === "fixed_date") {
+    const dueDate = entry.due_date
+      ? `${formatShortDateOnly(`${entry.due_date}T00:00:00`)}${
+          entry.due_time ? ` at ${formatTimeLabel(entry.due_time)}` : ""
+        }`
+      : nextRunLine;
+
+    lines.push(`Custom Reminder · ${dueDate}`);
+    lines.push(`Handled: ${entry.last_completed_at ? "Yes" : "Not Yet"}`);
+    return lines;
+  }
+
+  lines.push("No Scheduled Reminder");
+  lines.push(`Created ${createdDate}`);
+  return lines;
+}
+
 function getEntryScheduleSummary(entry: Entry | DisplayEntry) {
   if (entry.digest_assignment !== "none" && entry.schedule_mode === "none") {
     return null;
@@ -1459,7 +1586,7 @@ export default function HomeScreen() {
             </View>
           ) : null}
 
-             <Modal visible={showEntryModal} animationType="slide" presentationStyle="fullScreen">
+           <Modal visible={showEntryModal} animationType="slide" presentationStyle="fullScreen">
             <View style={{ flex: 1 }}>
               <ImageBackground
                 source={backgroundImage}
@@ -1472,130 +1599,100 @@ export default function HomeScreen() {
                     behavior={Platform.OS === "ios" ? "padding" : undefined}
                   >
                     <SafeAreaView style={{ flex: 1, backgroundColor: "transparent" }}>
-                      <View
-                        style={{
-                          flex: 1,
-                          paddingHorizontal: 20,
-                          paddingTop: 8,
-                          paddingBottom: 20,
-                        }}
-                      >
+                      <View style={{ flex: 1 }}>
                         <View
                           style={{
-                            flexDirection: "row",
-                            justifyContent: "flex-end",
-                            marginBottom: 8,
+                            paddingHorizontal: 20,
+                            paddingTop: 8,
+                            paddingBottom: 10,
                           }}
                         >
-                          <Pressable
-                            onPress={() => {
-                              setShowEntryModal(false);
-                              setSelectedEntry(null);
-                            }}
-                            hitSlop={10}
+                          <View
                             style={{
-                              width: 34,
-                              height: 34,
-                              borderRadius: 17,
-                              backgroundColor: "rgba(255,255,255,0.82)",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              borderWidth: 1,
-                              borderColor: "rgba(255,255,255,0.92)",
+                              flexDirection: "row",
+                              justifyContent: "flex-end",
+                              marginBottom: 8,
                             }}
                           >
-                            <Text
+                            <Pressable
+                              onPress={() => {
+                                setShowEntryModal(false);
+                                setSelectedEntry(null);
+                              }}
+                              hitSlop={10}
                               style={{
-                                fontSize: 18,
-                                fontWeight: "700",
-                                color: "#374151",
-                                lineHeight: 18,
+                                width: 34,
+                                height: 34,
+                                borderRadius: 17,
+                                backgroundColor: "rgba(255,255,255,0.82)",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                borderWidth: 1,
+                                borderColor: "rgba(255,255,255,0.92)",
                               }}
                             >
-                              ×
-                            </Text>
-                          </Pressable>
+                              <Text
+                                style={{
+                                  fontSize: 18,
+                                  fontWeight: "700",
+                                  color: "#374151",
+                                  lineHeight: 18,
+                                }}
+                              >
+                                ×
+                              </Text>
+                            </Pressable>
+                          </View>
+
+                          {!!selectedEntry && (
+                            <View
+                              style={{
+                                alignItems: "center",
+                                paddingHorizontal: 14,
+                                marginBottom: 10,
+                              }}
+                            >
+                              <Text
+                                style={{
+                                  fontSize: 12,
+                                  fontWeight: "700",
+                                  letterSpacing: 1.2,
+                                  color: "#4b5563",
+                                  textTransform: "uppercase",
+                                  marginBottom: 18,
+                                }}
+                              >
+                                {getEntryTypeLabel(selectedEntry.type)}
+                              </Text>
+
+                              <Text
+                                style={{
+                                  fontSize: 28,
+                                  fontWeight: "700",
+                                  color: "#111827",
+                                  textAlign: "center",
+                                  lineHeight: 34,
+                                  marginBottom: 4,
+                                }}
+                              >
+                                {selectedEntry.title?.trim() || "Untitled Entry"}
+                              </Text>
+                            </View>
+                          )}
                         </View>
 
                         <ScrollView
                           keyboardShouldPersistTaps="handled"
                           showsVerticalScrollIndicator={false}
                           contentContainerStyle={{
-                            paddingBottom: 36,
+                            paddingHorizontal: 20,
+                            paddingTop: 4,
+                            paddingBottom: 170,
                             alignItems: "stretch",
                           }}
                         >
                           {!!selectedEntry && (
                             <>
-                              <View
-                                style={{
-                                  alignItems: "center",
-                                  marginBottom: 18,
-                                  paddingHorizontal: 14,
-                                }}
-                              >
-                                <Text
-                                  style={{
-                                    fontSize: 12,
-                                    fontWeight: "700",
-                                    letterSpacing: 1.2,
-                                    color: "#4b5563",
-                                    textTransform: "uppercase",
-                                    marginBottom: 8,
-                                  }}
-                                >
-                                  Reflection
-                                </Text>
-
-                                <Text
-                                  style={{
-                                    fontSize: 28,
-                                    fontWeight: "700",
-                                    color: "#111827",
-                                    textAlign: "center",
-                                    lineHeight: 34,
-                                    marginBottom: 10,
-                                  }}
-                                >
-                                  {selectedEntry.title?.trim() || "Untitled Entry"}
-                                </Text>
-
-                                <View
-                                  style={{
-                                    backgroundColor: "rgba(255,255,255,0.78)",
-                                    borderRadius: 999,
-                                    paddingVertical: 7,
-                                    paddingHorizontal: 12,
-                                    alignSelf: "center",
-                                  }}
-                                >
-                                  <Text
-                                    style={{
-                                      fontSize: 12,
-                                      fontWeight: "600",
-                                      color: "#4b5563",
-                                      textAlign: "center",
-                                    }}
-                                  >
-                                    {getEntryModalMeta(selectedEntry)}
-                                  </Text>
-                                </View>
-
-                                {selectedEntry.last_completed_at ? (
-                                  <Text
-                                    style={{
-                                      marginTop: 10,
-                                      fontSize: 12,
-                                      fontWeight: "600",
-                                      color: "#4b5563",
-                                    }}
-                                  >
-                                    Last handled •{" "}
-                                    {new Date(selectedEntry.last_completed_at).toLocaleDateString()}
-                                  </Text>
-                                ) : null}
-                              </View>
-
                               <View
                                 style={{
                                   backgroundColor: "rgba(255,255,255,0.88)",
@@ -1609,7 +1706,7 @@ export default function HomeScreen() {
                                   shadowRadius: 18,
                                   shadowOffset: { width: 0, height: 8 },
                                   elevation: 6,
-                                  marginBottom: 20,
+                                  marginBottom: 18,
                                 }}
                               >
                                 <Text
@@ -1627,132 +1724,29 @@ export default function HomeScreen() {
 
                               <View
                                 style={{
-                                  flexDirection: "row",
-                                  flexWrap: "wrap",
-                                  justifyContent: "center",
-                                  gap: 10,
-                                  marginBottom: 14,
+                                  alignItems: "center",
+                                  marginBottom: 18,
+                                  paddingHorizontal: 14,
                                 }}
                               >
-                                {selectedEntry.section !== "handled_today" ? (
-                                  <Pressable
-                                    onPress={() => {
-                                      if (!selectedEntry) return;
-                                      completeEntryCycle(selectedEntry);
-                                      setShowEntryModal(false);
-                                    }}
-                                    style={{
-                                      backgroundColor: "rgba(220,252,231,0.92)",
-                                      paddingVertical: 11,
-                                      paddingHorizontal: 18,
-                                      borderRadius: 999,
-                                      borderWidth: 1,
-                                      borderColor: "rgba(255,255,255,0.95)",
-                                      minWidth: 110,
-                                      alignItems: "center",
-                                    }}
-                                  >
-                                    <Text
-                                      style={{
-                                        color: "#166534",
-                                        fontSize: 14,
-                                        fontWeight: "700",
-                                      }}
-                                    >
-                                      Handle
-                                    </Text>
-                                  </Pressable>
-                                ) : null}
-
-                                <Pressable
-                                  onPress={() => {
-                                    if (!selectedEntry) return;
-                                    setShowEntryModal(false);
-                                    router.push({
-                                      pathname: "/compose",
-                                      params: {
-                                        mode: "edit",
-                                        entryId: selectedEntry.id,
-                                      },
-                                    });
-                                  }}
-                                  style={{
-                                    backgroundColor: "rgba(255,255,255,0.86)",
-                                    paddingVertical: 11,
-                                    paddingHorizontal: 18,
-                                    borderRadius: 999,
-                                    borderWidth: 1,
-                                    borderColor: "rgba(255,255,255,0.95)",
-                                    minWidth: 110,
-                                    alignItems: "center",
-                                  }}
-                                >
+                                {getEntryMetaLines(selectedEntry).map((line, index) => (
                                   <Text
+                                    key={`${selectedEntry.id}-meta-${index}`}
                                     style={{
-                                      color: "#374151",
-                                      fontSize: 14,
-                                      fontWeight: "700",
+                                      fontSize: 13,
+                                      fontWeight: "600",
+                                      color: "#4b5563",
+                                      textAlign: "center",
+                                      lineHeight: 21,
+                                      marginTop: index === 0 ? 0 : 2,
                                     }}
                                   >
-                                    Edit
+                                    {line}
                                   </Text>
-                                </Pressable>
-
-                                <Pressable
-                                  onPress={() => {
-                                    if (!selectedEntry) return;
-                                    setShowEntryModal(false);
-                                    archiveEntry(selectedEntry.id);
-                                  }}
-                                  style={{
-                                    backgroundColor: "rgba(255,255,255,0.86)",
-                                    paddingVertical: 11,
-                                    paddingHorizontal: 18,
-                                    borderRadius: 999,
-                                    borderWidth: 1,
-                                    borderColor: "rgba(255,255,255,0.95)",
-                                    minWidth: 110,
-                                    alignItems: "center",
-                                  }}
-                                >
-                                  <Text
-                                    style={{
-                                      color: "#374151",
-                                      fontSize: 14,
-                                      fontWeight: "700",
-                                    }}
-                                  >
-                                    Archive
-                                  </Text>
-                                </Pressable>
-
-                                <Pressable
-                                  onPress={() => {
-                                    if (!selectedEntry) return;
-                                    confirmDeleteEntry(selectedEntry.id);
-                                  }}
-                                  style={{
-                                    backgroundColor: "rgba(255,255,255,0.72)",
-                                    paddingVertical: 11,
-                                    paddingHorizontal: 18,
-                                    borderRadius: 999,
-                                    borderWidth: 1,
-                                    borderColor: "rgba(255,255,255,0.92)",
-                                    minWidth: 110,
-                                    alignItems: "center",
-                                  }}
-                                >
-                                  <Text
-                                    style={{
-                                      color: "#7f1d1d",
-                                      fontSize: 14,
-                                      fontWeight: "700",
-                                    }}
-                                  >
-                                    Delete
-                                  </Text>
-                                </Pressable>
+                                ))}
                               </View>
+
+                              <View style={{ height: 6 }} />
 
                               <Pressable
                                 onPress={() => {
@@ -1763,13 +1757,17 @@ export default function HomeScreen() {
                                   alignSelf: "center",
                                   paddingVertical: 10,
                                   paddingHorizontal: 18,
+                                  marginBottom: 10,
                                 }}
                               >
                                 <Text
                                   style={{
-                                    fontSize: 14,
+                                    fontSize: 15,
                                     fontWeight: "700",
-                                    color: "#374151",
+                                    color: "white",
+                                    textShadowColor: "rgba(0,0,0,0.25)",
+                                    textShadowOffset: { width: 0, height: 1 },
+                                    textShadowRadius: 3,
                                   }}
                                 >
                                   Return
@@ -1778,6 +1776,156 @@ export default function HomeScreen() {
                             </>
                           )}
                         </ScrollView>
+
+                        {!!selectedEntry && (
+                          <View
+                            style={{
+                              position: "absolute",
+                              left: 0,
+                              right: 0,
+                              bottom: 0,
+                              paddingHorizontal: 28,
+                              paddingTop: 14,
+                              paddingBottom: 20,
+                              backgroundColor: "rgba(255,255,255,0.82)",
+                              borderTopWidth: 1,
+                              borderTopColor: "rgba(255,255,255,0.95)",
+                            }}
+                          >
+                            <View
+                              style={{
+                                flexDirection: "row",
+                                justifyContent:
+                                  selectedEntry.section === "handled_today"
+                                    ? "space-around"
+                                    : "space-between",
+                                alignItems: "center",
+                              }}
+                            >
+                              {selectedEntry.section === "handled_today" ? (
+                                <Pressable
+                                  onPress={() => {
+                                    if (!selectedEntry) return;
+                                    uncompleteEntryCycle(selectedEntry);
+                                    setShowEntryModal(false);
+                                  }}
+                                  hitSlop={10}
+                                  style={{
+                                    paddingVertical: 6,
+                                    paddingHorizontal: 8,
+                                  }}
+                                >
+                                  <Text
+                                    style={{
+                                      color: "#166534",
+                                      fontSize: 15,
+                                      fontWeight: "700",
+                                    }}
+                                  >
+                                    Undo
+                                  </Text>
+                                </Pressable>
+                              ) : (
+                                <Pressable
+                                  onPress={() => {
+                                    if (!selectedEntry) return;
+                                    completeEntryCycle(selectedEntry);
+                                    setShowEntryModal(false);
+                                  }}
+                                  hitSlop={10}
+                                  style={{
+                                    paddingVertical: 6,
+                                    paddingHorizontal: 8,
+                                  }}
+                                >
+                                  <Text
+                                    style={{
+                                      color: "#166534",
+                                      fontSize: 15,
+                                      fontWeight: "700",
+                                    }}
+                                  >
+                                    Handled
+                                  </Text>
+                                </Pressable>
+                              )}
+
+                              <Pressable
+                                onPress={() => {
+                                  if (!selectedEntry) return;
+                                  setShowEntryModal(false);
+                                  router.push({
+                                    pathname: "/compose",
+                                    params: {
+                                      mode: "edit",
+                                      entryId: selectedEntry.id,
+                                    },
+                                  });
+                                }}
+                                hitSlop={10}
+                                style={{
+                                  paddingVertical: 6,
+                                  paddingHorizontal: 8,
+                                }}
+                              >
+                                <Text
+                                  style={{
+                                    color: "#374151",
+                                    fontSize: 15,
+                                    fontWeight: "700",
+                                  }}
+                                >
+                                  Edit
+                                </Text>
+                              </Pressable>
+
+                              <Pressable
+                                onPress={() => {
+                                  if (!selectedEntry) return;
+                                  setShowEntryModal(false);
+                                  archiveEntry(selectedEntry.id);
+                                }}
+                                hitSlop={10}
+                                style={{
+                                  paddingVertical: 6,
+                                  paddingHorizontal: 8,
+                                }}
+                              >
+                                <Text
+                                  style={{
+                                    color: "#374151",
+                                    fontSize: 15,
+                                    fontWeight: "700",
+                                  }}
+                                >
+                                  Archive
+                                </Text>
+                              </Pressable>
+
+                              <Pressable
+                                onPress={() => {
+                                  if (!selectedEntry) return;
+                                  confirmDeleteEntry(selectedEntry.id);
+                                }}
+                                hitSlop={10}
+                                style={{
+                                  paddingVertical: 6,
+                                  paddingHorizontal: 8,
+                                }}
+                              >
+                                <Text
+                                  style={{
+                                    color: "#7f1d1d",
+                                    fontSize: 15,
+                                    fontWeight: "700",
+                                  }}
+                                >
+                                  Delete
+                                </Text>
+                              </Pressable>
+                            </View>
+                          </View>
+                        )}
                       </View>
                     </SafeAreaView>
                   </KeyboardAvoidingView>
