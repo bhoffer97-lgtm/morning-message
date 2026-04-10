@@ -213,6 +213,42 @@ function getSuggestedTitle(text: string) {
   return title || "New Entry";
 }
 
+function formatShortInputDate(dateString: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+    return dateString;
+  }
+
+  const [year, month, day] = dateString.split("-").map(Number);
+  const date = new Date(year, month - 1, day);
+
+  return date.toLocaleDateString([], {
+    month: "numeric",
+    day: "numeric",
+    year: "2-digit",
+  });
+}
+
+function getCustomScheduleSummary(
+  customScheduleMode: CustomScheduleMode,
+  customScheduleTime: string,
+  customDueDate: string,
+  customIntervalValue: string,
+  customIntervalUnit: EntryIntervalUnit
+) {
+  const timeText = formatDisplayTime(`${customScheduleTime}:00`);
+  const dateText = formatShortInputDate(customDueDate);
+
+  if (customScheduleMode === "fixed_date") {
+    return `${dateText} at ${timeText}`;
+  }
+
+  const repeatValue = Math.max(1, parseInt(customIntervalValue, 10) || 1);
+  const repeatUnit =
+    repeatValue === 1 ? customIntervalUnit.replace(/s$/, "") : customIntervalUnit;
+
+  return `Every ${repeatValue} ${repeatUnit} at ${timeText} starting ${dateText}`;
+}
+
 export default function ComposeScreen() {
   const params = useLocalSearchParams<{
     mode?: string;
@@ -231,9 +267,10 @@ export default function ComposeScreen() {
     typeof params.reminderEntryId === "string";
   const [text, setText] = useState("");
   const [title, setTitle] = useState("");
-  const [selectedAIMode, setSelectedAIMode] = useState<AIWriteMode>("prayer");
+  const [selectedAIMode, setSelectedAIMode] = useState<AIWriteMode>("reminder");
   const [showAITypeModal, setShowAITypeModal] = useState(false);
-  const [showSaveEntryModal, setShowSaveEntryModal] = useState(false);
+   const [showTitleSaveModal, setShowTitleSaveModal] = useState(false);
+  const [showCustomSetupModal, setShowCustomSetupModal] = useState(false);
   const [showRevertAI, setShowRevertAI] = useState(false);
   const [preAIText, setPreAIText] = useState<string | null>(null);
   const [preAITitle, setPreAITitle] = useState<string | null>(null);
@@ -242,11 +279,12 @@ export default function ComposeScreen() {
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
   const [isLoadingEntry, setIsLoadingEntry] = useState(composeMode === "edit");
 
-  const [saveScheduleSource, setSaveScheduleSource] = useState<SaveScheduleSource>("none");
+   const [saveScheduleSource, setSaveScheduleSource] = useState<SaveScheduleSource>("none");
   const [selectedSaveCadence, setSelectedSaveCadence] = useState<
     "daily" | "weekly" | "monthly" | "quarterly" | "yearly"
   >("daily");
-   const [reminderSchedules, setReminderSchedules] = useState<ReminderScheduleRow[]>([]);
+  const [showCadencePicker, setShowCadencePicker] = useState(false);
+  const [reminderSchedules, setReminderSchedules] = useState<ReminderScheduleRow[]>([]);
    const [customScheduleMode, setCustomScheduleMode] =
     useState<CustomScheduleMode>("interval");
   const [customScheduleTime, setCustomScheduleTime] = useState("07:00");
@@ -291,6 +329,8 @@ export default function ComposeScreen() {
 
    useEffect(() => {
     async function initialize() {
+      await loadProfileDigestSettings();
+
       if (composeMode === "edit" && editingEntryId) {
         await loadEntryForEdit(editingEntryId);
         return;
@@ -299,12 +339,13 @@ export default function ComposeScreen() {
       setIsLoadingEntry(false);
       setText("");
       setTitle("");
-      setSelectedAIMode("prayer");
+      setSelectedAIMode("reminder");
       setShowRevertAI(false);
       setPreAIText(null);
       setPreAITitle(null);
       setSaveScheduleSource("none");
       setSelectedSaveCadence("daily");
+      setShowCadencePicker(false);
       setCustomScheduleMode("interval");
       setCustomScheduleTime("07:00");
       setCustomTimeHour("7");
@@ -348,10 +389,10 @@ export default function ComposeScreen() {
         entry.type === "goal" ||
         entry.type === "reminder"
         ? entry.type
-        : "prayer"
+        : "reminder"
     );
 
-    if (
+     if (
       entry.digest_assignment === "daily" ||
       entry.digest_assignment === "weekly" ||
       entry.digest_assignment === "monthly" ||
@@ -360,6 +401,7 @@ export default function ComposeScreen() {
     ) {
       setSaveScheduleSource("digest");
       setSelectedSaveCadence(entry.digest_assignment);
+      setShowCadencePicker(false);
       return;
     }
 
@@ -626,20 +668,37 @@ export default function ComposeScreen() {
     });
   }
 
-  async function openSaveEntryModal() {
+     async function openSaveEntryModal() {
     if (!text.trim() || isSaving || isLoadingEntry) return;
 
+    const suggestedTitle = title.trim() || getSuggestedTitle(text);
     if (!title.trim()) {
-      setTitle(getSuggestedTitle(text));
+      setTitle(suggestedTitle);
     }
 
     await loadProfileDigestSettings();
-    setShowSaveEntryModal(true);
     Keyboard.dismiss();
+    setShowTitleSaveModal(true);
   }
 
-  function resetSaveEntryState() {
-    setShowSaveEntryModal(false);
+   function openCustomSetup() {
+    const form = parseTimeForForm(customScheduleTime);
+
+    setSaveScheduleSource("custom");
+    setCustomTimeHour(form.hour);
+    setCustomTimeMinute(form.minute);
+    setCustomTimePeriod(form.period);
+
+    if (customScheduleMode !== "fixed_date" && customScheduleMode !== "interval") {
+      setCustomScheduleMode("fixed_date");
+    }
+
+    setShowCustomSetupModal(true);
+    Keyboard.dismiss();
+  }
+   function resetSaveEntryState() {
+    setShowTitleSaveModal(false);
+    setShowCustomSetupModal(false);
     setShowCustomTimeModal(false);
 
     if (composeMode === "edit") {
@@ -659,7 +718,6 @@ export default function ComposeScreen() {
     setCustomAnnualMonth("1");
     setCustomAnnualDay("1");
   }
-
   async function saveEntry() {
     if (!text.trim() || isSaving) return;
 
@@ -774,7 +832,8 @@ export default function ComposeScreen() {
         console.log("Compose notification sync error:", syncError);
       }
 
-      setShowSaveEntryModal(false);
+      setShowTitleSaveModal(false);
+      setShowCustomSetupModal(false);
       setShowCustomTimeModal(false);
       setShowRevertAI(false);
       setPreAIText(null);
@@ -802,66 +861,69 @@ export default function ComposeScreen() {
     const selectedSchedule =
       reminderSchedules.find((item) => item.cadence === selectedSaveCadence) ?? null;
 
-    const cadenceLabel =
-      selectedSaveCadence === "daily"
-        ? "Daily"
-        : selectedSaveCadence === "weekly"
-        ? "Weekly"
-        : selectedSaveCadence === "monthly"
-        ? "Monthly"
-        : selectedSaveCadence === "quarterly"
-        ? "Quarterly"
-        : "Yearly";
-
     if (!selectedSchedule) {
-      return `${cadenceLabel} entries are scheduled for this cadence.`;
+      if (selectedSaveCadence === "daily") return "Daily Reminder";
+      if (selectedSaveCadence === "weekly") return "Weekly Reminder";
+      if (selectedSaveCadence === "monthly") return "Monthly Reminder";
+      if (selectedSaveCadence === "quarterly") return "Quarterly Reminder";
+      return "Yearly Reminder";
     }
 
     const timeLabel = formatDisplayTime(selectedSchedule.time_of_day);
-    let firstSentence = "";
 
     if (selectedSaveCadence === "daily") {
-      firstSentence = `Daily entries are scheduled for ${timeLabel}.`;
-    } else if (selectedSaveCadence === "weekly") {
-      const weeklyAnchorDay = selectedSchedule.anchor_date
-        ? new Date(`${selectedSchedule.anchor_date}T00:00:00`).getDay()
-        : 0;
+      return `Daily Reminder occurs at ${timeLabel}`;
+    }
 
-      firstSentence = `Weekly entries are scheduled for ${weekdayLabel(
-        weeklyAnchorDay as WeekdayValue
-      )} at ${timeLabel}.`;
-    } else if (selectedSaveCadence === "monthly") {
+    if (selectedSaveCadence === "weekly") {
+      const weeklyAnchorDay = selectedSchedule.anchor_date
+        ? new Date(`${selectedSchedule.anchor_date}T00:00:00`).toLocaleDateString([], {
+            weekday: "long",
+          })
+        : "Sunday";
+
+      return `Weekly Reminder occurs on ${weeklyAnchorDay} at ${timeLabel}`;
+    }
+
+    if (selectedSaveCadence === "monthly") {
       const monthlyDay = selectedSchedule.anchor_date
         ? new Date(`${selectedSchedule.anchor_date}T00:00:00`).getDate()
         : 1;
 
-      firstSentence = `Monthly entries are scheduled for day ${monthlyDay} at ${timeLabel}.`;
-    } else {
-      const recurringDate = selectedSchedule.anchor_date
-        ? new Date(`${selectedSchedule.anchor_date}T00:00:00`)
-        : new Date("2026-01-01T00:00:00");
+      const mod10 = monthlyDay % 10;
+      const mod100 = monthlyDay % 100;
+      const ordinal =
+        mod10 === 1 && mod100 !== 11
+          ? `${monthlyDay}st`
+          : mod10 === 2 && mod100 !== 12
+          ? `${monthlyDay}nd`
+          : mod10 === 3 && mod100 !== 13
+          ? `${monthlyDay}rd`
+          : `${monthlyDay}th`;
 
-      const monthDay = recurringDate.toLocaleDateString([], {
-        month: "long",
-        day: "numeric",
-      });
-
-      firstSentence =
-        selectedSaveCadence === "quarterly"
-          ? `Quarterly entries are scheduled for ${monthDay} at ${timeLabel}.`
-          : `Yearly entries are scheduled for ${monthDay} at ${timeLabel}.`;
+      return `Monthly Reminder occurs on the ${ordinal} at ${timeLabel}`;
     }
 
-    if (!selectedSchedule.is_enabled) {
-      return `${firstSentence} ${cadenceLabel} cadence notifications are currently turned off.`;
+    const recurringDate = selectedSchedule.anchor_date
+      ? new Date(`${selectedSchedule.anchor_date}T00:00:00`)
+      : new Date("2026-01-01T00:00:00");
+
+    const monthDay = recurringDate.toLocaleDateString([], {
+      month: "numeric",
+      day: "numeric",
+      year: "2-digit",
+    });
+
+    if (selectedSaveCadence === "quarterly") {
+      return `Quarterly Reminder occurs on ${monthDay} at ${timeLabel}`;
     }
 
-    return firstSentence;
+    return `Yearly Reminder occurs on ${monthDay} at ${timeLabel}`;
   }, [selectedSaveCadence, reminderSchedules]);
 
    return (
     <>
-       <Stack.Screen
+      <Stack.Screen
         options={{
           headerShown: true,
           headerTitle: "",
@@ -886,6 +948,28 @@ export default function ComposeScreen() {
               </Text>
             </Pressable>
           ),
+          headerRight: () => (
+            <Pressable
+              onPress={openSaveEntryModal}
+              disabled={!text.trim() || isSaving || isLoadingEntry}
+              hitSlop={10}
+              style={{
+                paddingVertical: 6,
+                paddingLeft: 8,
+                opacity: !text.trim() || isSaving || isLoadingEntry ? 0.45 : 1,
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 16,
+                  fontWeight: "700",
+                  color: "#2563eb",
+                }}
+              >
+                Save
+              </Text>
+            </Pressable>
+          ),
         }}
       />
 
@@ -893,243 +977,423 @@ export default function ComposeScreen() {
         style={{ flex: 1, backgroundColor: "white" }}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
-      <SafeAreaView style={{ flex: 1, backgroundColor: "white" }}>
-        <View
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "space-between",
-            paddingHorizontal: 18,
-            paddingTop: 8,
-            paddingBottom: 10,
-            borderBottomWidth: 1,
-            borderBottomColor: "#e5e7eb",
-            backgroundColor: "white",
-          }}
-        >
-          <View style={{ width: 56 }} />
-
-          <Text
-            style={{
-              fontSize: 20,
-              fontWeight: "700",
-              color: "black",
+        <SafeAreaView edges={["left", "right", "bottom"]} style={{ flex: 1, backgroundColor: "white" }}>
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={{
+              paddingHorizontal: 16,
+              paddingTop: 12,
+              paddingBottom: isKeyboardVisible ? 220 : 28,
             }}
           >
-            {composeMode === "edit" ? "Edit Entry" : "Journal Entry"}
-          </Text>
+            <View
+              style={{
+                flexDirection: "row",
+                gap: 6,
+                marginBottom: 16,
+              }}
+            >
+              {(
+                [
+                  { key: "reminder", label: "Reminder" },
+                  { key: "goal", label: "Goal" },
+                  { key: "prayer", label: "Prayer" },
+                  { key: "affirmation", label: "Affirm..." },
+                ] as const
+              ).map((option) => {
+                const selected = selectedAIMode === option.key;
 
-          <Pressable
-            onPress={openSaveEntryModal}
-            disabled={!text.trim() || isSaving || isLoadingEntry}
-            style={{
-              minHeight: 36,
-              borderRadius: 18,
-              alignItems: "center",
-              justifyContent: "center",
-              backgroundColor:
-                !text.trim() || isSaving || isLoadingEntry ? "#c7d2fe" : "#2e6cff",
-              paddingHorizontal: 14,
-            }}
-          >
+                return (
+                  <Pressable
+                    key={option.key}
+                    onPress={() => setSelectedAIMode(option.key)}
+                    style={{
+                      flex: 1,
+                      minHeight: 38,
+                      borderRadius: 10,
+                      borderWidth: 1,
+                      borderColor: selected ? "#2563eb" : "#d1d5db",
+                      backgroundColor: selected ? "#eff6ff" : "rgba(255,255,255,0.92)",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      paddingHorizontal: 4,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 12,
+                        fontWeight: "700",
+                        color: selected ? "#1d4ed8" : "#374151",
+                        textAlign: "center",
+                      }}
+                      numberOfLines={1}
+                    >
+                      {option.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
             <Text
               style={{
-                color: "white",
                 fontSize: 13,
                 fontWeight: "700",
+                color: "#4b5563",
+                marginBottom: 8,
               }}
             >
-              Save
+              Notification
             </Text>
-          </Pressable>
-        </View>
 
-        <View
-          style={{
-            paddingHorizontal: 16,
-            paddingTop: 12,
-            paddingBottom: 10,
-            backgroundColor: "white",
-          }}
-        >
-          <View
-            style={{
-              flexDirection: "row",
-              justifyContent: "flex-end",
-              alignItems: "center",
-              gap: 10,
-              flexWrap: "wrap",
-            }}
-          >
-            <Pressable
-              onPress={handleAIHelp}
+            <View
               style={{
-                minHeight: 36,
-                borderRadius: 18,
-                alignItems: "center",
-                justifyContent: "center",
-                backgroundColor: "rgba(255,255,255,0.95)",
-                borderWidth: 1,
-                borderColor: "rgba(0,0,0,0.08)",
-                paddingHorizontal: 12,
+                flexDirection: "row",
+                gap: 8,
+                marginBottom: 14,
               }}
             >
-              {isAIWorking ? (
-                <View style={{ flexDirection: "row", gap: 3 }}>
-                  <Animated.View
-                    style={{
-                      width: 4,
-                      height: 4,
-                      borderRadius: 2,
-                      backgroundColor: "#2e6cff",
-                      opacity: dotAnim1,
-                    }}
-                  />
-                  <Animated.View
-                    style={{
-                      width: 4,
-                      height: 4,
-                      borderRadius: 2,
-                      backgroundColor: "#2e6cff",
-                      opacity: dotAnim2,
-                    }}
-                  />
-                  <Animated.View
-                    style={{
-                      width: 4,
-                      height: 4,
-                      borderRadius: 2,
-                      backgroundColor: "#2e6cff",
-                      opacity: dotAnim3,
-                    }}
-                  />
-                </View>
-              ) : (
-                <Text
-                  style={{
-                    fontSize: 13,
-                    fontWeight: "600",
-                    color: "#374151",
-                  }}
-                >
-                  ✨ AI help write
-                </Text>
-              )}
-            </Pressable>
-
-            {showRevertAI && preAIText !== null && (
               <Pressable
                 onPress={() => {
-                  setText(preAIText);
-                  setTitle(preAITitle ?? "");
-                  setShowRevertAI(false);
-                  setPreAIText(null);
-                  setPreAITitle(null);
-                  inputRef.current?.focus();
+                  setSaveScheduleSource("none");
+                  setSelectedSaveCadence("daily");
+                  setShowCadencePicker(false);
                 }}
                 style={{
-                  minHeight: 36,
-                  borderRadius: 18,
+                  flex: 1,
+                  minHeight: 42,
+                  borderRadius: 12,
+                  borderWidth: 1,
+                  borderColor: saveScheduleSource === "none" ? "#2563eb" : "#d1d5db",
+                  backgroundColor:
+                    saveScheduleSource === "none" ? "#eff6ff" : "rgba(255,255,255,0.92)",
                   alignItems: "center",
                   justifyContent: "center",
-                  backgroundColor: "rgba(245,158,11,0.14)",
-                  borderWidth: 1,
-                  borderColor: "rgba(245,158,11,0.25)",
-                  paddingHorizontal: 14,
+                  paddingHorizontal: 8,
                 }}
               >
                 <Text
                   style={{
-                    fontSize: 13,
-                    color: "#b45309",
+                    fontSize: 14,
                     fontWeight: "700",
+                    color: saveScheduleSource === "none" ? "#1d4ed8" : "#374151",
+                    textAlign: "center",
                   }}
                 >
-                  ↺ Revert
+                  None
                 </Text>
               </Pressable>
-            )}
 
-            {!!text.trim() && (
-              <Pressable
+               <Pressable
                 onPress={() => {
-                  setText("");
-                  inputRef.current?.focus();
+                  setSaveScheduleSource("digest");
+                  setShowCadencePicker(true);
                 }}
                 style={{
-                  minHeight: 36,
-                  borderRadius: 18,
+                  flex: 1,
+                  minHeight: 42,
+                  borderRadius: 12,
+                  borderWidth: 1,
+                  borderColor: saveScheduleSource === "digest" ? "#2563eb" : "#d1d5db",
+                  backgroundColor:
+                    saveScheduleSource === "digest" ? "#eff6ff" : "rgba(255,255,255,0.92)",
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  paddingHorizontal: 12,
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 14,
+                    fontWeight: "700",
+                    color: saveScheduleSource === "digest" ? "#1d4ed8" : "#374151",
+                    textTransform: "capitalize",
+                  }}
+                >
+                  {selectedSaveCadence}
+                </Text>
+
+                <Text
+                  style={{
+                    fontSize: 14,
+                    fontWeight: "700",
+                    color: saveScheduleSource === "digest" ? "#1d4ed8" : "#6b7280",
+                    marginLeft: 8,
+                  }}
+                >
+                  ▼
+                </Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => {
+                  setShowCadencePicker(false);
+                  openCustomSetup();
+                }}
+                style={{
+                  flex: 1,
+                  minHeight: 42,
+                  borderRadius: 12,
+                  borderWidth: 1,
+                  borderColor: saveScheduleSource === "custom" ? "#2563eb" : "#d1d5db",
+                  backgroundColor:
+                    saveScheduleSource === "custom" ? "#eff6ff" : "rgba(255,255,255,0.92)",
                   alignItems: "center",
                   justifyContent: "center",
-                  backgroundColor: "rgba(0,0,0,0.08)",
+                  paddingHorizontal: 8,
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 14,
+                    fontWeight: "700",
+                    color: saveScheduleSource === "custom" ? "#1d4ed8" : "#374151",
+                    textAlign: "center",
+                  }}
+                >
+                  Custom
+                </Text>
+              </Pressable>
+            </View>
+
+              {saveScheduleSource === "digest" ? (
+              <View
+                style={{
+                  backgroundColor: "rgba(255,255,255,0.72)",
+                  borderRadius: 14,
                   borderWidth: 1,
                   borderColor: "rgba(0,0,0,0.06)",
-                  paddingHorizontal: 14,
+                  paddingHorizontal: 12,
+                  paddingVertical: 10,
+                  marginBottom: 12,
                 }}
               >
                 <Text
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
                   style={{
-                    fontSize: 13,
-                    color: "#6b7280",
-                    fontWeight: "600",
+                    fontSize: 12,
+                    color: "#475569",
                   }}
                 >
-                  × Clear
+                  {selectedDigestDescription}
+                </Text>
+              </View>
+            ) : null}
+
+             {saveScheduleSource === "custom" ? (
+              <Pressable
+                onPress={openCustomSetup}
+                style={{
+                  backgroundColor: "rgba(255,255,255,0.72)",
+                  borderRadius: 14,
+                  borderWidth: 1,
+                  borderColor: "rgba(0,0,0,0.06)",
+                  paddingHorizontal: 12,
+                  paddingVertical: 10,
+                  marginBottom: 12,
+                }}
+              >
+                <Text
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                  style={{
+                    fontSize: 12,
+                    color: "#475569",
+                  }}
+                >
+                  {getCustomScheduleSummary(
+                    customScheduleMode,
+                    customScheduleTime,
+                    customDueDate,
+                    customIntervalValue,
+                    customIntervalUnit
+                  )}
                 </Text>
               </Pressable>
-            )}
-          </View>
-        </View>
+            ) : null}
 
-        <View style={{ flex: 1, paddingHorizontal: 16, paddingBottom: 16 }}>
-          <TextInput
-            value={title}
-            onChangeText={setTitle}
-            placeholder="Title"
-            placeholderTextColor="#9ca3af"
-            style={{
-              borderWidth: 1,
-              borderColor: "#d1d5db",
-              borderRadius: 12,
-              paddingHorizontal: 12,
-              paddingVertical: 12,
-              fontSize: 15,
-              color: "black",
-              marginBottom: 12,
-              backgroundColor: "white",
-            }}
-          />
-
-          <Animated.View
-            style={{
-              flex: 1,
-              opacity: textFadeAnim,
-              transform: [{ scale: textScaleAnim }],
-            }}
-          >
-            <TextInput
-              ref={inputRef}
-              value={text}
-              onChangeText={setText}
-              placeholder="Write what’s on your mind… we’ll turn it into a prayer, goal, affirmation or just a reminder."
-              placeholderTextColor="#9ca3af"
-              multiline
-              scrollEnabled
+             <View
               style={{
-                flex: 1,
-                borderWidth: 1,
-                borderColor: "#d1d5db",
-                borderRadius: 16,
-                backgroundColor: "#fafafa",
-                padding: 14,
-                fontSize: 15,
-                lineHeight: 22,
-                color: "black",
-                textAlignVertical: "top",
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "space-between",
+                marginBottom: 8,
+                gap: 10,
               }}
-            />
-          </Animated.View>
-        </View>
+            >
+              <Text
+                style={{
+                  fontSize: 13,
+                  fontWeight: "700",
+                  color: "#4b5563",
+                  flex: 1,
+                }}
+              >
+                Journal Entry
+              </Text>
+
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "flex-end",
+                  gap: 8,
+                }}
+              >
+                {showRevertAI && preAIText !== null && (
+                  <Pressable
+                    onPress={() => {
+                      setText(preAIText);
+                      setTitle(preAITitle ?? "");
+                      setShowRevertAI(false);
+                      setPreAIText(null);
+                      setPreAITitle(null);
+                      inputRef.current?.focus();
+                    }}
+                    style={{
+                      minHeight: 34,
+                      borderRadius: 17,
+                      alignItems: "center",
+                      justifyContent: "center",
+                      backgroundColor: "rgba(245,158,11,0.14)",
+                      borderWidth: 1,
+                      borderColor: "rgba(245,158,11,0.25)",
+                      paddingHorizontal: 12,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 12,
+                        color: "#b45309",
+                        fontWeight: "700",
+                      }}
+                    >
+                      ↺ Revert
+                    </Text>
+                  </Pressable>
+                )}
+
+                <Pressable
+                  onPress={handleAIHelp}
+                  style={{
+                    minHeight: 34,
+                    borderRadius: 17,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    backgroundColor: "rgba(255,255,255,0.95)",
+                    borderWidth: 1,
+                    borderColor: "rgba(0,0,0,0.08)",
+                    paddingHorizontal: 12,
+                  }}
+                >
+                  {isAIWorking ? (
+                    <View style={{ flexDirection: "row", gap: 3 }}>
+                      <Animated.View
+                        style={{
+                          width: 4,
+                          height: 4,
+                          borderRadius: 2,
+                          backgroundColor: "#2e6cff",
+                          opacity: dotAnim1,
+                        }}
+                      />
+                      <Animated.View
+                        style={{
+                          width: 4,
+                          height: 4,
+                          borderRadius: 2,
+                          backgroundColor: "#2e6cff",
+                          opacity: dotAnim2,
+                        }}
+                      />
+                      <Animated.View
+                        style={{
+                          width: 4,
+                          height: 4,
+                          borderRadius: 2,
+                          backgroundColor: "#2e6cff",
+                          opacity: dotAnim3,
+                        }}
+                      />
+                    </View>
+                  ) : (
+                    <Text
+                      style={{
+                        fontSize: 12,
+                        fontWeight: "600",
+                        color: "#374151",
+                      }}
+                    >
+                      ✨ AI help write
+                    </Text>
+                  )}
+                </Pressable>
+              </View>
+            </View>
+
+            <Animated.View
+              style={{
+                minHeight: 320,
+                opacity: textFadeAnim,
+                transform: [{ scale: textScaleAnim }],
+              }}
+            >
+              <View style={{ position: "relative", flex: 1 }}>
+                <TextInput
+                  ref={inputRef}
+                  value={text}
+                  onChangeText={setText}
+                  placeholder="Write what’s on your mind… we’ll turn it into a prayer, goal, affirmation or just a reminder."
+                  placeholderTextColor="#9ca3af"
+                  multiline
+                  scrollEnabled
+                  style={{
+                    minHeight: 320,
+                    borderWidth: 1,
+                    borderColor: "#d1d5db",
+                    borderRadius: 16,
+                    backgroundColor: "rgba(255,255,255,0.92)",
+                    paddingTop: 14,
+                    paddingBottom: 14,
+                    paddingLeft: 14,
+                    paddingRight: text.trim() ? 42 : 14,
+                    fontSize: 15,
+                    lineHeight: 22,
+                    color: "black",
+                    textAlignVertical: "top",
+                  }}
+                />
+
+                {!!text.trim() && (
+                  <Pressable
+                    onPress={() => {
+                      setText("");
+                      inputRef.current?.focus();
+                    }}
+                    hitSlop={10}
+                    style={{
+                      position: "absolute",
+                      top: 10,
+                      right: 10,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 18,
+                        fontWeight: "700",
+                        color: "#9ca3af",
+                      }}
+                    >
+                      ×
+                    </Text>
+                  </Pressable>
+                )}
+              </View>
+            </Animated.View>
+        </ScrollView>
 
         <Modal visible={showAITypeModal} transparent animationType="fade">
           <Pressable
@@ -1215,16 +1479,22 @@ export default function ComposeScreen() {
           </Pressable>
         </Modal>
 
-        <Modal visible={showSaveEntryModal} animationType="slide" presentationStyle="fullScreen">
-          <SafeAreaView style={{ flex: 1, backgroundColor: "white" }}>
-            <View
+        <Modal visible={showCadencePicker} transparent animationType="fade">
+          <Pressable
+            onPress={() => setShowCadencePicker(false)}
+            style={{
+              flex: 1,
+              backgroundColor: "rgba(0,0,0,0.35)",
+              justifyContent: "center",
+              paddingHorizontal: 24,
+            }}
+          >
+            <Pressable
+              onPress={() => {}}
               style={{
-                paddingHorizontal: 18,
-                paddingTop: 8,
-                paddingBottom: 12,
-                borderBottomWidth: 1,
-                borderBottomColor: "#e5e7eb",
                 backgroundColor: "white",
+                borderRadius: 20,
+                padding: 20,
               }}
             >
               <Text
@@ -1232,12 +1502,176 @@ export default function ComposeScreen() {
                   fontSize: 20,
                   fontWeight: "700",
                   color: "black",
-                  textAlign: "center",
-                  marginBottom: 12,
+                  marginBottom: 8,
+                }}
+              >
+                Choose Reminder Cadence
+              </Text>
+
+              {(
+                [
+                  { key: "daily", label: "Daily" },
+                  { key: "weekly", label: "Weekly" },
+                  { key: "monthly", label: "Monthly" },
+                  { key: "quarterly", label: "Quarterly" },
+                  { key: "yearly", label: "Yearly" },
+                ] as const
+              ).map((option) => (
+                <Pressable
+                  key={option.key}
+                  onPress={() => {
+                    setSaveScheduleSource("digest");
+                    setSelectedSaveCadence(option.key);
+                    setShowCadencePicker(false);
+                  }}
+                  style={{
+                    backgroundColor:
+                      selectedSaveCadence === option.key ? "#eff6ff" : "#f8fafc",
+                    borderRadius: 14,
+                    paddingVertical: 14,
+                    paddingHorizontal: 14,
+                    marginBottom: 10,
+                    borderWidth: 1,
+                    borderColor:
+                      selectedSaveCadence === option.key ? "#2563eb" : "#e5e7eb",
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 15,
+                      fontWeight: "600",
+                      color:
+                        selectedSaveCadence === option.key ? "#1d4ed8" : "#111827",
+                    }}
+                  >
+                    {option.label}
+                  </Text>
+                </Pressable>
+              ))}
+
+              <Pressable
+                onPress={() => setShowCadencePicker(false)}
+                style={{
+                  paddingVertical: 10,
+                  marginTop: 2,
+                }}
+              >
+                <Text
+                  style={{
+                    textAlign: "center",
+                    color: "#6b7280",
+                    fontSize: 14,
+                    fontWeight: "600",
+                  }}
+                >
+                  Cancel
+                </Text>
+              </Pressable>
+            </Pressable>
+          </Pressable>
+        </Modal>
+
+        <Modal visible={showTitleSaveModal} transparent animationType="fade">
+           <Pressable
+            onPress={() => setShowTitleSaveModal(false)}
+            style={{
+              flex: 1,
+              backgroundColor: "rgba(0,0,0,0.35)",
+              justifyContent: "flex-start",
+              paddingHorizontal: 24,
+              paddingTop: isKeyboardVisible ? 150 : 230,
+            }}
+          >
+            <Pressable
+              onPress={() => {}}
+              style={{
+                backgroundColor: "white",
+                borderRadius: 20,
+                padding: 20,
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 20,
+                  fontWeight: "700",
+                  color: "black",
+                  marginBottom: 8,
                 }}
               >
                 Save Entry
               </Text>
+
+              <Text
+                style={{
+                  fontSize: 14,
+                  color: "#6b7280",
+                  marginBottom: 12,
+                  lineHeight: 20,
+                }}
+              >
+                Review the title before saving.
+              </Text>
+
+              <Text
+                style={{
+                  fontSize: 13,
+                  fontWeight: "700",
+                  color: "#4b5563",
+                  marginBottom: 6,
+                }}
+              >
+                Title
+              </Text>
+
+              <View
+                style={{
+                  position: "relative",
+                  marginBottom: 16,
+                }}
+              >
+                <TextInput
+                  value={title}
+                  onChangeText={setTitle}
+                  placeholder="Entry title"
+                  placeholderTextColor="#9ca3af"
+                  autoFocus
+                  style={{
+                    borderWidth: 1,
+                    borderColor: "#d1d5db",
+                    borderRadius: 14,
+                    paddingLeft: 12,
+                    paddingRight: title.trim() ? 40 : 12,
+                    paddingVertical: 12,
+                    fontSize: 15,
+                    color: "black",
+                    backgroundColor: "white",
+                  }}
+                />
+
+                {!!title.trim() && (
+                  <Pressable
+                    onPress={() => setTitle("")}
+                    hitSlop={10}
+                    style={{
+                      position: "absolute",
+                      right: 10,
+                      top: 0,
+                      bottom: 0,
+                      justifyContent: "center",
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 18,
+                        fontWeight: "700",
+                        color: "#9ca3af",
+                      }}
+                    >
+                      ×
+                    </Text>
+                  </Pressable>
+                )}
+              </View>
 
               <View
                 style={{
@@ -1246,10 +1680,10 @@ export default function ComposeScreen() {
                 }}
               >
                 <Pressable
-                  onPress={resetSaveEntryState}
+                  onPress={() => setShowTitleSaveModal(false)}
                   style={{
                     flex: 1,
-                    minHeight: 40,
+                    minHeight: 44,
                     borderRadius: 12,
                     alignItems: "center",
                     justifyContent: "center",
@@ -1263,33 +1697,127 @@ export default function ComposeScreen() {
                       color: "#374151",
                     }}
                   >
-                    Cancel
+                    Return
                   </Text>
                 </Pressable>
 
                 <Pressable
                   onPress={saveEntry}
-                  disabled={isSaving}
+                  disabled={isSaving || !text.trim()}
                   style={{
                     flex: 1,
-                    minHeight: 40,
+                    minHeight: 44,
                     borderRadius: 12,
                     alignItems: "center",
                     justifyContent: "center",
-                    backgroundColor: isSaving ? "#93c5fd" : "#2563eb",
+                    backgroundColor: "#2563eb",
+                    opacity: isSaving || !text.trim() ? 0.6 : 1,
                   }}
                 >
                   <Text
                     style={{
-                      fontSize: 13,
+                      fontSize: 14,
                       fontWeight: "700",
                       color: "white",
                     }}
                   >
-                    {isSaving ? "Saving..." : composeMode === "edit" ? "Save Changes" : "Save"}
+                    Save
                   </Text>
                 </Pressable>
               </View>
+            </Pressable>
+          </Pressable>
+        </Modal>
+
+        <Modal visible={showCustomSetupModal} animationType="slide" presentationStyle="fullScreen">
+          <SafeAreaView style={{ flex: 1, backgroundColor: "white" }}>
+            <View
+              style={{
+                paddingHorizontal: 18,
+                paddingTop: 8,
+                paddingBottom: 12,
+                borderBottomWidth: 1,
+                borderBottomColor: "#e5e7eb",
+                backgroundColor: "white",
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}
+            >
+              <Pressable
+                onPress={() => {
+                  setShowCustomSetupModal(false);
+                  Keyboard.dismiss();
+                }}
+                style={{
+                  minHeight: 40,
+                  borderRadius: 12,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  paddingHorizontal: 12,
+                  backgroundColor: "#f3f4f6",
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 14,
+                    fontWeight: "600",
+                    color: "#374151",
+                  }}
+                >
+                  Return
+                </Text>
+              </Pressable>
+
+              <Text
+                style={{
+                  fontSize: 20,
+                  fontWeight: "700",
+                  color: "black",
+                }}
+              >
+                Custom Reminder
+              </Text>
+
+              <Pressable
+                onPress={() => {
+                  const parsedHour = Math.min(12, Math.max(1, Number(customTimeHour || "12")));
+                  const normalizedHour = String(parsedHour);
+
+                  const parsedMinute = Math.min(
+                    59,
+                    Math.max(0, Number(customTimeMinute || "0"))
+                  );
+                  const normalizedMinute = String(parsedMinute).padStart(2, "0");
+
+                  setCustomTimeHour(normalizedHour);
+                  setCustomTimeMinute(normalizedMinute);
+                  setCustomScheduleTime(
+                    build24HourTime(normalizedHour, normalizedMinute, customTimePeriod)
+                  );
+                  setSaveScheduleSource("custom");
+                  setShowCustomSetupModal(false);
+                  Keyboard.dismiss();
+                }}
+                style={{
+                  minHeight: 40,
+                  borderRadius: 12,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  paddingHorizontal: 14,
+                  backgroundColor: "#2563eb",
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 14,
+                    fontWeight: "700",
+                    color: "white",
+                  }}
+                >
+                  Set
+                </Text>
+              </Pressable>
             </View>
 
             <KeyboardAvoidingView
@@ -1301,707 +1829,370 @@ export default function ComposeScreen() {
                 keyboardShouldPersistTaps="handled"
                 showsVerticalScrollIndicator={false}
                 contentContainerStyle={{
-                  paddingHorizontal: 20,
-                  paddingTop: 20,
-                  paddingBottom: isKeyboardVisible ? 220 : 40,
+                  paddingHorizontal: 16,
+                  paddingTop: 14,
+                  paddingBottom: isKeyboardVisible ? 180 : 24,
                 }}
               >
-
-                  <Text
-                    style={{
-                      fontSize: 13,
-                      fontWeight: "600",
-                      color: "#374151",
-                      marginBottom: 6,
-                    }}
-                  >
-                    Title
-                  </Text>
-
-                  <TextInput
-                    value={title}
-                    onChangeText={setTitle}
-                    placeholder="Entry title"
-                    placeholderTextColor="#9ca3af"
-                    style={{
-                      borderWidth: 1,
-                      borderColor: "#d1d5db",
-                      borderRadius: 12,
-                      paddingHorizontal: 12,
-                      paddingVertical: 12,
-                      fontSize: 15,
-                      color: "black",
-                      marginBottom: 18,
-                      backgroundColor: "white",
-                    }}
-                  />
-
-                  <Text
-                    style={{
-                      fontSize: 13,
-                      fontWeight: "600",
-                      color: "#374151",
-                      marginBottom: 8,
-                    }}
-                  >
-                    Entry Type
-                  </Text>
-
-                   <View
-                    style={{
-                      flexDirection: "row",
-                      flexWrap: "wrap",
-                      gap: 8,
-                      marginBottom: 18,
-                    }}
-                  >
-                    {(
-                      [
-                        { key: "prayer", label: "Prayer" },
-                        { key: "goal", label: "Goal" },
-                        { key: "affirmation", label: "Affirmation" },
-                        { key: "reminder", label: "Reminder" },
-                      ] as const
-                    ).map((option) => (
-                      <Pressable
-                        key={option.key}
-                        onPress={() => setSelectedAIMode(option.key)}
-                        style={{
-                          width: "48%",
-                          paddingVertical: 10,
-                          paddingHorizontal: 12,
-                          borderRadius: 999,
-                          alignItems: "center",
-                          backgroundColor:
-                            selectedAIMode === option.key ? "#2563eb" : "#eef2ff",
-                        }}
-                      >
-                        <Text
-                          style={{
-                            fontSize: 13,
-                            fontWeight: "600",
-                            color: selectedAIMode === option.key ? "white" : "#1e3a8a",
-                            textAlign: "center",
-                          }}
-                        >
-                          {option.label}
-                        </Text>
-                      </Pressable>
-                    ))}
-                  </View>
-
-                  <Text
-                    style={{
-                      fontSize: 13,
-                      fontWeight: "600",
-                      color: "#374151",
-                      marginBottom: 8,
-                    }}
-                  >
-                    Reminder
-                  </Text>
-
+                <View
+                  style={{
+                    backgroundColor: "#f8fafc",
+                    borderRadius: 14,
+                    padding: 12,
+                    marginBottom: 12,
+                    borderWidth: 1,
+                    borderColor: "#e5e7eb",
+                  }}
+                >
                   <View
                     style={{
                       flexDirection: "row",
                       gap: 8,
-                      marginBottom: 18,
-                      flexWrap: "wrap",
                     }}
                   >
-                    {(
-                      [
-                        { key: "none", label: "None" },
-                        { key: "digest", label: "Cadence" },
-                        { key: "custom", label: "Custom" },
-                      ] as const
-                    ).map((option) => (
-                      <Pressable
-                        key={option.key}
-                         onPress={() => {
-                          setSaveScheduleSource(option.key);
-
-                          if (option.key === "none") {
-                            setSelectedSaveCadence("daily");
-                          }
-
-                          if (option.key === "digest") {
-                            setSelectedSaveCadence("daily");
-                          }
-
-                          if (option.key === "custom") {
-                            setCustomScheduleMode("interval");
-                          }
-                        }}
+                    <Pressable
+                      onPress={() => setCustomScheduleMode("fixed_date")}
+                      style={{
+                        flex: 1,
+                        minHeight: 40,
+                        borderRadius: 12,
+                        borderWidth: 1,
+                        borderColor:
+                          customScheduleMode === "fixed_date" ? "#2563eb" : "#d1d5db",
+                        backgroundColor:
+                          customScheduleMode === "fixed_date" ? "#eff6ff" : "white",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        paddingHorizontal: 8,
+                      }}
+                    >
+                      <Text
                         style={{
-                          paddingVertical: 10,
-                          paddingHorizontal: 12,
-                          borderRadius: 12,
-                          backgroundColor:
-                            saveScheduleSource === option.key ? "#2563eb" : "#eef2ff",
+                          fontSize: 14,
+                          fontWeight: "700",
+                          color:
+                            customScheduleMode === "fixed_date" ? "#1d4ed8" : "#374151",
                         }}
                       >
-                        <Text
-                          style={{
-                            fontSize: 13,
-                            fontWeight: "600",
-                            color: saveScheduleSource === option.key ? "white" : "#1e3a8a",
-                          }}
-                        >
-                          {option.label}
-                        </Text>
-                      </Pressable>
-                    ))}
+                        One-time
+                      </Text>
+                    </Pressable>
+
+                    <Pressable
+                      onPress={() => setCustomScheduleMode("interval")}
+                      style={{
+                        flex: 1,
+                        minHeight: 40,
+                        borderRadius: 12,
+                        borderWidth: 1,
+                        borderColor:
+                          customScheduleMode === "interval" ? "#2563eb" : "#d1d5db",
+                        backgroundColor:
+                          customScheduleMode === "interval" ? "#eff6ff" : "white",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        paddingHorizontal: 8,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 14,
+                          fontWeight: "700",
+                          color:
+                            customScheduleMode === "interval" ? "#1d4ed8" : "#374151",
+                        }}
+                      >
+                        Repeating
+                      </Text>
+                    </Pressable>
+                  </View>
+                </View>
+
+                <View
+                  style={{
+                    backgroundColor: "#f8fafc",
+                    borderRadius: 14,
+                    padding: 12,
+                    marginBottom: 12,
+                    borderWidth: 1,
+                    borderColor: "#e5e7eb",
+                  }}
+                >
+                  <View style={{ marginBottom: 10 }}>
+                    <Text
+                      style={{
+                        fontSize: 12,
+                        fontWeight: "700",
+                        color: "#334155",
+                        marginBottom: 6,
+                      }}
+                    >
+                      Date
+                    </Text>
+
+                    <TextInput
+                      value={customDueDate}
+                      onChangeText={setCustomDueDate}
+                      placeholder="YYYY-MM-DD"
+                      placeholderTextColor="#9ca3af"
+                      style={{
+                        borderWidth: 1,
+                        borderColor: "#d1d5db",
+                        borderRadius: 12,
+                        paddingHorizontal: 12,
+                        paddingVertical: 10,
+                        backgroundColor: "white",
+                        color: "black",
+                        fontSize: 14,
+                      }}
+                    />
                   </View>
 
-                  {saveScheduleSource === "digest" ? (
-                    <View
+                  <Text
+                    style={{
+                      fontSize: 14,
+                      fontWeight: "700",
+                      color: "#111827",
+                      marginBottom: 8,
+                    }}
+                  >
+                    Selected: {customTimeHour || "12"}:
+                    {(customTimeMinute || "00").padStart(2, "0")} {customTimePeriod}
+                  </Text>
+
+                  <View style={{ flexDirection: "row", gap: 8, marginBottom: 10 }}>
+                    <TextInput
+                      value={customTimeHour}
+                      onChangeText={(value) => setCustomTimeHour(sanitizeCustomHourInput(value))}
+                      keyboardType="number-pad"
+                      placeholder="12"
+                      placeholderTextColor="#9ca3af"
                       style={{
-                        backgroundColor: "#f8fafc",
-                        borderRadius: 14,
-                        padding: 14,
-                        marginBottom: 20,
+                        flex: 1,
                         borderWidth: 1,
-                        borderColor: "#e5e7eb",
-                        gap: 12,
+                        borderColor: "#d1d5db",
+                        borderRadius: 12,
+                        paddingHorizontal: 12,
+                        paddingVertical: 10,
+                        backgroundColor: "white",
+                        color: "black",
+                        fontSize: 15,
+                        textAlign: "center",
+                      }}
+                    />
+
+                    <TextInput
+                      value={customTimeMinute}
+                      onChangeText={(value) =>
+                        setCustomTimeMinute(sanitizeCustomMinuteInput(value))
+                      }
+                      keyboardType="number-pad"
+                      placeholder="00"
+                      placeholderTextColor="#9ca3af"
+                      style={{
+                        flex: 1,
+                        borderWidth: 1,
+                        borderColor: "#d1d5db",
+                        borderRadius: 12,
+                        paddingHorizontal: 12,
+                        paddingVertical: 10,
+                        backgroundColor: "white",
+                        color: "black",
+                        fontSize: 15,
+                        textAlign: "center",
+                      }}
+                    />
+                  </View>
+
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      backgroundColor: "#e5e7eb",
+                      borderRadius: 12,
+                      padding: 4,
+                    }}
+                  >
+                    <Pressable
+                      onPress={() => setCustomTimePeriod("AM")}
+                      style={{
+                        flex: 1,
+                        paddingVertical: 8,
+                        borderRadius: 9,
+                        alignItems: "center",
+                        backgroundColor: customTimePeriod === "AM" ? "white" : "transparent",
                       }}
                     >
                       <Text
                         style={{
                           fontSize: 13,
-                          fontWeight: "600",
-                          color: "#334155",
+                          fontWeight: "700",
+                          color: customTimePeriod === "AM" ? "#111827" : "#6b7280",
                         }}
                       >
-                        Reminder Assignment
+                        AM
                       </Text>
+                    </Pressable>
 
+                    <Pressable
+                      onPress={() => setCustomTimePeriod("PM")}
+                      style={{
+                        flex: 1,
+                        paddingVertical: 8,
+                        borderRadius: 9,
+                        alignItems: "center",
+                        backgroundColor: customTimePeriod === "PM" ? "white" : "transparent",
+                      }}
+                    >
                       <Text
                         style={{
                           fontSize: 13,
-                          lineHeight: 20,
-                          color: "#475569",
-                          marginBottom: 8,
+                          fontWeight: "700",
+                          color: customTimePeriod === "PM" ? "#111827" : "#6b7280",
                         }}
                       >
-                        {selectedDigestDescription}
+                        PM
                       </Text>
+                    </Pressable>
+                  </View>
+                </View>
 
-                       <View
-                        style={{
-                          flexDirection: "row",
-                          flexWrap: "wrap",
-                          gap: 8,
-                        }}
-                      >
-                        {(["daily", "weekly", "monthly", "quarterly", "yearly"] as const).map(
-                          (cadence) => {
-                            const selected = selectedSaveCadence === cadence;
-                            const isYearly = cadence === "yearly";
+                {customScheduleMode === "interval" ? (
+                  <View
+                    style={{
+                      backgroundColor: "#f8fafc",
+                      borderRadius: 14,
+                      padding: 12,
+                      marginBottom: 12,
+                      borderWidth: 1,
+                      borderColor: "#e5e7eb",
+                    }}
+                  >
+                    <View style={{ flexDirection: "row", gap: 8, alignItems: "flex-start" }}>
+                      <View style={{ width: 92 }}>
+                        <Text
+                          style={{
+                            fontSize: 12,
+                            fontWeight: "600",
+                            color: "#475569",
+                            marginBottom: 6,
+                          }}
+                        >
+                          Every
+                        </Text>
+
+                        <TextInput
+                          value={customIntervalValue}
+                          onChangeText={setCustomIntervalValue}
+                          keyboardType="number-pad"
+                          placeholder="1"
+                          placeholderTextColor="#9ca3af"
+                          style={{
+                            borderWidth: 1,
+                            borderColor: "#d1d5db",
+                            borderRadius: 12,
+                            paddingHorizontal: 12,
+                            paddingVertical: 10,
+                            backgroundColor: "white",
+                            color: "black",
+                            fontSize: 14,
+                            textAlign: "center",
+                          }}
+                        />
+                      </View>
+
+                      <View style={{ flex: 1 }}>
+                        <Text
+                          style={{
+                            fontSize: 12,
+                            fontWeight: "600",
+                            color: "#475569",
+                            marginBottom: 6,
+                          }}
+                        >
+                          Unit
+                        </Text>
+
+                        <View
+                          style={{
+                            flexDirection: "row",
+                            flexWrap: "wrap",
+                            gap: 8,
+                          }}
+                        >
+                          {(["days", "weeks", "months", "years"] as const).map((unit) => {
+                            const selected = customIntervalUnit === unit;
 
                             return (
                               <Pressable
-                                key={cadence}
-                                onPress={() => setSelectedSaveCadence(cadence)}
+                                key={unit}
+                                onPress={() => setCustomIntervalUnit(unit)}
                                 style={{
-                                  width: isYearly ? "100%" : "48%",
+                                  width: "48%",
                                   borderWidth: 1,
                                   borderColor: selected ? "#2563eb" : "#d1d5db",
                                   borderRadius: 12,
-                                  paddingHorizontal: 12,
-                                  paddingVertical: 12,
+                                  paddingVertical: 9,
+                                  paddingHorizontal: 8,
                                   backgroundColor: selected ? "#eff6ff" : "white",
                                   alignItems: "center",
                                 }}
                               >
                                 <Text
                                   style={{
-                                    fontSize: 14,
+                                    fontSize: 13,
                                     fontWeight: "600",
                                     color: selected ? "#1d4ed8" : "#111827",
                                     textTransform: "capitalize",
-                                    textAlign: "center",
                                   }}
                                 >
-                                  {cadence}
-                                </Text>
-                              </Pressable>
-                            );
-                          }
-                        )}
-                      </View>
-                    </View>
-                  ) : null}
-
-                   {saveScheduleSource === "custom" ? (
-                    <View
-                      style={{
-                        backgroundColor: "#f8fafc",
-                        borderRadius: 14,
-                        padding: 14,
-                        marginBottom: 20,
-                        borderWidth: 1,
-                        borderColor: "#e5e7eb",
-                        gap: 12,
-                      }}
-                    >
-
-                       <View
-                        style={{
-                          flexDirection: "row",
-                          gap: 10,
-                          alignItems: "flex-end",
-                        }}
-                      >
-                        <View style={{ flex: 1 }}>
-                          <Text
-                            style={{
-                              fontSize: 12,
-                              fontWeight: "600",
-                              color: "#475569",
-                              marginBottom: 6,
-                            }}
-                          >
-                            Start
-                          </Text>
-
-                          <TextInput
-                            value={customDueDate}
-                            onChangeText={setCustomDueDate}
-                            placeholder="YYYY-MM-DD"
-                            placeholderTextColor="#9ca3af"
-                            style={{
-                              borderWidth: 1,
-                              borderColor: "#d1d5db",
-                              borderRadius: 12,
-                              paddingHorizontal: 12,
-                              paddingVertical: 12,
-                              backgroundColor: "white",
-                              color: "black",
-                              fontSize: 14,
-                            }}
-                          />
-                        </View>
-
-                        <View style={{ width: 132 }}>
-                          <Text
-                            style={{
-                              fontSize: 12,
-                              fontWeight: "600",
-                              color: "#475569",
-                              marginBottom: 6,
-                            }}
-                          >
-                            Time
-                          </Text>
-
-                          <Pressable
-                            onPress={openCustomTimeEditor}
-                            style={{
-                              borderWidth: 1,
-                              borderColor: "#d1d5db",
-                              borderRadius: 12,
-                              paddingHorizontal: 12,
-                              paddingVertical: 12,
-                              backgroundColor: "white",
-                              flexDirection: "row",
-                              alignItems: "center",
-                              justifyContent: "space-between",
-                            }}
-                          >
-                            <Text
-                              style={{
-                                fontSize: 14,
-                                fontWeight: "600",
-                                color: "#111827",
-                              }}
-                            >
-                              {formatDisplayTime(`${customScheduleTime}:00`)}
-                            </Text>
-
-                            <Text
-                              style={{
-                                fontSize: 14,
-                                fontWeight: "700",
-                                color: "#6b7280",
-                                marginLeft: 6,
-                              }}
-                            >
-                              ›
-                            </Text>
-                          </Pressable>
-                        </View>
-                      </View>
-  
-                       <View style={{ flexDirection: "row", gap: 10, alignItems: "flex-start" }}>
-                        <View style={{ width: 108 }}>
-                          <Text
-                            style={{
-                              fontSize: 12,
-                              fontWeight: "600",
-                              color: "#475569",
-                              marginBottom: 6,
-                            }}
-                          >
-                            Repeats every
-                          </Text>
-
-                          <TextInput
-                            value={customIntervalValue}
-                            onChangeText={setCustomIntervalValue}
-                            keyboardType="number-pad"
-                            placeholder="1"
-                            placeholderTextColor="#9ca3af"
-                            style={{
-                              borderWidth: 1,
-                              borderColor: "#d1d5db",
-                              borderRadius: 12,
-                              paddingHorizontal: 12,
-                              paddingVertical: 10,
-                              backgroundColor: "white",
-                              color: "black",
-                              fontSize: 14,
-                              textAlign: "center",
-                            }}
-                          />
-                        </View>
-
-                        <View style={{ flex: 1 }}>
-                          <Text
-                            style={{
-                              fontSize: 12,
-                              fontWeight: "600",
-                              color: "#475569",
-                              marginBottom: 6,
-                            }}
-                          >
-                            Unit
-                          </Text>
-
-                          <View
-                            style={{
-                              flexDirection: "row",
-                              flexWrap: "wrap",
-                              gap: 8,
-                            }}
-                          >
-                            {(["days", "weeks", "months", "years"] as const).map((unit) => {
-                              const selected = customIntervalUnit === unit;
-
-                              return (
-                                <Pressable
-                                  key={unit}
-                                  onPress={() => setCustomIntervalUnit(unit)}
-                                  style={{
-                                    width: "48%",
-                                    borderWidth: 1,
-                                    borderColor: selected ? "#2563eb" : "#d1d5db",
-                                    borderRadius: 12,
-                                    paddingVertical: 10,
-                                    paddingHorizontal: 8,
-                                    backgroundColor: selected ? "#eff6ff" : "white",
-                                    alignItems: "center",
-                                  }}
-                                >
-                                  <Text
-                                    style={{
-                                      fontSize: 13,
-                                      fontWeight: "600",
-                                      color: selected ? "#1d4ed8" : "#111827",
-                                      textTransform: "capitalize",
-                                    }}
-                                  >
-                                    {unit}
-                                  </Text>
-                                </Pressable>
-                              );
-                            })}
-                          </View>
-                        </View>
-                      </View>
-                    </View>
-                  ) : null}
-
-                  <Modal visible={showCustomTimeModal} transparent animationType="slide">
-                    <Pressable
-                      onPress={() => setShowCustomTimeModal(false)}
-                      style={{
-                        flex: 1,
-                        backgroundColor: "rgba(0,0,0,0.25)",
-                        justifyContent: "flex-end",
-                      }}
-                    >
-                      <Pressable
-                        onPress={() => {}}
-                        style={{
-                          backgroundColor: "white",
-                          borderTopLeftRadius: 20,
-                          borderTopRightRadius: 20,
-                          paddingTop: 20,
-                          paddingHorizontal: 20,
-                          paddingBottom: 18,
-                          maxHeight: "82%",
-                        }}
-                      >
-                        <Text
-                          style={{
-                            fontSize: 22,
-                            fontWeight: "700",
-                            color: "#111827",
-                            marginBottom: 8,
-                          }}
-                        >
-                          Enter Custom Time
-                        </Text>
-
-                        <View
-                          style={{
-                            borderWidth: 1,
-                            borderColor: "#d1d5db",
-                            borderRadius: 14,
-                            padding: 12,
-                            backgroundColor: "#f8fafc",
-                            marginBottom: 14,
-                          }}
-                        >
-                          <Text
-                            style={{
-                              fontSize: 15,
-                              fontWeight: "700",
-                              color: "#111827",
-                              marginBottom: 12,
-                            }}
-                          >
-                            Selected: {draftCustomTimeHour || "12"}:
-                            {(draftCustomTimeMinute || "00").padStart(2, "0")} {customTimePeriod}
-                          </Text>
-
-                          <View style={{ flexDirection: "row", gap: 10, marginBottom: 12 }}>
-                            <TextInput
-                              value={draftCustomTimeHour}
-                              onChangeText={(value) =>
-                                setDraftCustomTimeHour(value.replace(/\D/g, "").slice(0, 2))
-                              }
-                              keyboardType="number-pad"
-                              placeholder="12"
-                              placeholderTextColor="#9ca3af"
-                              style={{
-                                flex: 1,
-                                borderWidth: 1,
-                                borderColor: "#d1d5db",
-                                borderRadius: 12,
-                                paddingHorizontal: 12,
-                                paddingVertical: 12,
-                                backgroundColor: "white",
-                                color: "black",
-                                fontSize: 15,
-                                textAlign: "center",
-                              }}
-                            />
-
-                            <TextInput
-                              value={draftCustomTimeMinute}
-                              onChangeText={(value) =>
-                                setDraftCustomTimeMinute(value.replace(/\D/g, "").slice(0, 2))
-                              }
-                              keyboardType="number-pad"
-                              placeholder="00"
-                              placeholderTextColor="#9ca3af"
-                              style={{
-                                flex: 1,
-                                borderWidth: 1,
-                                borderColor: "#d1d5db",
-                                borderRadius: 12,
-                                paddingHorizontal: 12,
-                                paddingVertical: 12,
-                                backgroundColor: "white",
-                                color: "black",
-                                fontSize: 15,
-                                textAlign: "center",
-                              }}
-                            />
-                          </View>
-
-                          <View
-                            style={{
-                              flexDirection: "row",
-                              backgroundColor: "#e5e7eb",
-                              borderRadius: 12,
-                              padding: 4,
-                            }}
-                          >
-                            <Pressable
-                              onPress={() => setCustomTimePeriod("AM")}
-                              style={{
-                                flex: 1,
-                                paddingVertical: 9,
-                                borderRadius: 9,
-                                alignItems: "center",
-                                backgroundColor:
-                                  customTimePeriod === "AM" ? "white" : "transparent",
-                              }}
-                            >
-                              <Text
-                                style={{
-                                  fontSize: 13,
-                                  fontWeight: "700",
-                                  color: customTimePeriod === "AM" ? "#111827" : "#6b7280",
-                                }}
-                              >
-                                AM
-                              </Text>
-                            </Pressable>
-
-                            <Pressable
-                              onPress={() => setCustomTimePeriod("PM")}
-                              style={{
-                                flex: 1,
-                                paddingVertical: 9,
-                                borderRadius: 9,
-                                alignItems: "center",
-                                backgroundColor:
-                                  customTimePeriod === "PM" ? "white" : "transparent",
-                              }}
-                            >
-                              <Text
-                                style={{
-                                  fontSize: 13,
-                                  fontWeight: "700",
-                                  color: customTimePeriod === "PM" ? "#111827" : "#6b7280",
-                                }}
-                              >
-                                PM
-                              </Text>
-                            </Pressable>
-                          </View>
-                        </View>
-                                               <View
-                          style={{
-                            flexDirection: "row",
-                            gap: 10,
-                            marginTop: 4,
-                          }}
-                        >
-                          <Pressable
-                            onPress={() => setShowCustomTimeModal(false)}
-                            style={{
-                              flex: 1,
-                              paddingVertical: 13,
-                              borderRadius: 12,
-                              backgroundColor: "#f3f4f6",
-                              alignItems: "center",
-                            }}
-                          >
-                            <Text
-                              style={{
-                                fontSize: 14,
-                                fontWeight: "600",
-                                color: "#374151",
-                              }}
-                            >
-                              Cancel
-                            </Text>
-                          </Pressable>
-
-                          <Pressable
-                            onPress={() => {
-                              const parsedHour = Math.min(12, Math.max(1, Number(draftCustomTimeHour || "12")));
-                              const normalizedHour = String(parsedHour);
-
-                              const parsedMinute = Math.min(59, Math.max(0, Number(draftCustomTimeMinute || "0")));
-                              const normalizedMinute = String(parsedMinute).padStart(2, "0");
-
-                              setCustomTimeHour(normalizedHour);
-                              setCustomTimeMinute(normalizedMinute);
-                              setDraftCustomTimeHour(normalizedHour);
-                              setDraftCustomTimeMinute(normalizedMinute);
-                              setCustomScheduleTime(
-                                build24HourTime(normalizedHour, normalizedMinute, customTimePeriod)
-                              );
-                              setShowCustomTimeModal(false);
-                            }}
-                            style={{
-                              flex: 1,
-                              paddingVertical: 13,
-                              borderRadius: 12,
-                              backgroundColor: "#2563eb",
-                              alignItems: "center",
-                            }}
-                          >
-                            <Text
-                              style={{
-                                fontSize: 14,
-                                fontWeight: "700",
-                                color: "white",
-                              }}
-                            >
-                              OK
-                            </Text>
-                          </Pressable>
-                        </View>
-
-                        <Text
-                          style={{
-                            fontSize: 13,
-                            fontWeight: "600",
-                            color: "#475569",
-                            marginBottom: 8,
-                            marginTop: 36,
-                          }}
-                        >
-                          Quick pick
-                        </Text>
-
-                        <ScrollView
-                          showsVerticalScrollIndicator={false}
-                          contentContainerStyle={{
-                            paddingBottom: 12,
-                            gap: 8,
-                          }}
-                          style={{ maxHeight: 280, marginBottom: 36 }}
-                        >
-                          {Array.from({ length: 48 }, (_, index) => {
-                            const hour = Math.floor(index / 4) === 0 ? 12 : Math.floor(index / 4);
-                            const minute = (index % 4) * 15;
-                            const minuteText = String(minute).padStart(2, "0");
-                            const selected =
-                              draftCustomTimeHour === String(hour) &&
-                              draftCustomTimeMinute === minuteText;
-
-                            return (
-                              <Pressable
-                                key={`${hour}:${minuteText}`}
-                                onPress={() => {
-                                  setDraftCustomTimeHour(String(hour));
-                                  setDraftCustomTimeMinute(minuteText);
-                                }}
-                                style={{
-                                  borderWidth: 1,
-                                  borderColor: selected ? "#2563eb" : "#d1d5db",
-                                  borderRadius: 12,
-                                  paddingVertical: 12,
-                                  paddingHorizontal: 14,
-                                  backgroundColor: selected ? "#eff6ff" : "white",
-                                }}
-                              >
-                                <Text
-                                  style={{
-                                    fontSize: 14,
-                                    fontWeight: "600",
-                                    color: selected ? "#1d4ed8" : "#111827",
-                                  }}
-                                >
-                                  {hour}:{minuteText} {customTimePeriod}
+                                  {unit}
                                 </Text>
                               </Pressable>
                             );
                           })}
-                        </ScrollView>
-                      </Pressable>
-                    </Pressable>
-                  </Modal>
+                        </View>
+                      </View>
+                    </View>
+                  </View>
+                ) : null}
 
-                 </ScrollView>
+                <View
+                  style={{
+                    backgroundColor: "#f8fafc",
+                    borderRadius: 14,
+                    padding: 12,
+                    borderWidth: 1,
+                    borderColor: "#e5e7eb",
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 12,
+                      fontWeight: "700",
+                      color: "#334155",
+                      marginBottom: 4,
+                    }}
+                  >
+                    Summary
+                  </Text>
+
+                  <Text
+                    style={{
+                      fontSize: 12,
+                      lineHeight: 18,
+                      color: "#475569",
+                    }}
+                  >
+                    {getCustomScheduleSummary(
+                      customScheduleMode,
+                      customScheduleTime,
+                      customDueDate,
+                      customIntervalValue,
+                      customIntervalUnit
+                    )}
+                  </Text>
+                </View>
+              </ScrollView>
             </KeyboardAvoidingView>
           </SafeAreaView>
         </Modal>

@@ -196,13 +196,13 @@ function isEntryCurrentlyHandled(
     const schedule = schedules.find((item) => item.cadence === entry.digest_assignment) ?? null;
     if (!schedule || !entry.last_completed_due_at) return false;
 
-    const nextOccurrence = getNextCadenceOccurrence(
+    const currentOccurrence = getCurrentCadenceOccurrence(
       schedule.anchor_date,
       schedule.time_of_day,
       schedule.cadence
     );
 
-    return new Date(entry.last_completed_due_at).getTime() < nextOccurrence.getTime();
+    return new Date(entry.last_completed_due_at).getTime() >= currentOccurrence.getTime();
   }
 
   if (
@@ -212,7 +212,7 @@ function isEntryCurrentlyHandled(
     entry.schedule_mode === "holiday"
   ) {
     if (!entry.last_completed_due_at || !entry.next_due_at) return false;
-    return new Date(entry.last_completed_due_at).getTime() < new Date(entry.next_due_at).getTime();
+    return Date.now() < new Date(entry.next_due_at).getTime();
   }
 
   if (entry.schedule_mode === "fixed_date") {
@@ -588,30 +588,6 @@ function addYears(date: Date, years: number) {
   return next;
 }
 
-function getNextCadenceOccurrence(anchorDate: string, timeOfDay: string, cadence: ReminderScheduleRow["cadence"]) {
-  const [year, month, day] = anchorDate.split("-").map(Number);
-  const [hour, minute] = timeOfDay.split(":").map(Number);
-
-  let cursor = new Date(year, month - 1, day, hour, minute, 0, 0);
-  const now = new Date();
-
-  while (cursor <= now) {
-    if (cadence === "daily") {
-      cursor = addDays(cursor, 1);
-    } else if (cadence === "weekly") {
-      cursor = addDays(cursor, 7);
-    } else if (cadence === "monthly") {
-      cursor = addMonths(cursor, 1);
-    } else if (cadence === "quarterly") {
-      cursor = addMonths(cursor, 3);
-    } else {
-      cursor = addYears(cursor, 1);
-    }
-  }
-
-  return cursor;
-}
-
 function getHandledInlineSummary(entry: UpcomingEntry) {
   const handledDate = entry.last_completed_at_date
     ? entry.last_completed_at_date.toLocaleDateString([], {
@@ -692,6 +668,64 @@ function getEntryModalMeta(entry: UpcomingEntry) {
   }
 
   return "No schedule";
+}
+
+function getNextCadenceOccurrence(anchorDate: string, timeOfDay: string, cadence: ReminderScheduleRow["cadence"]) {
+  const [year, month, day] = anchorDate.split("-").map(Number);
+  const [hour, minute] = timeOfDay.split(":").map(Number);
+
+  let cursor = new Date(year, month - 1, day, hour, minute, 0, 0);
+  const now = new Date();
+
+  while (cursor <= now) {
+    if (cadence === "daily") {
+      cursor = addDays(cursor, 1);
+    } else if (cadence === "weekly") {
+      cursor = addDays(cursor, 7);
+    } else if (cadence === "monthly") {
+      cursor = addMonths(cursor, 1);
+    } else if (cadence === "quarterly") {
+      cursor = addMonths(cursor, 3);
+    } else {
+      cursor = addYears(cursor, 1);
+    }
+  }
+
+  return cursor;
+}
+
+function getCurrentCadenceOccurrence(
+  anchorDate: string,
+  timeOfDay: string,
+  cadence: ReminderScheduleRow["cadence"]
+) {
+  const [year, month, day] = anchorDate.split("-").map(Number);
+  const [hour, minute] = timeOfDay.split(":").map(Number);
+
+  let cursor = new Date(year, month - 1, day, hour, minute, 0, 0);
+  const now = new Date();
+
+  while (true) {
+    let nextCursor: Date;
+
+    if (cadence === "daily") {
+      nextCursor = addDays(cursor, 1);
+    } else if (cadence === "weekly") {
+      nextCursor = addDays(cursor, 7);
+    } else if (cadence === "monthly") {
+      nextCursor = addMonths(cursor, 1);
+    } else if (cadence === "quarterly") {
+      nextCursor = addMonths(cursor, 3);
+    } else {
+      nextCursor = addYears(cursor, 1);
+    }
+
+    if (nextCursor > now) {
+      return cursor;
+    }
+
+    cursor = nextCursor;
+  }
 }
 
 export default function RemindersScreen() {
@@ -1021,10 +1055,27 @@ export default function RemindersScreen() {
         return;
       }
 
+       let completedDueAt: string | null = entry.next_run_at
+        ? entry.next_run_at.toISOString()
+        : null;
+
+      if (!completedDueAt && entry.digest_assignment !== "none") {
+        const schedule =
+          reminderSchedules.find((item) => item.cadence === entry.digest_assignment) ?? null;
+
+        if (schedule) {
+          completedDueAt = getCurrentCadenceOccurrence(
+            schedule.anchor_date,
+            schedule.time_of_day,
+            schedule.cadence
+          ).toISOString();
+        }
+      }
+
       const { data, error } = await supabase.rpc("complete_entry_cycle", {
         p_entry_id: entry.id,
         p_user_id: user.id,
-        p_completed_due_at: entry.next_run_at ? entry.next_run_at.toISOString() : null,
+        p_completed_due_at: completedDueAt,
       });
 
       if (error) {
@@ -1202,41 +1253,8 @@ export default function RemindersScreen() {
       };
     });
 
-    function isCurrentlyHandled(entry: UpcomingEntry) {
-      if (!entry.last_completed_at_date) return false;
-
-      if (entry.digest_assignment === "none" && entry.schedule_mode === "none") {
-        return true;
-      }
-
-      if (entry.digest_assignment !== "none") {
-        const schedule = cadenceScheduleMap.get(entry.digest_assignment);
-        if (!schedule || !entry.last_completed_due_at_date) return false;
-
-        const nextOccurrence = getNextCadenceOccurrence(
-          schedule.anchor_date,
-          schedule.time_of_day,
-          schedule.cadence
-        );
-
-        return entry.last_completed_due_at_date.getTime() < nextOccurrence.getTime();
-      }
-
-      if (
-        entry.schedule_mode === "daily_time" ||
-        entry.schedule_mode === "interval" ||
-        entry.schedule_mode === "annual_date" ||
-        entry.schedule_mode === "holiday"
-      ) {
-        if (!entry.last_completed_due_at_date || !entry.next_run_at) return false;
-        return entry.last_completed_due_at_date.getTime() < entry.next_run_at.getTime();
-      }
-
-      if (entry.schedule_mode === "fixed_date") {
-        return true;
-      }
-
-      return false;
+     function isCurrentlyHandled(entry: UpcomingEntry) {
+      return isEntryCurrentlyHandled(entry, reminderSchedules);
     }
 
     const activeOnlyEntries = mappedEntries.filter((entry) => !isCurrentlyHandled(entry));
@@ -1353,41 +1371,8 @@ export default function RemindersScreen() {
       reminderSchedules.map((item) => [item.cadence, item] as const)
     );
 
-    function isCurrentlyHandled(entry: Entry) {
-      if (!entry.last_completed_at) return false;
-
-      if (entry.digest_assignment === "none" && entry.schedule_mode === "none") {
-        return true;
-      }
-
-      if (entry.digest_assignment !== "none") {
-        const schedule = cadenceScheduleMap.get(entry.digest_assignment);
-        if (!schedule || !entry.last_completed_due_at) return false;
-
-        const nextOccurrence = getNextCadenceOccurrence(
-          schedule.anchor_date,
-          schedule.time_of_day,
-          schedule.cadence
-        );
-
-        return new Date(entry.last_completed_due_at).getTime() < nextOccurrence.getTime();
-      }
-
-      if (
-        entry.schedule_mode === "daily_time" ||
-        entry.schedule_mode === "interval" ||
-        entry.schedule_mode === "annual_date" ||
-        entry.schedule_mode === "holiday"
-      ) {
-        if (!entry.last_completed_due_at || !entry.next_due_at) return false;
-        return new Date(entry.last_completed_due_at).getTime() < new Date(entry.next_due_at).getTime();
-      }
-
-      if (entry.schedule_mode === "fixed_date") {
-        return true;
-      }
-
-      return false;
+     function isCurrentlyHandled(entry: Entry) {
+      return isEntryCurrentlyHandled(entry, reminderSchedules);
     }
 
     const allGroups: EntryGroupKey[] = [
@@ -1819,7 +1804,7 @@ export default function RemindersScreen() {
                     borderRadius: 18,
                     backgroundColor: "rgba(255,255,255,0.96)",
                     borderWidth: 1,
-                    borderColor: "rgba(255,255,255,0.95)",
+                    borderColor: "rgba(107,114,128,0.38)",
                     alignItems: "center",
                   }}
                 >
@@ -2003,7 +1988,7 @@ export default function RemindersScreen() {
                                     paddingVertical: 28,
                                     paddingHorizontal: 22,
                                     borderWidth: 1,
-                                    borderColor: "rgba(255,255,255,0.95)",
+                                    borderColor: "rgba(107,114,128,0.38)",
                                     shadowColor: "#000",
                                     shadowOpacity: 0.08,
                                     shadowRadius: 18,
@@ -2062,7 +2047,7 @@ export default function RemindersScreen() {
                                 right: 0,
                                 bottom: 0,
                                 paddingHorizontal: 18,
-                                paddingTop: 14,
+                                paddingTop: 12,
                                 paddingBottom: 20,
                                 backgroundColor: "rgba(255,255,255,0.82)",
                                 borderTopWidth: 1,
@@ -2072,9 +2057,116 @@ export default function RemindersScreen() {
                               <View
                                 style={{
                                   flexDirection: "row",
-                                  alignItems: "flex-start",
-                                  justifyContent: "space-between",
-                                  gap: 6,
+                                  alignItems: "stretch",
+                                  gap: 8,
+                                  marginBottom: 8,
+                                }}
+                              >
+                                <Pressable
+                                  onPress={() => {
+                                    if (!selectedEntry) return;
+                                    setShowEntryModal(false);
+                                    router.push({
+                                      pathname: "/compose",
+                                      params: {
+                                        mode: "edit",
+                                        entryId: selectedEntry.id,
+                                        returnTo: "reminders",
+                                        reminderEntryId: selectedEntry.id,
+                                      },
+                                    });
+                                  }}
+                                  hitSlop={10}
+                                  style={{
+                                    flex: 1,
+                                    minHeight: 48,
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    borderRadius: 12,
+                                    borderWidth: 1,
+                                    borderColor: "rgba(107,114,128,0.38)",
+                                    backgroundColor: "rgba(255,255,255,0.62)",
+                                    paddingHorizontal: 8,
+                                  }}
+                                >
+                                  <Text
+                                    style={{
+                                      color: "#374151",
+                                      fontSize: 14,
+                                      fontWeight: "700",
+                                      textAlign: "center",
+                                    }}
+                                  >
+                                    Edit
+                                  </Text>
+                                </Pressable>
+
+                                <Pressable
+                                  onPress={() => {
+                                    if (!selectedEntry) return;
+                                    confirmArchiveEntry(selectedEntry.id);
+                                  }}
+                                  hitSlop={10}
+                                  style={{
+                                    flex: 1,
+                                    minHeight: 48,
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    borderRadius: 12,
+                                    borderWidth: 1,
+                                    borderColor: "rgba(107,114,128,0.38)",
+                                    backgroundColor: "rgba(255,255,255,0.62)",
+                                    paddingHorizontal: 8,
+                                  }}
+                                >
+                                  <Text
+                                    style={{
+                                      color: "#374151",
+                                      fontSize: 14,
+                                      fontWeight: "700",
+                                      textAlign: "center",
+                                    }}
+                                  >
+                                    Archive
+                                  </Text>
+                                </Pressable>
+
+                                <Pressable
+                                  onPress={() => {
+                                    if (!selectedEntry) return;
+                                    confirmDeleteEntry(selectedEntry.id);
+                                  }}
+                                  hitSlop={10}
+                                  style={{
+                                    flex: 1,
+                                    minHeight: 48,
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    borderRadius: 12,
+                                    borderWidth: 1,
+                                    borderColor: "rgba(107,114,128,0.38)",
+                                    backgroundColor: "rgba(255,255,255,0.62)",
+                                    paddingHorizontal: 8,
+                                  }}
+                                >
+                                  <Text
+                                    style={{
+                                      color: "#7f1d1d",
+                                      fontSize: 14,
+                                      fontWeight: "700",
+                                      textAlign: "center",
+                                    }}
+                                  >
+                                    Delete
+                                  </Text>
+                                </Pressable>
+                              </View>
+
+                              <View
+                                style={{
+                                  flexDirection: "row",
+                                  alignItems: "stretch",
+                                  gap: 8,
                                 }}
                               >
                                 <Pressable
@@ -2085,18 +2177,22 @@ export default function RemindersScreen() {
                                   hitSlop={10}
                                   style={{
                                     flex: 1,
-                                    paddingVertical: 6,
-                                    paddingHorizontal: 4,
+                                    minHeight: 54,
                                     alignItems: "center",
+                                    justifyContent: "center",
+                                    borderRadius: 12,
+                                    borderWidth: 1,
+                                    borderColor: "rgba(107,114,128,0.38)",
+                                    backgroundColor: "rgba(255,255,255,0.62)",
+                                    paddingHorizontal: 10,
                                   }}
                                 >
                                   <Text
                                     style={{
                                       color: "#374151",
-                                      fontSize: 12,
+                                      fontSize: 15,
                                       fontWeight: "700",
                                       textAlign: "center",
-                                      lineHeight: 16,
                                     }}
                                   >
                                     Return
@@ -2118,108 +2214,26 @@ export default function RemindersScreen() {
                                   hitSlop={10}
                                   style={{
                                     flex: 1,
-                                    paddingVertical: 6,
-                                    paddingHorizontal: 4,
+                                    minHeight: 54,
                                     alignItems: "center",
+                                    justifyContent: "center",
+                                    borderRadius: 12,
+                                    borderWidth: 1,
+                                    borderColor: "rgba(107,114,128,0.38)",
+                                    backgroundColor: "rgba(255,255,255,0.62)",
+                                    paddingHorizontal: 10,
                                   }}
                                 >
                                   <Text
                                     style={{
                                       color: "#166534",
-                                      fontSize: 12,
+                                      fontSize: 15,
                                       fontWeight: "700",
                                       textAlign: "center",
-                                      lineHeight: 16,
+                                      lineHeight: 19,
                                     }}
                                   >
                                     {selectedEntryIsHandled ? "Undo Handled" : "Mark Handled"}
-                                  </Text>
-                                </Pressable>
-
-                                <Pressable
-                                  onPress={() => {
-                                    if (!selectedEntry) return;
-                                    setShowEntryModal(false);
-                                    router.push({
-                                      pathname: "/compose",
-                                      params: {
-                                        mode: "edit",
-                                        entryId: selectedEntry.id,
-                                        returnTo: "reminders",
-                                        reminderEntryId: selectedEntry.id,
-                                      },
-                                    });
-                                  }}
-                                  hitSlop={10}
-                                  style={{
-                                    flex: 1,
-                                    paddingVertical: 6,
-                                    paddingHorizontal: 4,
-                                    alignItems: "center",
-                                  }}
-                                >
-                                  <Text
-                                    style={{
-                                      color: "#374151",
-                                      fontSize: 12,
-                                      fontWeight: "700",
-                                      textAlign: "center",
-                                      lineHeight: 16,
-                                    }}
-                                  >
-                                    Edit
-                                  </Text>
-                                </Pressable>
-
-                                <Pressable
-                                  onPress={() => {
-                                    if (!selectedEntry) return;
-                                    confirmArchiveEntry(selectedEntry.id);
-                                  }}
-                                  hitSlop={10}
-                                  style={{
-                                    flex: 1,
-                                    paddingVertical: 6,
-                                    paddingHorizontal: 4,
-                                    alignItems: "center",
-                                  }}
-                                >
-                                  <Text
-                                    style={{
-                                      color: "#374151",
-                                      fontSize: 12,
-                                      fontWeight: "700",
-                                      textAlign: "center",
-                                      lineHeight: 16,
-                                    }}
-                                  >
-                                    Archive
-                                  </Text>
-                                </Pressable>
-
-                                <Pressable
-                                  onPress={() => {
-                                    if (!selectedEntry) return;
-                                    confirmDeleteEntry(selectedEntry.id);
-                                  }}
-                                  hitSlop={10}
-                                  style={{
-                                    flex: 1,
-                                    paddingVertical: 6,
-                                    paddingHorizontal: 4,
-                                    alignItems: "center",
-                                  }}
-                                >
-                                  <Text
-                                    style={{
-                                      color: "#7f1d1d",
-                                      fontSize: 12,
-                                      fontWeight: "700",
-                                      textAlign: "center",
-                                      lineHeight: 16,
-                                    }}
-                                  >
-                                    Delete
                                   </Text>
                                 </Pressable>
                               </View>

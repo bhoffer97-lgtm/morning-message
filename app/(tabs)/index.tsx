@@ -75,6 +75,13 @@ type DisplayEntry = Entry & {
   surface_label: string;
 };
 
+type ReminderScheduleRow = {
+  cadence: "daily" | "weekly" | "monthly" | "quarterly" | "yearly";
+  is_enabled: boolean;
+  anchor_date: string;
+  time_of_day: string;
+};
+
 function formatLocalDate(date: Date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -156,48 +163,134 @@ function getRepeatUnitLabel(unit?: string | null, value?: number | null) {
   return unit.toLowerCase();
 }
 
-function getEntryMetaLines(entry: DisplayEntry) {
+function formatDateTimeLine(date: Date | null) {
+  if (!date) return "";
+
+  const dateText = date.toLocaleDateString([], {
+    month: "numeric",
+    day: "numeric",
+    year: "2-digit",
+  });
+
+  const timeText = date.toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+
+  return `${dateText} at ${timeText}`;
+}
+
+function getCadenceSchedule(
+  entry: DisplayEntry,
+  schedules: ReminderScheduleRow[]
+) {
+  if (entry.digest_assignment === "none") return null;
+  return schedules.find((item) => item.cadence === entry.digest_assignment) ?? null;
+}
+
+function isEntryCurrentlyHandled(
+  entry: Entry | DisplayEntry,
+  schedules: ReminderScheduleRow[]
+) {
+  if (!entry.last_completed_at) return false;
+
+  if (entry.digest_assignment === "none" && entry.schedule_mode === "none") {
+    return false;
+  }
+
+  if (entry.digest_assignment !== "none") {
+    const schedule = schedules.find((item) => item.cadence === entry.digest_assignment) ?? null;
+    if (!schedule || !entry.last_completed_due_at) return false;
+
+    const nextOccurrence = getNextCadenceOccurrence(
+      schedule.anchor_date,
+      schedule.time_of_day,
+      schedule.cadence
+    );
+
+    return new Date(entry.last_completed_due_at).getTime() < nextOccurrence.getTime();
+  }
+
+  if (
+    entry.schedule_mode === "daily_time" ||
+    entry.schedule_mode === "interval" ||
+    entry.schedule_mode === "annual_date" ||
+    entry.schedule_mode === "holiday"
+  ) {
+    if (!entry.last_completed_due_at || !entry.next_due_at) return false;
+    return new Date(entry.last_completed_due_at).getTime() < new Date(entry.next_due_at).getTime();
+  }
+
+  if (entry.schedule_mode === "fixed_date") {
+    return !!entry.last_completed_at;
+  }
+
+  return false;
+}
+
+function getEntryMetaLines(entry: DisplayEntry, schedules: ReminderScheduleRow[]) {
   const lines: string[] = [];
   const createdDate = entry.created_at ? formatShortDateOnly(entry.created_at) : "";
-  const nextRunLine = entry.next_run_at
-    ? `${formatShortDateOnly(entry.next_run_at)} at ${entry.next_run_at.toLocaleTimeString([], {
-        hour: "numeric",
-        minute: "2-digit",
-      })}`
+  const cadenceSchedule = getCadenceSchedule(entry, schedules);
+  const cadenceTime = cadenceSchedule ? formatTimeLabel(cadenceSchedule.time_of_day) : "";
+  const nextRunLine = formatDateTimeLine(entry.next_run_at);
+
+  const cadenceAnchorDate = cadenceSchedule?.anchor_date
+    ? formatShortDateOnly(`${cadenceSchedule.anchor_date}T00:00:00`)
     : "";
 
+  const cadenceDateTimeLine = cadenceAnchorDate
+    ? `${cadenceAnchorDate}${cadenceTime ? ` at ${cadenceTime}` : ""}`
+    : nextRunLine;
+
   if (entry.digest_assignment === "daily") {
-    lines.push(`Daily Reminder · ${formatTimeLabel(entry.due_time)}`);
+    lines.push(cadenceTime ? `Daily Reminder · ${cadenceTime}` : "Daily Reminder");
     return lines;
   }
 
   if (entry.digest_assignment === "weekly") {
-    const weekday = entry.anchor_date
-      ? new Date(`${entry.anchor_date}T00:00:00`).toLocaleDateString([], {
+    const weekday = cadenceSchedule?.anchor_date
+      ? new Date(`${cadenceSchedule.anchor_date}T00:00:00`).toLocaleDateString([], {
           weekday: "long",
         })
       : "Sunday";
 
-    lines.push(`Weekly Reminder · ${weekday} at ${formatTimeLabel(entry.due_time)}`);
+    lines.push(
+      cadenceTime
+        ? `Weekly Reminder · ${weekday} at ${cadenceTime}`
+        : `Weekly Reminder · ${weekday}`
+    );
     return lines;
   }
 
   if (entry.digest_assignment === "monthly") {
-    const dayOfMonth = entry.anchor_date
-      ? new Date(`${entry.anchor_date}T00:00:00`).getDate()
+    const dayOfMonth = cadenceSchedule?.anchor_date
+      ? new Date(`${cadenceSchedule.anchor_date}T00:00:00`).getDate()
       : 1;
 
-    lines.push(`Monthly Reminder · ${getOrdinal(dayOfMonth)} at ${formatTimeLabel(entry.due_time)}`);
+    lines.push(
+      cadenceTime
+        ? `Monthly Reminder · ${getOrdinal(dayOfMonth)} at ${cadenceTime}`
+        : `Monthly Reminder · ${getOrdinal(dayOfMonth)}`
+    );
     return lines;
   }
 
   if (entry.digest_assignment === "quarterly") {
-    lines.push(`Quarterly Reminder · ${nextRunLine}`);
+    lines.push(
+      cadenceDateTimeLine
+        ? `Quarterly Reminder · ${cadenceDateTimeLine}`
+        : "Quarterly Reminder"
+    );
     return lines;
   }
 
   if (entry.digest_assignment === "yearly") {
-    lines.push(`Yearly Reminder · ${nextRunLine}`);
+    lines.push(
+      cadenceDateTimeLine
+        ? `Yearly Reminder · ${cadenceDateTimeLine}`
+        : "Yearly Reminder"
+    );
     return lines;
   }
 
@@ -206,7 +299,7 @@ function getEntryMetaLines(entry: DisplayEntry) {
     entry.schedule_mode === "daily_time" ||
     entry.schedule_mode === "annual_date"
   ) {
-    lines.push(`Custom Reminder · ${nextRunLine}`);
+    lines.push(nextRunLine ? `Custom Reminder · ${nextRunLine}` : "Custom Reminder");
 
     if (entry.schedule_mode === "daily_time") {
       lines.push("Repeats every day");
@@ -231,7 +324,7 @@ function getEntryMetaLines(entry: DisplayEntry) {
         }`
       : nextRunLine;
 
-    lines.push(`Custom Reminder · ${dueDate}`);
+    lines.push(dueDate ? `Custom Reminder · ${dueDate}` : "Custom Reminder");
     lines.push(`Handled: ${entry.last_completed_at ? "Yes" : "Not Yet"}`);
     return lines;
   }
@@ -508,6 +601,62 @@ function getEntryModalMeta(entry: DisplayEntry) {
   return "No schedule";
 }
 
+function addDays(date: Date, days: number) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function addMonths(date: Date, months: number) {
+  const next = new Date(date);
+  const originalDay = next.getDate();
+  next.setDate(1);
+  next.setMonth(next.getMonth() + months);
+  const daysInMonth = new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate();
+  next.setDate(Math.min(originalDay, daysInMonth));
+  return next;
+}
+
+function addYears(date: Date, years: number) {
+  const next = new Date(date);
+  const originalMonth = next.getMonth();
+  const originalDay = next.getDate();
+  next.setDate(1);
+  next.setFullYear(next.getFullYear() + years);
+  next.setMonth(originalMonth);
+  const daysInMonth = new Date(next.getFullYear(), originalMonth + 1, 0).getDate();
+  next.setDate(Math.min(originalDay, daysInMonth));
+  return next;
+}
+
+function getNextCadenceOccurrence(
+  anchorDate: string,
+  timeOfDay: string,
+  cadence: ReminderScheduleRow["cadence"]
+) {
+  const [year, month, day] = anchorDate.split("-").map(Number);
+  const [hour, minute] = timeOfDay.split(":").map(Number);
+
+  let cursor = new Date(year, month - 1, day, hour, minute, 0, 0);
+  const now = new Date();
+
+  while (cursor <= now) {
+    if (cadence === "daily") {
+      cursor = addDays(cursor, 1);
+    } else if (cadence === "weekly") {
+      cursor = addDays(cursor, 7);
+    } else if (cadence === "monthly") {
+      cursor = addMonths(cursor, 1);
+    } else if (cadence === "quarterly") {
+      cursor = addMonths(cursor, 3);
+    } else {
+      cursor = addYears(cursor, 1);
+    }
+  }
+
+  return cursor;
+}
+
 export default function HomeScreen() {
   const [dailyMessages, setDailyMessages] = useState<DailyMessage[]>([]);
   const [currentMessageIndex, setCurrentMessageIndex] = useState(0);
@@ -519,8 +668,14 @@ export default function HomeScreen() {
   const [showEntryModal, setShowEntryModal] = useState(false);
   const [isArchivingEntry, setIsArchivingEntry] = useState(false);
   const [isCompletingEntryId, setIsCompletingEntryId] = useState<string | null>(null);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [reminderSchedules, setReminderSchedules] = useState<ReminderScheduleRow[]>([]);
+   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isRegeneratingMessage, setIsRegeneratingMessage] = useState(false);
+  const [pendingNotificationData, setPendingNotificationData] = useState<{
+    kind?: string;
+    cadence?: string;
+    entryId?: string;
+  } | null>(null);
 
   const scrollViewRef = useRef<ScrollView | null>(null);
   const messageScrollRef = useRef<ScrollView | null>(null);
@@ -667,25 +822,44 @@ export default function HomeScreen() {
       return;
     }
 
-    console.log(
-      "HOME_ENTRIES_DEBUG",
-      ((data as any[]) ?? []).map((item) => ({
-        id: item.id,
-        title: item.title,
-        section: item.section,
-        effective_due_at: item.effective_due_at,
-        next_due_at: item.next_due_at,
-        digest_assignment: item.digest_assignment,
-        schedule_mode: item.schedule_mode,
-        needs_read: item.needs_read,
-        last_read_at: item.last_read_at,
-        last_completed_at: item.last_completed_at,
-        last_completed_due_at: item.last_completed_due_at,
-      }))
-    );
-
     setHomeEntries(((data as Entry[]) ?? []).map(toDisplayEntry));
   }
+async function loadProfileDigestSettings() {
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      console.log("Load reminder schedules for home user error:", userError?.message);
+      return;
+    }
+
+    const { error: ensureError } = await supabase.rpc(
+      "ensure_default_reminder_schedules",
+      {
+        p_user_id: user.id,
+      }
+    );
+
+    if (ensureError) {
+      console.log("Ensure default reminder schedules for home error:", ensureError.message);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("reminder_schedules")
+      .select("cadence, is_enabled, anchor_date, time_of_day")
+      .eq("user_id", user.id);
+
+    if (error) {
+      console.log("Load reminder schedules for home error:", error.message);
+      return;
+    }
+
+    setReminderSchedules((data as ReminderScheduleRow[]) ?? []);
+  }
+
 
   async function loadVerse(reference: string) {
     const { data, error } = await supabase
@@ -952,32 +1126,16 @@ export default function HomeScreen() {
     }
   };
 
-  useEffect(() => {
+   useEffect(() => {
     let isActive = true;
 
-    async function handleNotificationData(data: {
+    async function captureNotificationData(data: {
       kind?: string;
       cadence?: string;
       entryId?: string;
     }) {
-      if (data?.kind === "entry" && typeof data.entryId === "string") {
-        let matchingEntry = homeEntries.find((entry) => entry.id === data.entryId) ?? null;
-
-        if (!matchingEntry) {
-          matchingEntry = await fetchEntryById(data.entryId);
-        }
-
-        if (!matchingEntry || !isActive) {
-          return;
-        }
-
-        setSelectedEntry(null);
-        setShowEntryModal(false);
-
-        setTimeout(() => {
-          openEntry(matchingEntry as DisplayEntry);
-        }, 150);
-      }
+      if (!isActive) return;
+      setPendingNotificationData(data);
     }
 
     async function hydrateNotificationFromLastResponse() {
@@ -992,15 +1150,9 @@ export default function HomeScreen() {
         entryId?: string;
       };
 
-      console.log("HOME_LAST_NOTIFICATION_DEBUG", {
-        kind: data?.kind ?? null,
-        cadence: data?.cadence ?? null,
-        entryId: data?.entryId ?? null,
-      });
-
       injectedNotificationHandledRef.current = true;
       await Notifications.clearLastNotificationResponseAsync();
-      await handleNotificationData(data);
+      await captureNotificationData(data);
     }
 
     const responseListener = Notifications.addNotificationResponseReceivedListener(
@@ -1011,14 +1163,8 @@ export default function HomeScreen() {
           entryId?: string;
         };
 
-        console.log("HOME_NOTIFICATION_RESPONSE_DEBUG", {
-          kind: data?.kind ?? null,
-          cadence: data?.cadence ?? null,
-          entryId: data?.entryId ?? null,
-        });
-
         await Notifications.clearLastNotificationResponseAsync();
-        await handleNotificationData(data);
+        await captureNotificationData(data);
       }
     );
 
@@ -1028,7 +1174,52 @@ export default function HomeScreen() {
       isActive = false;
       responseListener.remove();
     };
-  }, [homeEntries]);
+  }, []);
+
+  useEffect(() => {
+    let isActive = true;
+
+    async function processPendingNotification() {
+      if (!pendingNotificationData) return;
+
+      if (pendingNotificationData.kind === "cadence") {
+        setPendingNotificationData(null);
+        router.replace("/(tabs)");
+        return;
+      }
+
+      if (
+        pendingNotificationData.kind === "entry" &&
+        typeof pendingNotificationData.entryId === "string"
+      ) {
+        let matchingEntry =
+          homeEntries.find((entry) => entry.id === pendingNotificationData.entryId) ?? null;
+
+        if (!matchingEntry) {
+          matchingEntry = await fetchEntryById(pendingNotificationData.entryId);
+        }
+
+        if (!matchingEntry || !isActive) {
+          return;
+        }
+
+        setPendingNotificationData(null);
+        setSelectedEntry(null);
+        setShowEntryModal(false);
+
+        requestAnimationFrame(() => {
+          if (!isActive) return;
+          openEntry(matchingEntry as DisplayEntry);
+        });
+      }
+    }
+
+    processPendingNotification();
+
+    return () => {
+      isActive = false;
+    };
+  }, [pendingNotificationData, homeEntries]);
 
   useEffect(() => {
     async function initialize() {
@@ -1038,6 +1229,7 @@ export default function HomeScreen() {
         await generateDailyMessage();
       }
 
+      await loadProfileDigestSettings();
       await loadHomeEntries();
 
       try {
@@ -1050,8 +1242,9 @@ export default function HomeScreen() {
     initialize();
   }, []);
 
-  useFocusEffect(
+   useFocusEffect(
     useCallback(() => {
+      loadProfileDigestSettings();
       loadHomeEntries();
 
       requestAnimationFrame(() => {
@@ -1079,6 +1272,10 @@ export default function HomeScreen() {
     () => homeEntries.filter((entry) => entry.section === "upcoming"),
     [homeEntries]
   );
+
+  const selectedEntryIsHandled = useMemo(() => {
+    return selectedEntry ? isEntryCurrentlyHandled(selectedEntry, reminderSchedules) : false;
+  }, [selectedEntry, reminderSchedules]);
 
   function renderComposeCard() {
     return (
@@ -1729,7 +1926,7 @@ export default function HomeScreen() {
                                   paddingHorizontal: 14,
                                 }}
                               >
-                                {getEntryMetaLines(selectedEntry).map((line, index) => (
+                            {getEntryMetaLines(selectedEntry, reminderSchedules).map((line, index) => (
                                   <Text
                                     key={`${selectedEntry.id}-meta-${index}`}
                                     style={{
@@ -1747,32 +1944,6 @@ export default function HomeScreen() {
                               </View>
 
                               <View style={{ height: 6 }} />
-
-                              <Pressable
-                                onPress={() => {
-                                  setShowEntryModal(false);
-                                  setSelectedEntry(null);
-                                }}
-                                style={{
-                                  alignSelf: "center",
-                                  paddingVertical: 10,
-                                  paddingHorizontal: 18,
-                                  marginBottom: 10,
-                                }}
-                              >
-                                <Text
-                                  style={{
-                                    fontSize: 15,
-                                    fontWeight: "700",
-                                    color: "white",
-                                    textShadowColor: "rgba(0,0,0,0.25)",
-                                    textShadowOffset: { width: 0, height: 1 },
-                                    textShadowRadius: 3,
-                                  }}
-                                >
-                                  Return
-                                </Text>
-                              </Pressable>
                             </>
                           )}
                         </ScrollView>
@@ -1784,8 +1955,8 @@ export default function HomeScreen() {
                               left: 0,
                               right: 0,
                               bottom: 0,
-                              paddingHorizontal: 28,
-                              paddingTop: 14,
+                              paddingHorizontal: 18,
+                              paddingTop: 12,
                               paddingBottom: 20,
                               backgroundColor: "rgba(255,255,255,0.82)",
                               borderTopWidth: 1,
@@ -1795,61 +1966,11 @@ export default function HomeScreen() {
                             <View
                               style={{
                                 flexDirection: "row",
-                                justifyContent:
-                                  selectedEntry.section === "handled_today"
-                                    ? "space-around"
-                                    : "space-between",
-                                alignItems: "center",
+                                alignItems: "stretch",
+                                gap: 8,
+                                marginBottom: 8,
                               }}
                             >
-                              {selectedEntry.section === "handled_today" ? (
-                                <Pressable
-                                  onPress={() => {
-                                    if (!selectedEntry) return;
-                                    uncompleteEntryCycle(selectedEntry);
-                                    setShowEntryModal(false);
-                                  }}
-                                  hitSlop={10}
-                                  style={{
-                                    paddingVertical: 6,
-                                    paddingHorizontal: 8,
-                                  }}
-                                >
-                                  <Text
-                                    style={{
-                                      color: "#166534",
-                                      fontSize: 15,
-                                      fontWeight: "700",
-                                    }}
-                                  >
-                                    Undo
-                                  </Text>
-                                </Pressable>
-                              ) : (
-                                <Pressable
-                                  onPress={() => {
-                                    if (!selectedEntry) return;
-                                    completeEntryCycle(selectedEntry);
-                                    setShowEntryModal(false);
-                                  }}
-                                  hitSlop={10}
-                                  style={{
-                                    paddingVertical: 6,
-                                    paddingHorizontal: 8,
-                                  }}
-                                >
-                                  <Text
-                                    style={{
-                                      color: "#166534",
-                                      fontSize: 15,
-                                      fontWeight: "700",
-                                    }}
-                                  >
-                                    Handled
-                                  </Text>
-                                </Pressable>
-                              )}
-
                               <Pressable
                                 onPress={() => {
                                   if (!selectedEntry) return;
@@ -1864,15 +1985,23 @@ export default function HomeScreen() {
                                 }}
                                 hitSlop={10}
                                 style={{
-                                  paddingVertical: 6,
+                                  flex: 1,
+                                  minHeight: 48,
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  borderRadius: 12,
+                                  borderWidth: 1,
+                                  borderColor: "rgba(107,114,128,0.38)",
+                                  backgroundColor: "rgba(255,255,255,0.62)",
                                   paddingHorizontal: 8,
                                 }}
                               >
                                 <Text
                                   style={{
                                     color: "#374151",
-                                    fontSize: 15,
+                                    fontSize: 14,
                                     fontWeight: "700",
+                                    textAlign: "center",
                                   }}
                                 >
                                   Edit
@@ -1887,15 +2016,23 @@ export default function HomeScreen() {
                                 }}
                                 hitSlop={10}
                                 style={{
-                                  paddingVertical: 6,
+                                  flex: 1,
+                                  minHeight: 48,
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  borderRadius: 12,
+                                  borderWidth: 1,
+                                  borderColor: "rgba(107,114,128,0.38)",
+                                  backgroundColor: "rgba(255,255,255,0.62)",
                                   paddingHorizontal: 8,
                                 }}
                               >
                                 <Text
                                   style={{
                                     color: "#374151",
-                                    fontSize: 15,
+                                    fontSize: 14,
                                     fontWeight: "700",
+                                    textAlign: "center",
                                   }}
                                 >
                                   Archive
@@ -1909,18 +2046,102 @@ export default function HomeScreen() {
                                 }}
                                 hitSlop={10}
                                 style={{
-                                  paddingVertical: 6,
+                                  flex: 1,
+                                  minHeight: 48,
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  borderRadius: 12,
+                                  borderWidth: 1,
+                                  borderColor: "rgba(107,114,128,0.38)",
+                                  backgroundColor: "rgba(255,255,255,0.62)",
                                   paddingHorizontal: 8,
                                 }}
                               >
                                 <Text
                                   style={{
                                     color: "#7f1d1d",
-                                    fontSize: 15,
+                                    fontSize: 14,
                                     fontWeight: "700",
+                                    textAlign: "center",
                                   }}
                                 >
                                   Delete
+                                </Text>
+                              </Pressable>
+                            </View>
+
+                            <View
+                              style={{
+                                flexDirection: "row",
+                                alignItems: "stretch",
+                                gap: 8,
+                              }}
+                            >
+                              <Pressable
+                                onPress={() => {
+                                  setShowEntryModal(false);
+                                  setSelectedEntry(null);
+                                }}
+                                hitSlop={10}
+                                style={{
+                                  flex: 1,
+                                  minHeight: 54,
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  borderRadius: 12,
+                                  borderWidth: 1,
+                                  borderColor: "rgba(107,114,128,0.38)",
+                                  backgroundColor: "rgba(255,255,255,0.62)",
+                                  paddingHorizontal: 10,
+                                }}
+                              >
+                                <Text
+                                  style={{
+                                    color: "#374151",
+                                    fontSize: 15,
+                                    fontWeight: "700",
+                                    textAlign: "center",
+                                  }}
+                                >
+                                  Return
+                                </Text>
+                              </Pressable>
+
+                              <Pressable
+                                onPress={() => {
+                                  if (!selectedEntry) return;
+
+                                  if (selectedEntryIsHandled) {
+                                    uncompleteEntryCycle(selectedEntry);
+                                  } else {
+                                    completeEntryCycle(selectedEntry);
+                                  }
+
+                                  setShowEntryModal(false);
+                                }}
+                                hitSlop={10}
+                                style={{
+                                  flex: 1,
+                                  minHeight: 54,
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  borderRadius: 12,
+                                  borderWidth: 1,
+                                  borderColor: "rgba(107,114,128,0.38)",
+                                  backgroundColor: "rgba(255,255,255,0.62)",
+                                  paddingHorizontal: 10,
+                                }}
+                              >
+                                <Text
+                                  style={{
+                                    color: "#166534",
+                                    fontSize: 15,
+                                    fontWeight: "700",
+                                    textAlign: "center",
+                                    lineHeight: 19,
+                                  }}
+                                >
+                                  {selectedEntryIsHandled ? "Undo Handled" : "Mark Handled"}
                                 </Text>
                               </Pressable>
                             </View>
