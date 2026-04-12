@@ -188,8 +188,8 @@ function isEntryCurrentlyHandled(
 ) {
   if (!entry.last_completed_at) return false;
 
-  if (entry.digest_assignment === "none" && entry.schedule_mode === "none") {
-    return false;
+   if (entry.digest_assignment === "none" && entry.schedule_mode === "none") {
+    return !!entry.last_completed_at;
   }
 
   if (entry.digest_assignment !== "none") {
@@ -589,6 +589,32 @@ function addYears(date: Date, years: number) {
 }
 
 function getHandledInlineSummary(entry: UpcomingEntry) {
+  const origin =
+    entry.digest_assignment === "daily"
+      ? "DAILY"
+      : entry.digest_assignment === "weekly"
+      ? "WEEKLY"
+      : entry.digest_assignment === "monthly"
+      ? "MONTHLY"
+      : entry.digest_assignment === "quarterly"
+      ? "QUARTERLY"
+      : entry.digest_assignment === "yearly"
+      ? "YEARLY"
+      : entry.schedule_mode !== "none"
+      ? "CUSTOM"
+      : "REMINDER";
+
+  const dueDate = entry.last_completed_due_at_date
+    ? `${entry.last_completed_due_at_date.toLocaleDateString([], {
+        month: "numeric",
+        day: "numeric",
+        year: "2-digit",
+      })} • ${entry.last_completed_due_at_date.toLocaleTimeString([], {
+        hour: "numeric",
+        minute: "2-digit",
+      })}`
+    : null;
+
   const handledDate = entry.last_completed_at_date
     ? entry.last_completed_at_date.toLocaleDateString([], {
         month: "numeric",
@@ -597,27 +623,19 @@ function getHandledInlineSummary(entry: UpcomingEntry) {
       })
     : null;
 
-  const dueDate = entry.last_completed_due_at_date
-    ? entry.last_completed_due_at_date.toLocaleDateString([], {
-        month: "numeric",
-        day: "numeric",
-        year: "2-digit",
-      })
-    : null;
-
   if (dueDate && handledDate) {
-    return `Due ${dueDate} • Handled ${handledDate}`;
+    return `${origin} • Due ${dueDate} • Handled ${handledDate}`;
   }
 
   if (dueDate) {
-    return `Due ${dueDate}`;
+    return `${origin} • Due ${dueDate}`;
   }
 
   if (handledDate) {
-    return `Handled ${handledDate}`;
+    return `${origin} • Handled ${handledDate}`;
   }
 
-  return "Handled";
+  return `${origin} • Handled`;
 }
 
 function getEntryModalMeta(entry: UpcomingEntry) {

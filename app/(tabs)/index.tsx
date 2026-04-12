@@ -184,9 +184,9 @@ function getCadenceSchedule(
   entry: DisplayEntry,
   schedules: ReminderScheduleRow[]
 ) {
-  if (entry.digest_assignment === "none") return null;
-  return schedules.find((item) => item.cadence === entry.digest_assignment) ?? null;
-}
+ if (entry.digest_assignment === "none" && entry.schedule_mode === "none") {
+    return !!entry.last_completed_at;
+}}
 
 function isEntryCurrentlyHandled(
   entry: Entry | DisplayEntry,
@@ -202,13 +202,13 @@ function isEntryCurrentlyHandled(
     const schedule = schedules.find((item) => item.cadence === entry.digest_assignment) ?? null;
     if (!schedule || !entry.last_completed_due_at) return false;
 
-    const nextOccurrence = getNextCadenceOccurrence(
+    const currentOccurrence = getCurrentCadenceOccurrence(
       schedule.anchor_date,
       schedule.time_of_day,
       schedule.cadence
     );
 
-    return new Date(entry.last_completed_due_at).getTime() < nextOccurrence.getTime();
+    return new Date(entry.last_completed_due_at).getTime() >= currentOccurrence.getTime();
   }
 
   if (
@@ -217,8 +217,8 @@ function isEntryCurrentlyHandled(
     entry.schedule_mode === "annual_date" ||
     entry.schedule_mode === "holiday"
   ) {
-    if (!entry.last_completed_due_at || !entry.next_due_at) return false;
-    return new Date(entry.last_completed_due_at).getTime() < new Date(entry.next_due_at).getTime();
+    if (!entry.next_due_at) return false;
+    return Date.now() < new Date(entry.next_due_at).getTime();
   }
 
   if (entry.schedule_mode === "fixed_date") {
@@ -655,6 +655,40 @@ function getNextCadenceOccurrence(
   }
 
   return cursor;
+}
+
+function getCurrentCadenceOccurrence(
+  anchorDate: string,
+  timeOfDay: string,
+  cadence: ReminderScheduleRow["cadence"]
+) {
+  const [year, month, day] = anchorDate.split("-").map(Number);
+  const [hour, minute] = timeOfDay.split(":").map(Number);
+
+  let cursor = new Date(year, month - 1, day, hour, minute, 0, 0);
+  const now = new Date();
+
+  while (true) {
+    let nextCursor: Date;
+
+    if (cadence === "daily") {
+      nextCursor = addDays(cursor, 1);
+    } else if (cadence === "weekly") {
+      nextCursor = addDays(cursor, 7);
+    } else if (cadence === "monthly") {
+      nextCursor = addMonths(cursor, 1);
+    } else if (cadence === "quarterly") {
+      nextCursor = addMonths(cursor, 3);
+    } else {
+      nextCursor = addYears(cursor, 1);
+    }
+
+    if (nextCursor > now) {
+      return cursor;
+    }
+
+    cursor = nextCursor;
+  }
 }
 
 export default function HomeScreen() {
