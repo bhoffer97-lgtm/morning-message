@@ -779,6 +779,7 @@ export default function RemindersScreen() {
          "id, title, content, type, status, created_at, updated_at, resolution_note, archived_at, retired_at, needs_read, last_read_at, last_completed_at, last_completed_due_at, next_due_at, schedule_mode, due_date, due_time, interval_value, interval_unit, annual_month, annual_day, anchor_date, digest_assignment, last_surface_at, last_surface_window_key"
       )
       .eq("status", "active")
+      .is("deleted_at", null)
       .order("updated_at", { ascending: false });
 
     if (error) {
@@ -861,7 +862,7 @@ export default function RemindersScreen() {
     setReminderScheduleStatuses((data as ReminderScheduleStatus[]) ?? []);
   }
 
-  async function fetchEntryById(entryId: string) {
+   async function fetchEntryById(entryId: string) {
     const { data, error } = await supabase
       .from("entries")
       .select(
@@ -869,6 +870,7 @@ export default function RemindersScreen() {
       )
       .eq("id", entryId)
       .eq("status", "active")
+      .is("deleted_at", null)
       .maybeSingle();
 
     if (error) {
@@ -960,11 +962,24 @@ export default function RemindersScreen() {
     }
   };
 
-  const deleteEntry = async (id: string) => {
-    const { error } = await supabase.from("entries").delete().eq("id", id);
+   const deleteEntry = async (id: string) => {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      console.log("No user found for soft delete");
+      return;
+    }
+
+    const { error } = await supabase.rpc("soft_delete_entry", {
+      p_entry_id: id,
+      p_user_id: user.id,
+    });
 
     if (error) {
-      console.log("Error deleting entry:", error.message);
+      console.log("Error soft deleting entry:", error.message);
+      Alert.alert("Unable to delete", error.message);
       return;
     }
 
@@ -982,18 +997,22 @@ export default function RemindersScreen() {
     }
   };
 
-  const confirmDeleteEntry = (id: string) => {
-    Alert.alert("Delete entry?", "This will permanently delete this entry.", [
-      {
-        text: "Cancel",
-        style: "cancel",
-      },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: () => deleteEntry(id),
-      },
-    ]);
+    const confirmDeleteEntry = (id: string) => {
+    Alert.alert(
+      "Delete entry?",
+      "This item can be restored from Restore Deleted Items for up to 30 days.",
+      [
+        {
+          text: "Cancel",
+          style: "cancel",
+        },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () => deleteEntry(id),
+        },
+      ]
+    );
   };
 
   const confirmArchiveEntry = (id: string) => {

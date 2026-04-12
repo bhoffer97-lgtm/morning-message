@@ -1,5 +1,4 @@
 import { useFocusEffect } from "@react-navigation/native";
-import { router } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
 import {
   Alert,
@@ -312,18 +311,7 @@ export default function ReminderGroupsScreen() {
     }, [])
   );
 
-  async function handleSignOut() {
-    const { error } = await supabase.auth.signOut();
-
-    if (error) {
-      Alert.alert("Could not sign out", error.message);
-      return;
-    }
-
-    router.replace("/(auth)");
-  }
-
-  const schedulesByCadence = useMemo(() => {
+ const schedulesByCadence = useMemo(() => {
     return {
       daily: schedules.find((item) => item.cadence === "daily") ?? null,
       weekly: schedules.find((item) => item.cadence === "weekly") ?? null,
@@ -834,7 +822,7 @@ export default function ReminderGroupsScreen() {
               borderBottomColor: "rgba(255,255,255,0.4)",
             }}
           >
-            <View
+             <View
               style={{
                 flexDirection: "row",
                 alignItems: "flex-start",
@@ -867,26 +855,6 @@ export default function ReminderGroupsScreen() {
                   Set your notification cadence and timing.
                 </Text>
               </View>
-
-              <Pressable
-                onPress={handleSignOut}
-                style={{
-                  paddingVertical: 10,
-                  paddingHorizontal: 12,
-                  borderRadius: 12,
-                  backgroundColor: "rgba(40,40,40,0.85)",
-                }}
-              >
-                <Text
-                  style={{
-                    fontSize: 13,
-                    fontWeight: "700",
-                    color: "white",
-                  }}
-                >
-                  Sign Out
-                </Text>
-              </Pressable>
             </View>
           </View>
 

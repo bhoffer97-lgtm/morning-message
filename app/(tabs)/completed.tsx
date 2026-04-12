@@ -76,7 +76,7 @@ export default function CompletedScreen() {
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const scrollViewRef = useRef<ScrollView | null>(null);
 
- async function loadArchivedEntries() {
+  async function loadArchivedEntries() {
     const { data, error } = await supabase
       .from("entries")
       .select(`
@@ -99,6 +99,7 @@ export default function CompletedScreen() {
         interval_unit
       `)
       .in("status", ["archived", "retired"])
+      .is("deleted_at", null)
       .order("updated_at", { ascending: false });
 
     if (error) {
@@ -140,13 +141,25 @@ export default function CompletedScreen() {
     }
 };
 
-   const deleteEntry = async (id: string) => {
-    console.log("Attempting to delete archived entry:", id);
+    const deleteEntry = async (id: string) => {
+    console.log("Attempting to soft delete archived entry:", id);
 
-    const { error } = await supabase.from("entries").delete().eq("id", id);
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      console.log("No user found for soft delete");
+      return;
+    }
+
+    const { error } = await supabase.rpc("soft_delete_entry", {
+      p_entry_id: id,
+      p_user_id: user.id,
+    });
 
     if (error) {
-      console.log("Error deleting archived entry:", error);
+      console.log("Error soft deleting archived entry:", error);
       Alert.alert("Unable to delete", error.message);
       return;
     }
@@ -164,18 +177,22 @@ export default function CompletedScreen() {
     }
   };
 
-  const confirmDeleteEntry = (id: string) => {
-    Alert.alert("Delete entry?", "This will permanently delete this entry.", [
-      {
-        text: "Cancel",
-        style: "cancel",
-      },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: () => deleteEntry(id),
-      },
-    ]);
+   const confirmDeleteEntry = (id: string) => {
+    Alert.alert(
+      "Delete entry?",
+      "This item can be restored from Restore Deleted Items for up to 30 days.",
+      [
+        {
+          text: "Cancel",
+          style: "cancel",
+        },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () => deleteEntry(id),
+        },
+      ]
+    );
   };
 
     useFocusEffect(

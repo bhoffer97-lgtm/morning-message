@@ -82,6 +82,12 @@ type ReminderScheduleRow = {
   time_of_day: string;
 };
 
+type DeletedEntryOption = {
+  deleted_entry_id: string;
+  title: string;
+  deleted_at: string;
+};
+
 function formatLocalDate(date: Date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -184,9 +190,18 @@ function getCadenceSchedule(
   entry: DisplayEntry,
   schedules: ReminderScheduleRow[]
 ) {
- if (entry.digest_assignment === "none" && entry.schedule_mode === "none") {
-    return !!entry.last_completed_at;
-}}
+  if (
+    entry.digest_assignment !== "daily" &&
+    entry.digest_assignment !== "weekly" &&
+    entry.digest_assignment !== "monthly" &&
+    entry.digest_assignment !== "quarterly" &&
+    entry.digest_assignment !== "yearly"
+  ) {
+    return null;
+  }
+
+  return schedules.find((item) => item.cadence === entry.digest_assignment) ?? null;
+}
 
 function isEntryCurrentlyHandled(
   entry: Entry | DisplayEntry,
@@ -697,6 +712,11 @@ export default function HomeScreen() {
   const [verseText, setVerseText] = useState<string | null>(null);
   const [showVerseModal, setShowVerseModal] = useState(false);
   const [showMessageModal, setShowMessageModal] = useState(false);
+  const [showHomeMenu, setShowHomeMenu] = useState(false);
+  const [showRestoreDeletedModal, setShowRestoreDeletedModal] = useState(false);
+  const [deletedEntryOptions, setDeletedEntryOptions] = useState<DeletedEntryOption[]>([]);
+  const [selectedDeletedEntryIds, setSelectedDeletedEntryIds] = useState<string[]>([]);
+  const [isRestoringDeletedEntries, setIsRestoringDeletedEntries] = useState(false);
   const [homeEntries, setHomeEntries] = useState<DisplayEntry[]>([]);
   const [selectedEntry, setSelectedEntry] = useState<DisplayEntry | null>(null);
   const [showEntryModal, setShowEntryModal] = useState(false);
@@ -723,11 +743,98 @@ export default function HomeScreen() {
 
   const currentDailyMessage = dailyMessages[currentMessageIndex] ?? null;
 
-  function showToast(message: string) {
+   function showToast(message: string) {
     setToastMessage(message);
     setTimeout(() => {
       setToastMessage((current) => (current === message ? null : current));
     }, 1200);
+  }
+
+   async function handleSignOut() {
+    const { error } = await supabase.auth.signOut();
+
+    if (error) {
+      Alert.alert("Could not sign out", error.message);
+      return;
+    }
+
+    setShowHomeMenu(false);
+    router.replace("/(auth)");
+  }
+
+  async function loadRecentDeletedEntries() {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      console.log("No user found for recent deleted entries");
+      return;
+    }
+
+    const { data, error } = await supabase.rpc("get_recent_deleted_entries", {
+      p_user_id: user.id,
+    });
+
+    if (error) {
+      console.log("Load recent deleted entries error:", error.message);
+      Alert.alert("Could not load deleted items", error.message);
+      return;
+    }
+
+    setDeletedEntryOptions((data as DeletedEntryOption[]) ?? []);
+    setSelectedDeletedEntryIds([]);
+    setShowRestoreDeletedModal(true);
+  }
+
+  async function restoreDeletedEntries() {
+    if (selectedDeletedEntryIds.length === 0 || isRestoringDeletedEntries) {
+      return;
+    }
+
+    setIsRestoringDeletedEntries(true);
+
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        console.log("No user found for restore deleted entries");
+        return;
+      }
+
+      const { error } = await supabase.rpc("restore_deleted_entries", {
+        p_deleted_entry_ids: selectedDeletedEntryIds,
+        p_user_id: user.id,
+      });
+
+      if (error) {
+        console.log("Restore deleted entries error:", error.message);
+        Alert.alert("Unable to restore", error.message);
+        return;
+      }
+
+      setShowRestoreDeletedModal(false);
+      setSelectedDeletedEntryIds([]);
+      setDeletedEntryOptions([]);
+
+      await loadHomeEntries();
+
+      try {
+        await syncLocalNotifications();
+      } catch (syncError) {
+        console.log("Restore deleted entry notification sync error:", syncError);
+      }
+
+      showToast(
+        selectedDeletedEntryIds.length === 1
+          ? "1 item restored"
+          : `${selectedDeletedEntryIds.length} items restored`
+      );
+    } finally {
+      setIsRestoringDeletedEntries(false);
+    }
   }
 
   async function loadMessage() {
@@ -972,11 +1079,24 @@ async function loadProfileDigestSettings() {
     }
   };
 
-  const deleteEntry = async (id: string) => {
-    const { error } = await supabase.from("entries").delete().eq("id", id);
+   const deleteEntry = async (id: string) => {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      console.log("No user found for soft delete");
+      return;
+    }
+
+    const { error } = await supabase.rpc("soft_delete_entry", {
+      p_entry_id: id,
+      p_user_id: user.id,
+    });
 
     if (error) {
-      console.log("Error deleting entry:", error.message);
+      console.log("Error soft deleting entry:", error.message);
+      Alert.alert("Unable to delete", error.message);
       return;
     }
 
@@ -995,19 +1115,22 @@ async function loadProfileDigestSettings() {
   };
 
   const confirmDeleteEntry = (id: string) => {
-    Alert.alert("Delete entry?", "This will permanently delete this entry.", [
-      {
-        text: "Cancel",
-        style: "cancel",
-      },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: () => deleteEntry(id),
-      },
-    ]);
+    Alert.alert(
+      "Delete entry?",
+      "This item can be restored from Restore Deleted Items for up to 30 days.",
+      [
+        {
+          text: "Cancel",
+          style: "cancel",
+        },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () => deleteEntry(id),
+        },
+      ]
+    );
   };
-
   const openEntry = async (entry: DisplayEntry) => {
     setSelectedEntry(entry);
     setShowEntryModal(true);
@@ -1600,7 +1723,7 @@ async function loadProfileDigestSettings() {
             behavior={Platform.OS === "ios" ? "padding" : "height"}
           >
             <View style={{ flex: 1 }}>
-              <View
+               <View
                 style={{
                   marginBottom: 8,
                   backgroundColor: "rgba(40,40,40,0.25)",
@@ -1609,6 +1732,8 @@ async function loadProfileDigestSettings() {
                   borderTopWidth: 1,
                   borderBottomWidth: 1,
                   borderColor: "rgba(255,255,255,0.10)",
+                  position: "relative",
+                  justifyContent: "center",
                 }}
               >
                 <Text
@@ -1625,8 +1750,36 @@ async function loadProfileDigestSettings() {
                     ? ` - ${new Date(currentDailyMessage.message_date).toLocaleDateString()}`
                     : ""}
                 </Text>
-              </View>
 
+                <Pressable
+                  onPress={() => setShowHomeMenu(true)}
+                  hitSlop={10}
+                  style={{
+                    position: "absolute",
+                    right: 14,
+                    top: 8,
+                    width: 34,
+                    height: 34,
+                    borderRadius: 17,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    backgroundColor: "rgba(255,255,255,0.16)",
+                    borderWidth: 1,
+                    borderColor: "rgba(255,255,255,0.20)",
+                  }}
+                >
+                  <Text
+                    style={{
+                      color: "white",
+                      fontSize: 18,
+                      fontWeight: "700",
+                      lineHeight: 18,
+                    }}
+                  >
+                    ⋯
+                  </Text>
+                </Pressable>
+              </View>
               <Pressable
                 onPress={() => {
                   if (dailyMessages.length > 0) {
@@ -2187,6 +2340,387 @@ async function loadProfileDigestSettings() {
                 </View>
               </ImageBackground>
             </View>
+          </Modal>
+
+          <Modal visible={showHomeMenu} transparent animationType="fade">
+            <Pressable
+              onPress={() => setShowHomeMenu(false)}
+              style={{
+                flex: 1,
+                backgroundColor: "rgba(0,0,0,0.18)",
+                justifyContent: "flex-start",
+                alignItems: "flex-end",
+                paddingTop: 86,
+                paddingRight: 16,
+                paddingLeft: 16,
+              }}
+            >
+              <Pressable
+                onPress={() => {}}
+                style={{
+                  width: 220,
+                  backgroundColor: "rgba(255,255,255,0.97)",
+                  borderRadius: 16,
+                  borderWidth: 1,
+                  borderColor: "rgba(255,255,255,0.95)",
+                  overflow: "hidden",
+                }}
+              >
+                 <Pressable
+                  onPress={() => {
+                    setShowHomeMenu(false);
+                    Alert.alert("Account", "Account screen coming soon.");
+                  }}
+                  style={{
+                    paddingVertical: 14,
+                    paddingHorizontal: 16,
+                    borderBottomWidth: 1,
+                    borderBottomColor: "#e5e7eb",
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 15,
+                      fontWeight: "600",
+                      color: "#111827",
+                    }}
+                  >
+                    Account
+                  </Text>
+                </Pressable>
+
+                 <Pressable
+                  onPress={async () => {
+                    setShowHomeMenu(false);
+                    await loadRecentDeletedEntries();
+                  }}
+                  style={{
+                    paddingVertical: 14,
+                    paddingHorizontal: 16,
+                    borderBottomWidth: 1,
+                    borderBottomColor: "#e5e7eb",
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 15,
+                      fontWeight: "600",
+                      color: "#111827",
+                    }}
+                  >
+                    Restore Deleted Items
+                  </Text>
+                </Pressable>
+
+                <Pressable
+                  onPress={handleSignOut}
+                  style={{
+                    paddingVertical: 14,
+                    paddingHorizontal: 16,
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 15,
+                      fontWeight: "600",
+                      color: "#b91c1c",
+                    }}
+                  >
+                    Sign Out
+                  </Text>
+                </Pressable>
+              </Pressable>
+            </Pressable>
+          </Modal>
+
+           <Modal visible={showRestoreDeletedModal} transparent animationType="fade">
+            <Pressable
+              onPress={() => {
+                if (isRestoringDeletedEntries) return;
+                setShowRestoreDeletedModal(false);
+                setSelectedDeletedEntryIds([]);
+              }}
+              style={{
+                flex: 1,
+                backgroundColor: "rgba(0,0,0,0.22)",
+                justifyContent: "center",
+                paddingHorizontal: 20,
+                paddingVertical: 40,
+              }}
+            >
+              <Pressable
+                onPress={() => {}}
+                style={{
+                  backgroundColor: "rgba(255,255,255,0.97)",
+                  borderRadius: 22,
+                  padding: 20,
+                  borderWidth: 1,
+                  borderColor: "rgba(255,255,255,0.95)",
+                }}
+              >
+                <Pressable
+                  onPress={() => {
+                    if (isRestoringDeletedEntries) return;
+                    setShowRestoreDeletedModal(false);
+                    setSelectedDeletedEntryIds([]);
+                  }}
+                  hitSlop={10}
+                  style={{
+                    position: "absolute",
+                    top: 14,
+                    right: 14,
+                    zIndex: 2,
+                    width: 28,
+                    height: 28,
+                    borderRadius: 14,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    backgroundColor: "rgba(0,0,0,0.08)",
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 16,
+                      fontWeight: "700",
+                      color: "#444",
+                      lineHeight: 16,
+                    }}
+                  >
+                    ×
+                  </Text>
+                </Pressable>
+
+                <Text
+                  style={{
+                    fontSize: 20,
+                    fontWeight: "700",
+                    color: "#111827",
+                    textAlign: "center",
+                    marginBottom: 6,
+                    paddingHorizontal: 20,
+                  }}
+                >
+                  Restore Deleted Items
+                </Text>
+
+                <Text
+                  style={{
+                    fontSize: 13,
+                    lineHeight: 19,
+                    color: "#4b5563",
+                    textAlign: "center",
+                    marginBottom: 14,
+                  }}
+                >
+                  Select from your 5 most recently deleted items.
+                </Text>
+
+                {deletedEntryOptions.length > 0 ? (
+                  <>
+                    <Pressable
+                      onPress={() => {
+                        const allIds = deletedEntryOptions.map((item) => item.deleted_entry_id);
+                        const isAllSelected =
+                          allIds.length > 0 &&
+                          allIds.every((id) => selectedDeletedEntryIds.includes(id));
+
+                        setSelectedDeletedEntryIds(isAllSelected ? [] : allIds);
+                      }}
+                      style={{
+                        alignSelf: "flex-start",
+                        marginBottom: 12,
+                        backgroundColor: "rgba(243,244,246,0.95)",
+                        borderRadius: 999,
+                        paddingVertical: 8,
+                        paddingHorizontal: 12,
+                        borderWidth: 1,
+                        borderColor: "#e5e7eb",
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 13,
+                          fontWeight: "700",
+                          color: "#374151",
+                        }}
+                      >
+                        {deletedEntryOptions.length > 0 &&
+                        deletedEntryOptions.every((item) =>
+                          selectedDeletedEntryIds.includes(item.deleted_entry_id)
+                        )
+                          ? "Clear All"
+                          : "Select All"}
+                      </Text>
+                    </Pressable>
+
+                    <View style={{ marginBottom: 16 }}>
+                      {deletedEntryOptions.map((item) => {
+                        const isSelected = selectedDeletedEntryIds.includes(item.deleted_entry_id);
+
+                        return (
+                          <Pressable
+                            key={item.deleted_entry_id}
+                            onPress={() => {
+                              setSelectedDeletedEntryIds((current) =>
+                                current.includes(item.deleted_entry_id)
+                                  ? current.filter((id) => id !== item.deleted_entry_id)
+                                  : [...current, item.deleted_entry_id]
+                              );
+                            }}
+                            style={{
+                              flexDirection: "row",
+                              alignItems: "center",
+                              paddingVertical: 11,
+                              borderBottomWidth: 1,
+                              borderBottomColor: "#f1f5f9",
+                              gap: 10,
+                            }}
+                          >
+                            <View
+                              style={{
+                                width: 22,
+                                height: 22,
+                                borderRadius: 11,
+                                borderWidth: 2,
+                                borderColor: isSelected ? "#2563eb" : "#cbd5e1",
+                                backgroundColor: isSelected ? "#2563eb" : "transparent",
+                                alignItems: "center",
+                                justifyContent: "center",
+                              }}
+                            >
+                              {isSelected ? (
+                                <Text
+                                  style={{
+                                    color: "white",
+                                    fontSize: 12,
+                                    fontWeight: "700",
+                                    lineHeight: 12,
+                                  }}
+                                >
+                                  ✓
+                                </Text>
+                              ) : null}
+                            </View>
+
+                            <Text
+                              style={{
+                                flex: 1,
+                                fontSize: 15,
+                                fontWeight: "600",
+                                color: "#111827",
+                              }}
+                              numberOfLines={1}
+                            >
+                              {item.title?.trim() || "Untitled Entry"}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+
+                    <View
+                      style={{
+                        flexDirection: "row",
+                        gap: 10,
+                      }}
+                    >
+                      <Pressable
+                        onPress={() => {
+                          if (isRestoringDeletedEntries) return;
+                          setShowRestoreDeletedModal(false);
+                          setSelectedDeletedEntryIds([]);
+                        }}
+                        style={{
+                          flex: 1,
+                          paddingVertical: 13,
+                          borderRadius: 12,
+                          backgroundColor: "#f3f4f6",
+                          alignItems: "center",
+                        }}
+                      >
+                        <Text
+                          style={{
+                            fontSize: 14,
+                            fontWeight: "600",
+                            color: "#374151",
+                          }}
+                        >
+                          Cancel
+                        </Text>
+                      </Pressable>
+
+                      <Pressable
+                        onPress={restoreDeletedEntries}
+                        disabled={
+                          selectedDeletedEntryIds.length === 0 || isRestoringDeletedEntries
+                        }
+                        style={{
+                          flex: 1,
+                          paddingVertical: 13,
+                          borderRadius: 12,
+                          backgroundColor:
+                            selectedDeletedEntryIds.length === 0 || isRestoringDeletedEntries
+                              ? "#93c5fd"
+                              : "#2563eb",
+                          alignItems: "center",
+                        }}
+                      >
+                        <Text
+                          style={{
+                            fontSize: 14,
+                            fontWeight: "700",
+                            color: "white",
+                          }}
+                        >
+                          {isRestoringDeletedEntries ? "Restoring..." : "Restore"}
+                        </Text>
+                      </Pressable>
+                    </View>
+                  </>
+                ) : (
+                  <>
+                    <View
+                      style={{
+                        paddingVertical: 24,
+                        alignItems: "center",
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 14,
+                          color: "#6b7280",
+                          textAlign: "center",
+                        }}
+                      >
+                        No recently deleted items.
+                      </Text>
+                    </View>
+
+                    <Pressable
+                      onPress={() => {
+                        setShowRestoreDeletedModal(false);
+                        setSelectedDeletedEntryIds([]);
+                      }}
+                      style={{
+                        alignSelf: "center",
+                        paddingVertical: 10,
+                        paddingHorizontal: 18,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 14,
+                          fontWeight: "700",
+                          color: "#374151",
+                        }}
+                      >
+                        Close
+                      </Text>
+                    </Pressable>
+                  </>
+                )}
+              </Pressable>
+            </Pressable>
           </Modal>
 
           <Modal visible={showMessageModal} transparent animationType="fade">
