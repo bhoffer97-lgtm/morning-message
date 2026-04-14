@@ -257,6 +257,7 @@ function getUpcomingNotificationsText(schedule: ReminderSchedule) {
 
 export default function ReminderGroupsScreen() {
   const [schedules, setSchedules] = useState<ReminderSchedule[]>([]);
+  const [hasLoadedSchedules, setHasLoadedSchedules] = useState(false);
   const [selectorState, setSelectorState] = useState<SelectorState>(null);
   const [savingKey, setSavingKey] = useState<string | null>(null);
 
@@ -298,11 +299,12 @@ export default function ReminderGroupsScreen() {
       return;
     }
 
-    const sorted = ((data as ReminderSchedule[]) ?? []).sort(
+     const sorted = ((data as ReminderSchedule[]) ?? []).sort(
       (a, b) => cadenceOrder.indexOf(a.cadence) - cadenceOrder.indexOf(b.cadence)
     );
 
     setSchedules(sorted);
+    setHasLoadedSchedules(true);
   }
 
     useFocusEffect(
@@ -858,18 +860,42 @@ export default function ReminderGroupsScreen() {
             </View>
           </View>
 
-          <ScrollView
+           <ScrollView
             contentContainerStyle={{
               padding: 24,
               paddingBottom: 40,
             }}
             keyboardShouldPersistTaps="handled"
           >
-            {renderScheduleCard(schedulesByCadence.daily)}
-            {renderScheduleCard(schedulesByCadence.weekly)}
-            {renderScheduleCard(schedulesByCadence.monthly)}
-            {renderScheduleCard(schedulesByCadence.quarterly)}
-            {renderScheduleCard(schedulesByCadence.yearly)}
+            {!hasLoadedSchedules ? (
+              <View
+                style={{
+                  backgroundColor: "rgba(255,255,255,0.92)",
+                  borderRadius: 16,
+                  padding: 16,
+                  borderWidth: 1,
+                  borderColor: "#e5e7eb",
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 15,
+                    fontWeight: "600",
+                    color: "#475569",
+                  }}
+                >
+                  Loading cadence settings...
+                </Text>
+              </View>
+            ) : (
+              <>
+                {renderScheduleCard(schedulesByCadence.daily)}
+                {renderScheduleCard(schedulesByCadence.weekly)}
+                {renderScheduleCard(schedulesByCadence.monthly)}
+                {renderScheduleCard(schedulesByCadence.quarterly)}
+                {renderScheduleCard(schedulesByCadence.yearly)}
+              </>
+            )}
           </ScrollView>
 
           <Modal visible={!!selectorState} transparent animationType="fade">

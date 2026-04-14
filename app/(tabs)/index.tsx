@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   ImageBackground,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -13,6 +14,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -710,13 +712,18 @@ export default function HomeScreen() {
   const [dailyMessages, setDailyMessages] = useState<DailyMessage[]>([]);
   const [currentMessageIndex, setCurrentMessageIndex] = useState(0);
   const [verseText, setVerseText] = useState<string | null>(null);
-  const [showVerseModal, setShowVerseModal] = useState(false);
+   const [showVerseModal, setShowVerseModal] = useState(false);
   const [showMessageModal, setShowMessageModal] = useState(false);
   const [showHomeMenu, setShowHomeMenu] = useState(false);
+  const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
   const [showRestoreDeletedModal, setShowRestoreDeletedModal] = useState(false);
+  const [showUpcomingDaysModal, setShowUpcomingDaysModal] = useState(false);
   const [deletedEntryOptions, setDeletedEntryOptions] = useState<DeletedEntryOption[]>([]);
   const [selectedDeletedEntryIds, setSelectedDeletedEntryIds] = useState<string[]>([]);
   const [isRestoringDeletedEntries, setIsRestoringDeletedEntries] = useState(false);
+  const [homeUpcomingDays, setHomeUpcomingDays] = useState(7);
+  const [pendingUpcomingDays, setPendingUpcomingDays] = useState("7");
+  const [isSavingUpcomingDays, setIsSavingUpcomingDays] = useState(false);
   const [homeEntries, setHomeEntries] = useState<DisplayEntry[]>([]);
   const [selectedEntry, setSelectedEntry] = useState<DisplayEntry | null>(null);
   const [showEntryModal, setShowEntryModal] = useState(false);
@@ -734,6 +741,7 @@ export default function HomeScreen() {
   const scrollViewRef = useRef<ScrollView | null>(null);
   const messageScrollRef = useRef<ScrollView | null>(null);
   const injectedNotificationHandledRef = useRef(false);
+  const upcomingSectionYRef = useRef(0);
 
   useLocalSearchParams<{ resetHomeAt?: string }>();
 
@@ -834,6 +842,85 @@ export default function HomeScreen() {
       );
     } finally {
       setIsRestoringDeletedEntries(false);
+    }
+  }
+
+  async function loadHomeUpcomingDays() {
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      console.log("Load home upcoming days user error:", userError?.message);
+      return 7;
+    }
+
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("home_upcoming_days")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    if (error) {
+      console.log("Load home upcoming days error:", error.message);
+      return 7;
+    }
+
+    const nextValue =
+      typeof data?.home_upcoming_days === "number" ? data.home_upcoming_days : 7;
+
+    setHomeUpcomingDays(nextValue);
+    setPendingUpcomingDays(String(nextValue));
+    return nextValue;
+  }
+
+    async function saveHomeUpcomingDays() {
+    const parsed = Number(pendingUpcomingDays);
+
+    if (!Number.isInteger(parsed) || parsed < 1 || parsed > 90) {
+      Alert.alert("Invalid number", "Please enter a whole number from 1 to 90.");
+      return;
+    }
+
+    setIsSavingUpcomingDays(true);
+
+    try {
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+
+      if (userError || !user) {
+        console.log("Save home upcoming days user error:", userError?.message);
+        return;
+      }
+
+      const { error } = await supabase
+        .from("profiles")
+        .update({
+          home_upcoming_days: parsed,
+        })
+        .eq("id", user.id);
+
+      if (error) {
+        console.log("Save home upcoming days error:", error.message);
+        Alert.alert("Could not save", error.message);
+        return;
+      }
+
+      setHomeUpcomingDays(parsed);
+      setShowUpcomingDaysModal(false);
+      await loadHomeEntries(parsed);
+
+      requestAnimationFrame(() => {
+        scrollViewRef.current?.scrollTo({
+          y: Math.max(0, upcomingSectionYRef.current - 12),
+          animated: true,
+        });
+      });
+    } finally {
+      setIsSavingUpcomingDays(false);
     }
   }
 
@@ -941,7 +1028,7 @@ export default function HomeScreen() {
     }
   }
 
-  async function loadHomeEntries() {
+    async function loadHomeEntries(upcomingDaysOverride?: number) {
     const {
       data: { user },
       error: userError,
@@ -952,10 +1039,12 @@ export default function HomeScreen() {
       return;
     }
 
+    const upcomingDays = upcomingDaysOverride ?? homeUpcomingDays;
+
     const { data, error } = await supabase.rpc("get_home_entries", {
       p_user_id: user.id,
       p_reference_ts: new Date().toISOString(),
-      p_upcoming_days: 7,
+      p_upcoming_days: upcomingDays,
     });
 
     if (error) {
@@ -1284,6 +1373,19 @@ async function loadProfileDigestSettings() {
   };
 
    useEffect(() => {
+    const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+
+    const showSub = Keyboard.addListener(showEvent, () => setIsKeyboardVisible(true));
+    const hideSub = Keyboard.addListener(hideEvent, () => setIsKeyboardVisible(false));
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  useEffect(() => {
     let isActive = true;
 
     async function captureNotificationData(data: {
@@ -1378,7 +1480,7 @@ async function loadProfileDigestSettings() {
     };
   }, [pendingNotificationData, homeEntries]);
 
-  useEffect(() => {
+   useEffect(() => {
     async function initialize() {
       const foundMessage = await loadMessage();
 
@@ -1386,8 +1488,9 @@ async function loadProfileDigestSettings() {
         await generateDailyMessage();
       }
 
+      const initialUpcomingDays = await loadHomeUpcomingDays();
       await loadProfileDigestSettings();
-      await loadHomeEntries();
+      await loadHomeEntries(initialUpcomingDays);
 
       try {
         await syncLocalNotifications();
@@ -1399,15 +1502,15 @@ async function loadProfileDigestSettings() {
     initialize();
   }, []);
 
-   useFocusEffect(
+  useFocusEffect(
     useCallback(() => {
       loadProfileDigestSettings();
-      loadHomeEntries();
+      loadHomeEntries(homeUpcomingDays);
 
       requestAnimationFrame(() => {
         scrollViewRef.current?.scrollTo({ y: 0, animated: false });
       });
-    }, [])
+    }, [homeUpcomingDays])
   );
 
   const forTodayEntries = useMemo(
@@ -1446,35 +1549,63 @@ async function loadProfileDigestSettings() {
           });
         }}
         style={{
-          backgroundColor: "rgba(255,255,255,0.82)",
-          borderRadius: 18,
-          borderWidth: 1,
-          borderColor: "rgba(255,255,255,0.82)",
-          shadowColor: "#000",
-          shadowOpacity: 0.06,
-          shadowRadius: 8,
-          shadowOffset: { width: 0, height: 3 },
-          elevation: 2,
           marginHorizontal: 20,
-          marginBottom: 14,
-          paddingHorizontal: 16,
-          paddingVertical: 18,
-          minHeight: 84,
-          justifyContent: "center",
+          marginBottom: 16,
+          borderRadius: 24,
+          overflow: "hidden",
+          shadowColor: "#000",
+          shadowOpacity: 0.1,
+          shadowRadius: 14,
+          shadowOffset: { width: 0, height: 6 },
+          elevation: 4,
         }}
       >
-        <Text
+        <View
           style={{
-            color: "#6b7280",
-            lineHeight: 24,
-            fontSize: 17,
-            fontWeight: "500",
-            fontStyle: "italic",
-            textAlign: "center",
+            backgroundColor: "rgba(250,246,236,0.94)",
+            borderWidth: 1,
+            borderColor: "rgba(255,255,255,0.72)",
+            borderRadius: 24,
+            paddingHorizontal: 18,
+            paddingTop: 14,
+            paddingBottom: 18,
           }}
         >
-          ✏️ Tap to write a prayer, goal, affirmation or reminder
-        </Text>
+          <Text
+            style={{
+              fontSize: 12,
+              fontWeight: "700",
+              letterSpacing: 1.1,
+              color: "#8b6f47",
+              textTransform: "uppercase",
+              marginBottom: 10,
+              textAlign: "center",
+            }}
+          >
+            Today’s Reflection
+          </Text>
+
+          <View
+            style={{
+              borderTopWidth: 1,
+              borderTopColor: "rgba(139,111,71,0.14)",
+              paddingTop: 14,
+            }}
+          >
+            <Text
+              style={{
+                color: "#6b7280",
+                lineHeight: 24,
+                fontSize: 17,
+                fontWeight: "500",
+                fontStyle: "italic",
+                textAlign: "center",
+              }}
+            >
+              Tap to write a prayer, goal, affirmation or reminder
+            </Text>
+          </View>
+        </View>
       </Pressable>
     );
   }
@@ -1639,18 +1770,22 @@ async function loadProfileDigestSettings() {
       </View>
     );
   }
-   function renderSectionCard(
+    function renderSectionCard(
     title: string,
     entries: DisplayEntry[],
     allowComplete = false,
-    emptyText?: string
+    emptyText?: string,
+    variant: "light" | "dark" = "light"
   ) {
     if (entries.length === 0 && !emptyText) return null;
 
     return (
       <View
         style={{
-          backgroundColor: "rgba(255,255,255,0.18)",
+          backgroundColor:
+            variant === "dark"
+              ? "rgba(55,65,81,0.52)"
+              : "rgba(255,255,255,0.18)",
           borderRadius: 18,
           padding: 14,
           marginBottom: 14,
@@ -1726,38 +1861,17 @@ async function loadProfileDigestSettings() {
                <View
                 style={{
                   marginBottom: 8,
-                  backgroundColor: "rgba(40,40,40,0.25)",
-                  paddingVertical: 12,
-                  paddingHorizontal: 14,
-                  borderTopWidth: 1,
-                  borderBottomWidth: 1,
-                  borderColor: "rgba(255,255,255,0.10)",
+                  minHeight: 6,
                   position: "relative",
-                  justifyContent: "center",
                 }}
               >
-                <Text
-                  style={{
-                    textAlign: "center",
-                    fontSize: 16,
-                    fontWeight: "700",
-                    color: "white",
-                    letterSpacing: 0.2,
-                  }}
-                >
-                  Morning Message
-                  {currentDailyMessage?.message_date
-                    ? ` - ${new Date(currentDailyMessage.message_date).toLocaleDateString()}`
-                    : ""}
-                </Text>
-
                 <Pressable
                   onPress={() => setShowHomeMenu(true)}
                   hitSlop={10}
                   style={{
                     position: "absolute",
-                    right: 14,
-                    top: 8,
+                    right: 20,
+                    top: 0,
                     width: 34,
                     height: 34,
                     borderRadius: 17,
@@ -1766,6 +1880,7 @@ async function loadProfileDigestSettings() {
                     backgroundColor: "rgba(255,255,255,0.16)",
                     borderWidth: 1,
                     borderColor: "rgba(255,255,255,0.20)",
+                    zIndex: 5,
                   }}
                 >
                   <Text
@@ -1790,77 +1905,107 @@ async function loadProfileDigestSettings() {
                   generateDailyMessage(true);
                 }}
                 style={{
-                  marginBottom: 12,
+                  marginBottom: 14,
                   marginHorizontal: 20,
-                  minHeight: 104,
-                  justifyContent: "center",
-                  backgroundColor: "rgba(255,255,255,0.76)",
-                  borderRadius: 18,
-                  borderWidth: 1,
-                  borderColor: "rgba(255,255,255,0.76)",
+                  borderRadius: 26,
                   overflow: "hidden",
-                  paddingVertical: 14,
-                  paddingHorizontal: 16,
+                  shadowColor: "#000",
+                  shadowOpacity: 0.12,
+                  shadowRadius: 16,
+                  shadowOffset: { width: 0, height: 8 },
+                  elevation: 5,
                 }}
               >
-                {dailyMessages.length > 0 ? (
+                <View
+                  style={{
+                    backgroundColor: "rgba(250,248,242,0.94)",
+                    borderWidth: 1,
+                    borderColor: "rgba(255,255,255,0.82)",
+                    borderRadius: 26,
+                    paddingTop: 16,
+                    paddingBottom: 18,
+                    paddingHorizontal: 18,
+                    minHeight: 128,
+                    justifyContent: "center",
+                  }}
+                >
                   <View
                     style={{
-                      justifyContent: "center",
+                      alignItems: "center",
+                      marginBottom: 10,
                     }}
                   >
                     <Text
                       style={{
-                        fontSize: 15,
-                        textAlign: "center",
-                        color: "#111",
-                        lineHeight: 22,
-                        fontWeight: "500",
+                        fontSize: 11,
+                        fontWeight: "700",
+                        letterSpacing: 1.3,
+                        color: "#8b6f47",
+                        textTransform: "uppercase",
+                        marginBottom: 6,
                       }}
-                      numberOfLines={3}
                     >
-                      {currentDailyMessage?.message || "Preparing your morning message…"}
+                      Morning Message
                     </Text>
 
-                    {!!currentDailyMessage?.verse_reference && (
-                      <Pressable
-                        onPress={() => {
-                          if (currentDailyMessage?.verse_reference) {
-                            loadVerse(currentDailyMessage.verse_reference);
-                          }
-                        }}
-                        hitSlop={10}
-                        style={{ marginTop: 8 }}
-                      >
-                        <Text
-                          style={{
-                            fontSize: 12,
-                            color: "#111",
-                            textAlign: "center",
-                            textDecorationLine: "underline",
-                            fontWeight: "600",
-                          }}
-                        >
-                          {currentDailyMessage.verse_reference}
-                        </Text>
-                      </Pressable>
-                    )}
+                    <View
+                      style={{
+                        width: 42,
+                        height: 2,
+                        borderRadius: 2,
+                        backgroundColor: "rgba(139,111,71,0.28)",
+                      }}
+                    />
                   </View>
-                ) : (
+
                   <Text
                     style={{
-                      fontSize: 15,
+                      fontSize: 25,
+                      lineHeight: 32,
+                      color: "#1f2937",
                       textAlign: "center",
-                      color: "#111",
-                      lineHeight: 22,
-                      fontWeight: "500",
-                      maxWidth: 320,
-                      opacity: 0.7,
+                      fontWeight: "600",
+                      letterSpacing: 0.2,
+                      paddingHorizontal: 8,
                     }}
+                    numberOfLines={3}
                   >
-                    Preparing your morning message…
+                    {currentDailyMessage?.message_text ||
+                      currentDailyMessage?.message ||
+                      "Preparing your morning message…"}
                   </Text>
-                )}
+
+                  {!!currentDailyMessage?.verse_reference && (
+                    <Pressable
+                      onPress={() => {
+                        if (currentDailyMessage?.verse_reference) {
+                          loadVerse(currentDailyMessage.verse_reference);
+                        }
+                      }}
+                      hitSlop={10}
+                      style={{
+                        marginTop: 12,
+                        alignSelf: "center",
+                        paddingVertical: 6,
+                        paddingHorizontal: 12,
+                        borderRadius: 999,
+                        backgroundColor: "rgba(139,111,71,0.10)",
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 12,
+                          color: "#6b7280",
+                          textAlign: "center",
+                          fontWeight: "700",
+                          letterSpacing: 0.3,
+                        }}
+                      >
+                        {currentDailyMessage.verse_reference}
+                      </Text>
+                    </Pressable>
+                  )}
+                </View>
               </Pressable>
 
               {renderComposeCard()}
@@ -1875,18 +2020,73 @@ async function loadProfileDigestSettings() {
                   paddingTop: 4,
                 }}
               >
-                {renderSectionCard(
+                 {renderSectionCard(
                   "For Today",
                   forTodayEntries,
                   true,
                   "Nothing needs attention right now."
                 )}
 
-                {renderSectionCard("Handled Today", handledTodayEntries, false)}
-
                 {renderSectionCard("Carried Over", carriedOverEntries, true)}
 
-                {renderSectionCard("Upcoming", upcomingEntries, true)}
+                {renderSectionCard(
+                  "Handled Today",
+                  handledTodayEntries,
+                  false,
+                  undefined,
+                  "dark"
+                )}
+
+                <View
+                  onLayout={(event) => {
+                    upcomingSectionYRef.current = event.nativeEvent.layout.y;
+                  }}
+                  style={{
+                    backgroundColor: "rgba(55,65,81,0.52)",
+                    borderRadius: 18,
+                    padding: 14,
+                    marginBottom: 14,
+                  }}
+                >
+                  <Pressable
+                    onPress={() => {
+                      setPendingUpcomingDays(String(homeUpcomingDays));
+                      setShowUpcomingDaysModal(true);
+                    }}
+                    style={{
+                      alignSelf: "flex-start",
+                      marginBottom: 10,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 20,
+                        fontWeight: "700",
+                        color: "white",
+                        textShadowColor: "rgba(0,0,0,0.35)",
+                        textShadowOffset: { width: 0, height: 1 },
+                        textShadowRadius: 4,
+                      }}
+                    >
+                      {`Upcoming · Next ${homeUpcomingDays} day${homeUpcomingDays === 1 ? "" : "s"} ▼`}
+                    </Text>
+                  </Pressable>
+
+                  {upcomingEntries.length === 0 ? (
+                    <Text
+                      style={{
+                        fontSize: 14,
+                        color: "#4b5563",
+                      }}
+                    >
+                      Nothing upcoming in this range.
+                    </Text>
+                  ) : (
+                    upcomingEntries.map((entry) => (
+                      <View key={entry.id}>{renderEntryRow(entry, true)}</View>
+                    ))
+                  )}
+                </View>
               </ScrollView>
             </View>
           </KeyboardAvoidingView>
@@ -2433,7 +2633,238 @@ async function loadProfileDigestSettings() {
             </Pressable>
           </Modal>
 
-           <Modal visible={showRestoreDeletedModal} transparent animationType="fade">
+          <Modal visible={showUpcomingDaysModal} transparent animationType="fade">
+            <KeyboardAvoidingView
+              style={{ flex: 1 }}
+              behavior={Platform.OS === "ios" ? "padding" : "height"}
+            >
+              <Pressable
+                onPress={() => {
+                  if (isSavingUpcomingDays) return;
+                  setShowUpcomingDaysModal(false);
+                  setPendingUpcomingDays(String(homeUpcomingDays));
+                }}
+                style={{
+                  flex: 1,
+                  backgroundColor: "rgba(0,0,0,0.22)",
+                  justifyContent: isKeyboardVisible ? "flex-start" : "center",
+                  paddingHorizontal: 20,
+                  paddingTop: isKeyboardVisible ? 120 : 40,
+                  paddingBottom: 40,
+                }}
+              >
+                <Pressable
+                  onPress={() => {}}
+                  style={{
+                    backgroundColor: "rgba(255,255,255,0.97)",
+                    borderRadius: 22,
+                    padding: 20,
+                    borderWidth: 1,
+                    borderColor: "rgba(255,255,255,0.95)",
+                  }}
+                >
+                  <Pressable
+                    onPress={() => {
+                      if (isSavingUpcomingDays) return;
+                      setShowUpcomingDaysModal(false);
+                      setPendingUpcomingDays(String(homeUpcomingDays));
+                    }}
+                    hitSlop={10}
+                    style={{
+                      position: "absolute",
+                      top: 14,
+                      right: 14,
+                      zIndex: 2,
+                      width: 28,
+                      height: 28,
+                      borderRadius: 14,
+                      alignItems: "center",
+                      justifyContent: "center",
+                      backgroundColor: "rgba(0,0,0,0.08)",
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 16,
+                        fontWeight: "700",
+                        color: "#444",
+                        lineHeight: 16,
+                      }}
+                    >
+                      ×
+                    </Text>
+                  </Pressable>
+
+                  <Text
+                    style={{
+                      fontSize: 20,
+                      fontWeight: "700",
+                      color: "#111827",
+                      textAlign: "center",
+                      marginBottom: 6,
+                    }}
+                  >
+                    Upcoming Range
+                  </Text>
+
+                  <Text
+                    style={{
+                      fontSize: 13,
+                      lineHeight: 19,
+                      color: "#4b5563",
+                      textAlign: "center",
+                      marginBottom: 16,
+                    }}
+                  >
+                    Choose how many days to view.
+                  </Text>
+
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      flexWrap: "wrap",
+                      gap: 8,
+                      marginBottom: 16,
+                    }}
+                  >
+                    {[3, 7, 14, 30, 60, 90].map((value) => {
+                      const isSelected = pendingUpcomingDays === String(value);
+
+                      return (
+                        <Pressable
+                          key={value}
+                          onPress={async () => {
+                            if (isSavingUpcomingDays) return;
+                            setPendingUpcomingDays(String(value));
+
+                            const {
+                              data: { user },
+                              error: userError,
+                            } = await supabase.auth.getUser();
+
+                            if (userError || !user) {
+                              console.log(
+                                "Quick save home upcoming days user error:",
+                                userError?.message
+                              );
+                              return;
+                            }
+
+                            setIsSavingUpcomingDays(true);
+
+                            try {
+                              const { error } = await supabase
+                                .from("profiles")
+                                .update({
+                                  home_upcoming_days: value,
+                                })
+                                .eq("id", user.id);
+
+                              if (error) {
+                                console.log(
+                                  "Quick save home upcoming days error:",
+                                  error.message
+                                );
+                                Alert.alert("Could not save", error.message);
+                                return;
+                              }
+
+                              setHomeUpcomingDays(value);
+                              setShowUpcomingDaysModal(false);
+                              await loadHomeEntries(value);
+
+                              requestAnimationFrame(() => {
+                                scrollViewRef.current?.scrollTo({
+                                  y: Math.max(0, upcomingSectionYRef.current - 12),
+                                  animated: true,
+                                });
+                              });
+                            } finally {
+                              setIsSavingUpcomingDays(false);
+                            }
+                          }}
+                          style={{
+                            paddingVertical: 9,
+                            paddingHorizontal: 12,
+                            borderRadius: 999,
+                            borderWidth: 1,
+                            borderColor: isSelected ? "#2563eb" : "#d1d5db",
+                            backgroundColor: isSelected ? "#eff6ff" : "white",
+                          }}
+                        >
+                          <Text
+                            style={{
+                              fontSize: 13,
+                              fontWeight: "700",
+                              color: isSelected ? "#1d4ed8" : "#374151",
+                            }}
+                          >
+                            {value} days
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 10,
+                    }}
+                  >
+                    <TextInput
+                      value={pendingUpcomingDays}
+                      onChangeText={(value) =>
+                        setPendingUpcomingDays(value.replace(/[^0-9]/g, "").slice(0, 2))
+                      }
+                      keyboardType="number-pad"
+                      placeholder="7"
+                      placeholderTextColor="#9ca3af"
+                      style={{
+                        flex: 1,
+                        borderWidth: 1,
+                        borderColor: "#d1d5db",
+                        borderRadius: 12,
+                        paddingHorizontal: 14,
+                        paddingVertical: 12,
+                        backgroundColor: "white",
+                        color: "black",
+                        fontSize: 16,
+                        textAlign: "center",
+                      }}
+                    />
+
+                    <Pressable
+                      onPress={saveHomeUpcomingDays}
+                      disabled={isSavingUpcomingDays}
+                      style={{
+                        width: 46,
+                        height: 46,
+                        borderRadius: 23,
+                        backgroundColor: "#2563eb",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        opacity: isSavingUpcomingDays ? 0.7 : 1,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 13,
+                          fontWeight: "700",
+                          color: "white",
+                        }}
+                      >
+                        {isSavingUpcomingDays ? "..." : "Go"}
+                      </Text>
+                    </Pressable>
+                  </View>
+                </Pressable>
+              </Pressable>
+            </KeyboardAvoidingView>
+          </Modal>
+
+          <Modal visible={showRestoreDeletedModal} transparent animationType="fade">
             <Pressable
               onPress={() => {
                 if (isRestoringDeletedEntries) return;

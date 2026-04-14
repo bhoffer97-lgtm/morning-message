@@ -295,7 +295,7 @@ export default function ComposeScreen() {
   const [draftCustomTimeHour, setDraftCustomTimeHour] = useState("7");
   const [draftCustomTimeMinute, setDraftCustomTimeMinute] = useState("00");
   const [customIntervalValue, setCustomIntervalValue] = useState("1");
-  const [customIntervalUnit, setCustomIntervalUnit] = useState<EntryIntervalUnit>("weeks");
+  const [customIntervalUnit, setCustomIntervalUnit] = useState<EntryIntervalUnit>("days");
   const [customDueDate, setCustomDueDate] = useState(getLocalDateString());
   const [customAnnualMonth, setCustomAnnualMonth] = useState("1");
   const [customAnnualDay, setCustomAnnualDay] = useState("1");
@@ -352,7 +352,7 @@ export default function ComposeScreen() {
       setCustomTimeMinute("00");
       setCustomTimePeriod("AM");
       setCustomIntervalValue("1");
-      setCustomIntervalUnit("weeks");
+      setCustomIntervalUnit("days");
       setCustomDueDate(getLocalDateString());
       setCustomAnnualMonth("1");
       setCustomAnnualDay("1");
@@ -713,7 +713,7 @@ export default function ComposeScreen() {
     setCustomTimeMinute("00");
     setCustomTimePeriod("AM");
     setCustomIntervalValue("1");
-    setCustomIntervalUnit("weeks");
+    setCustomIntervalUnit("days");
     setCustomDueDate(getLocalDateString());
     setCustomAnnualMonth("1");
     setCustomAnnualDay("1");
@@ -846,7 +846,7 @@ export default function ComposeScreen() {
       setCustomTimeMinute("00");
       setCustomTimePeriod("AM");
       setCustomIntervalValue("1");
-      setCustomIntervalUnit("weeks");
+      setCustomIntervalUnit("days");
       setCustomDueDate(getLocalDateString());
       setCustomAnnualMonth("1");
       setCustomAnnualDay("1");
