@@ -5,6 +5,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
+  Animated,
   ImageBackground,
   Keyboard,
   KeyboardAvoidingView,
@@ -713,7 +714,6 @@ export default function HomeScreen() {
   const [currentMessageIndex, setCurrentMessageIndex] = useState(0);
   const [verseText, setVerseText] = useState<string | null>(null);
    const [showVerseModal, setShowVerseModal] = useState(false);
-  const [showMessageModal, setShowMessageModal] = useState(false);
   const [showHomeMenu, setShowHomeMenu] = useState(false);
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
   const [showRestoreDeletedModal, setShowRestoreDeletedModal] = useState(false);
@@ -727,22 +727,28 @@ export default function HomeScreen() {
   const [homeEntries, setHomeEntries] = useState<DisplayEntry[]>([]);
   const [selectedEntry, setSelectedEntry] = useState<DisplayEntry | null>(null);
   const [showEntryModal, setShowEntryModal] = useState(false);
-  const [isArchivingEntry, setIsArchivingEntry] = useState(false);
+   const [isArchivingEntry, setIsArchivingEntry] = useState(false);
   const [isCompletingEntryId, setIsCompletingEntryId] = useState<string | null>(null);
+  const [pendingCompleteIds, setPendingCompleteIds] = useState<string[]>([]);
+  const [pendingUndoIds, setPendingUndoIds] = useState<string[]>([]);
   const [reminderSchedules, setReminderSchedules] = useState<ReminderScheduleRow[]>([]);
-   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isRegeneratingMessage, setIsRegeneratingMessage] = useState(false);
+  const [handledCount, setHandledCount] = useState(0);
+  const [animatedMorningMessage, setAnimatedMorningMessage] = useState("");
   const [pendingNotificationData, setPendingNotificationData] = useState<{
     kind?: string;
     cadence?: string;
     entryId?: string;
   } | null>(null);
 
-  const scrollViewRef = useRef<ScrollView | null>(null);
+   const scrollViewRef = useRef<ScrollView | null>(null);
   const messageScrollRef = useRef<ScrollView | null>(null);
   const injectedNotificationHandledRef = useRef(false);
   const upcomingSectionYRef = useRef(0);
-
+  const scrollY = useRef(new Animated.Value(0)).current;
+  const messageWriteTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastAnimatedMessageRef = useRef<string | null>(null);
   useLocalSearchParams<{ resetHomeAt?: string }>();
 
   const [backgroundImage] = useState(
@@ -874,7 +880,29 @@ export default function HomeScreen() {
     setPendingUpcomingDays(String(nextValue));
     return nextValue;
   }
+  async function loadHandledCount() {
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
 
+    if (userError || !user) {
+      console.log("Load handled count user error:", userError?.message);
+      return;
+    }
+
+    const { count, error } = await supabase
+      .from("entry_completion_log")
+      .select("*", { count: "exact", head: true })
+      .eq("user_id", user.id);
+
+    if (error) {
+      console.log("Load handled count error:", error.message);
+      return;
+    }
+
+    setHandledCount(count ?? 0);
+  }
     async function saveHomeUpcomingDays() {
     const parsed = Number(pendingUpcomingDays);
 
@@ -1028,7 +1056,7 @@ export default function HomeScreen() {
     }
   }
 
-    async function loadHomeEntries(upcomingDaysOverride?: number) {
+   async function loadHomeEntries(upcomingDaysOverride?: number) {
     const {
       data: { user },
       error: userError,
@@ -1037,6 +1065,21 @@ export default function HomeScreen() {
     if (userError || !user) {
       console.log("Load home entries user error:", userError?.message);
       return;
+    }
+
+    try {
+      const { error: refreshError } = await supabase.rpc(
+        "refresh_stale_recurring_entries",
+        {
+          p_user_id: user.id,
+        }
+      );
+
+      if (refreshError) {
+        console.log("Refresh stale recurring entries error:", refreshError.message);
+      }
+    } catch (refreshErr) {
+      console.log("Refresh stale recurring entries unexpected error:", refreshErr);
     }
 
     const upcomingDays = upcomingDaysOverride ?? homeUpcomingDays;
@@ -1267,10 +1310,15 @@ async function loadProfileDigestSettings() {
     }
   };
 
-  const completeEntryCycle = async (entry: DisplayEntry) => {
+   const completeEntryCycle = async (entry: DisplayEntry) => {
     if (isCompletingEntryId) return;
 
+    setPendingCompleteIds((current) =>
+      current.includes(entry.id) ? current : [...current, entry.id]
+    );
+    setPendingUndoIds((current) => current.filter((id) => id !== entry.id));
     setIsCompletingEntryId(entry.id);
+    showToast('Moving to "Handled Today"');
 
     try {
       const {
@@ -1282,7 +1330,7 @@ async function loadProfileDigestSettings() {
         return;
       }
 
-       const { data, error } = await supabase.rpc("complete_entry_cycle", {
+      const { data, error } = await supabase.rpc("complete_entry_cycle", {
         p_entry_id: entry.id,
         p_user_id: user.id,
         p_completed_due_at: entry.effective_run_at
@@ -1310,14 +1358,14 @@ async function loadProfileDigestSettings() {
       }
 
       await loadHomeEntries();
-      showToast("Moved to Handled Today");
-      
+
       try {
         await syncLocalNotifications();
       } catch (syncError) {
         console.log("Complete entry notification sync error:", syncError);
       }
     } finally {
+      setPendingCompleteIds((current) => current.filter((id) => id !== entry.id));
       setIsCompletingEntryId(null);
     }
   };
@@ -1325,7 +1373,12 @@ async function loadProfileDigestSettings() {
   const uncompleteEntryCycle = async (entry: DisplayEntry) => {
     if (isCompletingEntryId) return;
 
+    setPendingUndoIds((current) =>
+      current.includes(entry.id) ? current : [...current, entry.id]
+    );
+    setPendingCompleteIds((current) => current.filter((id) => id !== entry.id));
     setIsCompletingEntryId(entry.id);
+    showToast('Moving to "For Today"');
 
     try {
       const {
@@ -1360,7 +1413,6 @@ async function loadProfileDigestSettings() {
       }
 
       await loadHomeEntries();
-      showToast("Moved back to For Today");
 
       try {
         await syncLocalNotifications();
@@ -1368,6 +1420,7 @@ async function loadProfileDigestSettings() {
         console.log("Undo entry notification sync error:", syncError);
       }
     } finally {
+      setPendingUndoIds((current) => current.filter((id) => id !== entry.id));
       setIsCompletingEntryId(null);
     }
   };
@@ -1488,8 +1541,9 @@ async function loadProfileDigestSettings() {
         await generateDailyMessage();
       }
 
-      const initialUpcomingDays = await loadHomeUpcomingDays();
+        const initialUpcomingDays = await loadHomeUpcomingDays();
       await loadProfileDigestSettings();
+      await loadHandledCount();
       await loadHomeEntries(initialUpcomingDays);
 
       try {
@@ -1502,9 +1556,10 @@ async function loadProfileDigestSettings() {
     initialize();
   }, []);
 
-  useFocusEffect(
+   useFocusEffect(
     useCallback(() => {
       loadProfileDigestSettings();
+      loadHandledCount();
       loadHomeEntries(homeUpcomingDays);
 
       requestAnimationFrame(() => {
@@ -1537,80 +1592,62 @@ async function loadProfileDigestSettings() {
     return selectedEntry ? isEntryCurrentlyHandled(selectedEntry, reminderSchedules) : false;
   }, [selectedEntry, reminderSchedules]);
 
-  function renderComposeCard() {
-    return (
-      <Pressable
-        onPress={() => {
-          router.push({
-            pathname: "/compose",
-            params: {
-              mode: "create",
-            },
-          });
-        }}
-        style={{
-          marginHorizontal: 20,
-          marginBottom: 16,
-          borderRadius: 24,
-          overflow: "hidden",
-          shadowColor: "#000",
-          shadowOpacity: 0.1,
-          shadowRadius: 14,
-          shadowOffset: { width: 0, height: 6 },
-          elevation: 4,
-        }}
-      >
-        <View
-          style={{
-            backgroundColor: "rgba(250,246,236,0.94)",
-            borderWidth: 1,
-            borderColor: "rgba(255,255,255,0.72)",
-            borderRadius: 24,
-            paddingHorizontal: 18,
-            paddingTop: 14,
-            paddingBottom: 18,
-          }}
-        >
-          <Text
-            style={{
-              fontSize: 12,
-              fontWeight: "700",
-              letterSpacing: 1.1,
-              color: "#8b6f47",
-              textTransform: "uppercase",
-              marginBottom: 10,
-              textAlign: "center",
-            }}
-          >
-            Today’s Reflection
-          </Text>
+  const backgroundDimOpacity = scrollY.interpolate({
+    inputRange: [0, 120, 300, 650],
+    outputRange: [0, 0.18, 0.42, 0.72],
+    extrapolate: "clamp",
+  });
 
-          <View
-            style={{
-              borderTopWidth: 1,
-              borderTopColor: "rgba(139,111,71,0.14)",
-              paddingTop: 14,
-            }}
-          >
-            <Text
-              style={{
-                color: "#6b7280",
-                lineHeight: 24,
-                fontSize: 17,
-                fontWeight: "500",
-                fontStyle: "italic",
-                textAlign: "center",
-              }}
-            >
-              Tap to write a prayer, goal, affirmation or reminder
-            </Text>
-          </View>
-        </View>
-      </Pressable>
-    );
-  }
+  const fullMorningMessage =
+    currentDailyMessage?.message_text ||
+    currentDailyMessage?.message ||
+    "";
+
+  useEffect(() => {
+    const nextMessage = fullMorningMessage.trim();
+
+    if (messageWriteTimeoutRef.current) {
+      clearTimeout(messageWriteTimeoutRef.current);
+      messageWriteTimeoutRef.current = null;
+    }
+
+    if (!nextMessage) {
+      setAnimatedMorningMessage("Preparing your morning message…");
+      return;
+    }
+
+    if (lastAnimatedMessageRef.current === nextMessage) {
+      setAnimatedMorningMessage(nextMessage);
+      return;
+    }
+
+    lastAnimatedMessageRef.current = nextMessage;
+    setAnimatedMorningMessage("");
+
+    let cursor = 0;
+    const stepSize = nextMessage.length > 70 ? 3 : 2;
+
+    const writeNext = () => {
+      cursor = Math.min(nextMessage.length, cursor + stepSize);
+      setAnimatedMorningMessage(nextMessage.slice(0, cursor));
+
+      if (cursor < nextMessage.length) {
+        messageWriteTimeoutRef.current = setTimeout(writeNext, 42);
+      }
+    };
+
+    messageWriteTimeoutRef.current = setTimeout(writeNext, 180);
+
+    return () => {
+      if (messageWriteTimeoutRef.current) {
+        clearTimeout(messageWriteTimeoutRef.current);
+        messageWriteTimeoutRef.current = null;
+      }
+    };
+  }, [fullMorningMessage]);
 
   function renderSectionTitle(title: string, subtitle?: string) {
+  
     return (
       <View style={{ marginBottom: 10 }}>
          <Text
@@ -1632,7 +1669,7 @@ async function loadProfileDigestSettings() {
             style={{
               fontSize: 13,
               lineHeight: 19,
-              color: "#4b5563",
+              color: "rgba(255,255,255,0.72)",
             }}
           >
             {subtitle}
@@ -1645,7 +1682,9 @@ async function loadProfileDigestSettings() {
    function renderEntryRow(entry: DisplayEntry, allowComplete = false) {
     const isBlue = entry.type === "reminder";
     const isCompleting = isCompletingEntryId === entry.id;
-    const isHandled = entry.section === "handled_today";
+    const isHandled =
+      pendingCompleteIds.includes(entry.id) ||
+      (entry.section === "handled_today" && !pendingUndoIds.includes(entry.id));
 
     return (
       <View
@@ -1730,14 +1769,18 @@ async function loadProfileDigestSettings() {
               }
             }}
             disabled={isCompleting}
+            hitSlop={10}
             style={{
-              width: 38,
+              width: 48,
+              minHeight: 40,
               alignItems: "center",
-              paddingTop: 2,
+              justifyContent: "center",
+              marginTop: -2,
+              marginRight: -4,
             }}
           >
             <View
-               style={{
+              style={{
                 width: 26,
                 height: 26,
                 borderRadius: 13,
@@ -1780,15 +1823,17 @@ async function loadProfileDigestSettings() {
     if (entries.length === 0 && !emptyText) return null;
 
     return (
-      <View
+       <View
         style={{
           backgroundColor:
             variant === "dark"
-              ? "rgba(55,65,81,0.52)"
-              : "rgba(255,255,255,0.18)",
-          borderRadius: 18,
+              ? "rgba(17,24,39,0.58)"
+              : "rgba(17,24,39,0.34)",
+          borderRadius: 20,
           padding: 14,
           marginBottom: 14,
+          borderWidth: 1,
+          borderColor: "rgba(255,255,255,0.10)",
         }}
       >
         {renderSectionTitle(title)}
@@ -1824,7 +1869,7 @@ async function loadProfileDigestSettings() {
           <Text
             style={{
               fontSize: 14,
-              color: "#4b5563",
+              color: "rgba(255,255,255,0.72)",
             }}
           >
             {emptyText}
@@ -1844,12 +1889,21 @@ async function loadProfileDigestSettings() {
           <LinearGradient
             pointerEvents="none"
             colors={[
-              "rgba(255,255,255,0.10)",
-              "rgba(255,255,255,0.24)",
-              "rgba(255,255,255,0.48)",
+              "rgba(255,255,255,0.08)",
+              "rgba(255,255,255,0.18)",
+              "rgba(255,255,255,0.34)",
             ]}
             style={{
               ...StyleSheet.absoluteFillObject,
+            }}
+          />
+
+          <Animated.View
+            pointerEvents="none"
+            style={{
+              ...StyleSheet.absoluteFillObject,
+              backgroundColor: "black",
+              opacity: backgroundDimOpacity,
             }}
           />
 
@@ -1859,167 +1913,230 @@ async function loadProfileDigestSettings() {
           >
             <View style={{ flex: 1 }}>
                <View
+                pointerEvents="box-none"
                 style={{
-                  marginBottom: 8,
-                  minHeight: 6,
-                  position: "relative",
-                }}
-              >
-                <Pressable
-                  onPress={() => setShowHomeMenu(true)}
-                  hitSlop={10}
-                  style={{
-                    position: "absolute",
-                    right: 20,
-                    top: 0,
-                    width: 34,
-                    height: 34,
-                    borderRadius: 17,
-                    alignItems: "center",
-                    justifyContent: "center",
-                    backgroundColor: "rgba(255,255,255,0.16)",
-                    borderWidth: 1,
-                    borderColor: "rgba(255,255,255,0.20)",
-                    zIndex: 5,
-                  }}
-                >
-                  <Text
-                    style={{
-                      color: "white",
-                      fontSize: 18,
-                      fontWeight: "700",
-                      lineHeight: 18,
-                    }}
-                  >
-                    ⋯
-                  </Text>
-                </Pressable>
-              </View>
-              <Pressable
-                onPress={() => {
-                  if (dailyMessages.length > 0) {
-                    setShowMessageModal(true);
-                  }
-                }}
-                onLongPress={() => {
-                  generateDailyMessage(true);
-                }}
-                style={{
-                  marginBottom: 14,
-                  marginHorizontal: 20,
-                  borderRadius: 26,
-                  overflow: "hidden",
-                  shadowColor: "#000",
-                  shadowOpacity: 0.12,
-                  shadowRadius: 16,
-                  shadowOffset: { width: 0, height: 8 },
-                  elevation: 5,
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  zIndex: 20,
+                  paddingHorizontal: 16,
+                  paddingTop: 14,
                 }}
               >
                 <View
                   style={{
-                    backgroundColor: "rgba(250,248,242,0.94)",
-                    borderWidth: 1,
-                    borderColor: "rgba(255,255,255,0.82)",
-                    borderRadius: 26,
-                    paddingTop: 16,
-                    paddingBottom: 18,
-                    paddingHorizontal: 18,
-                    minHeight: 128,
-                    justifyContent: "center",
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "space-between",
                   }}
                 >
-                  <View
+                  <Pressable
+                    onPress={() => setShowHomeMenu(true)}
+                    hitSlop={10}
                     style={{
+                      width: 40,
+                      height: 40,
                       alignItems: "center",
-                      marginBottom: 10,
+                      justifyContent: "center",
                     }}
                   >
                     <Text
                       style={{
-                        fontSize: 11,
+                        color: "white",
+                        fontSize: 20,
                         fontWeight: "700",
-                        letterSpacing: 1.3,
-                        color: "#8b6f47",
-                        textTransform: "uppercase",
-                        marginBottom: 6,
+                        lineHeight: 20,
+                        textShadowColor: "rgba(0,0,0,0.35)",
+                        textShadowOffset: { width: 0, height: 1 },
+                        textShadowRadius: 4,
                       }}
+                    >
+                      ☰
+                    </Text>
+                  </Pressable>
+
+                  <Pressable
+                    onPress={() => generateDailyMessage(true)}
+                    hitSlop={10}
+                    style={{
+                      flex: 1,
+                      alignItems: "center",
+                      justifyContent: "center",
+                      paddingHorizontal: 12,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        color: "white",
+                        fontSize: 17,
+                        fontWeight: "700",
+                        letterSpacing: 0.2,
+                        textShadowColor: "rgba(0,0,0,0.35)",
+                        textShadowOffset: { width: 0, height: 1 },
+                        textShadowRadius: 4,
+                      }}
+                      numberOfLines={1}
                     >
                       Morning Message
                     </Text>
+                  </Pressable>
 
-                    <View
-                      style={{
-                        width: 42,
-                        height: 2,
-                        borderRadius: 2,
-                        backgroundColor: "rgba(139,111,71,0.28)",
-                      }}
-                    />
-                  </View>
-
-                  <Text
+                  <View
                     style={{
-                      fontSize: 25,
-                      lineHeight: 32,
-                      color: "#1f2937",
-                      textAlign: "center",
-                      fontWeight: "600",
-                      letterSpacing: 0.2,
-                      paddingHorizontal: 8,
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 8,
                     }}
-                    numberOfLines={3}
                   >
-                    {currentDailyMessage?.message_text ||
-                      currentDailyMessage?.message ||
-                      "Preparing your morning message…"}
-                  </Text>
-
-                  {!!currentDailyMessage?.verse_reference && (
                     <Pressable
-                      onPress={() => {
-                        if (currentDailyMessage?.verse_reference) {
-                          loadVerse(currentDailyMessage.verse_reference);
-                        }
-                      }}
+                      onPress={() =>
+                        Alert.alert(
+                          "Share",
+                          "Share card setup is coming in Phase 3. For now, this is the new header placement."
+                        )
+                      }
                       hitSlop={10}
                       style={{
-                        marginTop: 12,
-                        alignSelf: "center",
-                        paddingVertical: 6,
-                        paddingHorizontal: 12,
-                        borderRadius: 999,
-                        backgroundColor: "rgba(139,111,71,0.10)",
+                        width: 40,
+                        height: 40,
+                        alignItems: "center",
+                        justifyContent: "center",
                       }}
                     >
                       <Text
                         style={{
-                          fontSize: 12,
-                          color: "#6b7280",
+                          color: "white",
+                          fontSize: 18,
+                          fontWeight: "700",
+                          textShadowColor: "rgba(0,0,0,0.35)",
+                          textShadowOffset: { width: 0, height: 1 },
+                          textShadowRadius: 4,
+                        }}
+                      >
+                        ↗
+                      </Text>
+                    </Pressable>
+
+                    <Pressable
+                      onPress={() =>
+                        Alert.alert(
+                          "Handled",
+                          `Handled count: ${handledCount}\n\nDetailed stats screen comes next.`
+                        )
+                      }
+                      hitSlop={10}
+                      style={{
+                        minWidth: 42,
+                        height: 30,
+                        borderRadius: 15,
+                        paddingHorizontal: 10,
+                        alignItems: "center",
+                        justifyContent: "center",
+                        backgroundColor: "rgba(0,0,0,0.22)",
+                        borderWidth: 1,
+                        borderColor: "rgba(255,255,255,0.16)",
+                      }}
+                    >
+                      <Text
+                        style={{
+                          color: "white",
+                          fontSize: 13,
+                          fontWeight: "800",
+                          textShadowColor: "rgba(0,0,0,0.25)",
+                          textShadowOffset: { width: 0, height: 1 },
+                          textShadowRadius: 3,
+                        }}
+                      >
+                        {handledCount}
+                      </Text>
+                    </Pressable>
+                  </View>
+                </View>
+              </View>
+
+              <Animated.ScrollView
+                ref={scrollViewRef}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+                scrollEventThrottle={16}
+                onScroll={Animated.event(
+                  [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+                  { useNativeDriver: false }
+                )}
+                contentContainerStyle={{
+                  paddingHorizontal: 20,
+                  paddingBottom: 220,
+                  paddingTop: 92,
+                }}
+              >
+                <Pressable
+                  onPress={() => {
+                    if (currentDailyMessage?.verse_reference) {
+                      loadVerse(currentDailyMessage.verse_reference);
+                    }
+                  }}
+                  onLongPress={() => {
+                    generateDailyMessage(true);
+                  }}
+                  style={{
+                    minHeight: 230,
+                    paddingTop: 30,
+                    paddingBottom: 42,
+                    paddingHorizontal: 12,
+                    justifyContent: "center",
+                    alignItems: "center",
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 34,
+                      lineHeight: 44,
+                      color: "white",
+                      textAlign: "center",
+                      fontWeight: "600",
+                      letterSpacing: 0.2,
+                      textShadowColor: "rgba(0,0,0,0.42)",
+                      textShadowOffset: { width: 0, height: 2 },
+                      textShadowRadius: 10,
+                    }}
+                  >
+                    {animatedMorningMessage || "Preparing your morning message…"}
+                  </Text>
+
+                  {!!currentDailyMessage?.verse_reference && (
+                    <View
+                      style={{
+                        marginTop: 18,
+                        alignSelf: "center",
+                        paddingVertical: 8,
+                        paddingHorizontal: 16,
+                        borderRadius: 999,
+                        backgroundColor: "rgba(17,24,39,0.24)",
+                        borderWidth: 1,
+                        borderColor: "rgba(255,255,255,0.18)",
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 13,
+                          color: "#f4ead8",
                           textAlign: "center",
                           fontWeight: "700",
                           letterSpacing: 0.3,
+                          textShadowColor: "rgba(0,0,0,0.25)",
+                          textShadowOffset: { width: 0, height: 1 },
+                          textShadowRadius: 2,
                         }}
                       >
                         {currentDailyMessage.verse_reference}
                       </Text>
-                    </Pressable>
+                    </View>
                   )}
-                </View>
-              </Pressable>
+                </Pressable>
 
-              {renderComposeCard()}
+                <View style={{ height: 8 }} />
 
-              <ScrollView
-                ref={scrollViewRef}
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={{
-                  paddingHorizontal: 20,
-                  paddingBottom: 220,
-                  paddingTop: 4,
-                }}
-              >
                  {renderSectionCard(
                   "For Today",
                   forTodayEntries,
@@ -2037,15 +2154,17 @@ async function loadProfileDigestSettings() {
                   "dark"
                 )}
 
-                <View
+                 <View
                   onLayout={(event) => {
                     upcomingSectionYRef.current = event.nativeEvent.layout.y;
                   }}
                   style={{
-                    backgroundColor: "rgba(55,65,81,0.52)",
-                    borderRadius: 18,
+                    backgroundColor: "rgba(17,24,39,0.58)",
+                    borderRadius: 20,
                     padding: 14,
                     marginBottom: 14,
+                    borderWidth: 1,
+                    borderColor: "rgba(255,255,255,0.10)",
                   }}
                 >
                   <Pressable
@@ -2073,12 +2192,12 @@ async function loadProfileDigestSettings() {
                   </Pressable>
 
                   {upcomingEntries.length === 0 ? (
-                    <Text
-                      style={{
-                        fontSize: 14,
-                        color: "#4b5563",
-                      }}
-                    >
+                  <Text
+                    style={{
+                      fontSize: 14,
+                      color: "rgba(255,255,255,0.72)",
+                    }}
+                  >
                       Nothing upcoming in this range.
                     </Text>
                   ) : (
@@ -2087,7 +2206,7 @@ async function loadProfileDigestSettings() {
                     ))
                   )}
                 </View>
-              </ScrollView>
+              </Animated.ScrollView>
             </View>
           </KeyboardAvoidingView>
 
@@ -3149,128 +3268,6 @@ async function loadProfileDigestSettings() {
                       </Text>
                     </Pressable>
                   </>
-                )}
-              </Pressable>
-            </Pressable>
-          </Modal>
-
-          <Modal visible={showMessageModal} transparent animationType="fade">
-            <Pressable
-              onPress={() => setShowMessageModal(false)}
-              style={{
-                flex: 1,
-                backgroundColor: "rgba(0,0,0,0.22)",
-                justifyContent: "center",
-                paddingHorizontal: 20,
-                paddingVertical: 40,
-              }}
-            >
-              <Pressable
-                onPress={() => {}}
-                style={{
-                  backgroundColor: "rgba(255,255,255,0.96)",
-                  borderRadius: 22,
-                  padding: 22,
-                  borderWidth: 1,
-                  borderColor: "rgba(255,255,255,0.95)",
-                }}
-              >
-                <Pressable
-                  onPress={() => setShowMessageModal(false)}
-                  hitSlop={10}
-                  style={{
-                    position: "absolute",
-                    top: 14,
-                    right: 14,
-                    zIndex: 2,
-                    width: 28,
-                    height: 28,
-                    borderRadius: 14,
-                    alignItems: "center",
-                    justifyContent: "center",
-                    backgroundColor: "rgba(0,0,0,0.08)",
-                  }}
-                >
-                  <Text
-                    style={{
-                      fontSize: 16,
-                      fontWeight: "700",
-                      color: "#444",
-                      lineHeight: 16,
-                    }}
-                  >
-                    ×
-                  </Text>
-                </Pressable>
-
-                <Text
-                  style={{
-                    fontSize: 18,
-                    fontWeight: "700",
-                    color: "#111",
-                    textAlign: "center",
-                    marginBottom: 10,
-                    paddingHorizontal: 20,
-                  }}
-                >
-                  Morning Message
-                  {currentDailyMessage?.message_date
-                    ? ` - ${new Date(currentDailyMessage.message_date).toLocaleDateString()}`
-                    : ""}
-                </Text>
-
-                <Text
-                  style={{
-                    fontSize: 17,
-                    lineHeight: 28,
-                    color: "#111",
-                    textAlign: "center",
-                    fontWeight: "500",
-                    marginBottom: 14,
-                  }}
-                >
-                  {currentDailyMessage?.message || "Preparing your morning message…"}
-                </Text>
-
-                {!!currentDailyMessage?.verse_reference && (
-                  <Text
-                    style={{
-                      fontSize: 13,
-                      color: "#111",
-                      textAlign: "center",
-                      fontWeight: "700",
-                      marginBottom: 12,
-                    }}
-                  >
-                    {currentDailyMessage.verse_reference}
-                  </Text>
-                )}
-
-                {!!currentDailyMessage?.verse_reference && (
-                  <Pressable
-                    hitSlop={12}
-                    onPress={() => {
-                      setShowMessageModal(false);
-                      if (currentDailyMessage?.verse_reference) {
-                        loadVerse(currentDailyMessage.verse_reference);
-                      }
-                    }}
-                    style={{
-                      paddingTop: 4,
-                    }}
-                  >
-                    <Text
-                      style={{
-                        fontSize: 13,
-                        color: "#111",
-                        textAlign: "center",
-                        textDecorationLine: "underline",
-                        fontWeight: "600",
-                      }}
-                    >
-                      Read {currentDailyMessage.verse_reference}
-                    </Text>
-                  </Pressable>
                 )}
               </Pressable>
             </Pressable>

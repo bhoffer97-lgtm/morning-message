@@ -533,144 +533,219 @@ return new Response(JSON.stringify({ text: textOutput, title: titleOutput }), {
 });
 }
 
-  if (mode === "daily") {
-  const today = formatLocalDate(new Date());
+   if (mode === "daily") {
+    const today = formatLocalDate(new Date());
 
-const { data: existingMessages, error: existingError } = await userSupabase
-  .from("daily_messages")
-  .select("id, message_index, message_text, verse_reference, verse_query, is_primary")
-  .eq("user_id", user.id)
-  .eq("message_date", today)
-  .order("message_index", { ascending: true });
+    const { data: existingMessages, error: existingError } = await userSupabase
+      .from("daily_messages")
+      .select("id, message_index, message_text, verse_reference, verse_query, is_primary")
+      .eq("user_id", user.id)
+      .eq("message_date", today)
+      .order("message_index", { ascending: true });
 
-      if (existingError) {
-        console.log("Existing daily messages lookup error:", existingError.message);
+    if (existingError) {
+      console.log("Existing daily messages lookup error:", existingError.message);
+    }
+
+    if (!forceRegenerate && existingMessages && existingMessages.length > 0) {
+      const primaryMessage =
+        existingMessages.find((item) => item.is_primary) ?? existingMessages[0];
+
+      return new Response(
+        JSON.stringify({
+          message: primaryMessage.message_text,
+          verse_reference: primaryMessage.verse_reference,
+          verse_query: primaryMessage.verse_query,
+          message_index: primaryMessage.message_index ?? 0,
+          is_primary: primaryMessage.is_primary ?? true,
+        }),
+        {
+          headers: { "Content-Type": "application/json" },
+          status: 200,
+        }
+      );
+    }
+
+    const { data: profileRow, error: profileError } = await userSupabase
+      .from("profiles")
+      .select("curated_day_index, last_home_message_date")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    if (profileError) {
+      console.log("Profile lookup error:", profileError.message);
+    }
+
+    const currentCuratedDayIndex = Number(profileRow?.curated_day_index ?? 0);
+    const lastHomeMessageDate = profileRow?.last_home_message_date ?? null;
+
+    let targetCuratedDayIndex = currentCuratedDayIndex;
+
+    if (!forceRegenerate && today !== lastHomeMessageDate && currentCuratedDayIndex < 30) {
+      targetCuratedDayIndex = currentCuratedDayIndex + 1;
+
+      const { error: profileUpdateError } = await adminSupabase
+        .from("profiles")
+        .update({
+          curated_day_index: targetCuratedDayIndex,
+          last_home_message_date: today,
+        })
+        .eq("id", user.id);
+
+      if (profileUpdateError) {
+        console.log("Profile curated progress update error:", profileUpdateError.message);
+      }
+    }
+
+    let selectedMessageText: string | null = null;
+    let selectedVerseReference: string | null = null;
+
+    if (targetCuratedDayIndex > 0 && targetCuratedDayIndex <= 30) {
+      const { data: curatedRow, error: curatedError } = await adminSupabase
+        .from("curated_daily_schedule")
+        .select("verse_message_id")
+        .eq("day_number", targetCuratedDayIndex)
+        .eq("active", true)
+        .maybeSingle();
+
+      if (curatedError) {
+        console.log("Curated schedule lookup error:", curatedError.message);
       }
 
-            console.log("daily existingMessages check:", {
-        forceRegenerate,
-        existingCount: existingMessages?.length ?? 0,
-      });
+      if (curatedRow?.verse_message_id) {
+        const { data: verseMessageRow, error: verseMessageError } = await adminSupabase
+          .from("verse_messages")
+          .select("id, verse_id, message_text")
+          .eq("id", curatedRow.verse_message_id)
+          .eq("active", true)
+          .maybeSingle();
 
-const recentEntries = activeEntries
-  .filter(
-    (entry) =>
-      entry &&
-      typeof entry.content === "string" &&
-      entry.content.trim().length > 0
-  )
-  .slice(0, 8);
+        if (verseMessageError) {
+          console.log("Curated verse message lookup error:", verseMessageError.message);
+        }
 
-const { data: recentMessages, error: recentMessagesError } = await userSupabase
-  .from("daily_messages")
-  .select("verse_reference")
-  .eq("user_id", user.id)
-  .not("verse_reference", "is", null)
-  .order("message_date", { ascending: false })
-  .limit(60);
+        if (verseMessageRow?.verse_id && verseMessageRow?.message_text) {
+          const { data: verseRow, error: verseError } = await adminSupabase
+            .from("bible_verses")
+            .select("reference")
+            .eq("id", verseMessageRow.verse_id)
+            .maybeSingle();
 
-if (recentMessagesError) {
-  console.log("Recent daily messages lookup error:", recentMessagesError.message);
-}
+          if (verseError) {
+            console.log("Curated verse lookup error:", verseError.message);
+          }
 
-const recentlyUsedVerses = (recentMessages ?? [])
-  .map((item) => item.verse_reference)
-  .filter(Boolean);
+          selectedMessageText = verseMessageRow.message_text;
+          selectedVerseReference = verseRow?.reference ?? null;
+        }
+      }
+    } else {
+      const recentEntries = activeEntries
+        .filter(
+          (entry) =>
+            entry &&
+            typeof entry.content === "string" &&
+            entry.content.trim().length > 0
+        )
+        .slice(0, 8);
 
-const selectedVerse = await chooseDailyVerse(
-  userSupabase,
-  recentEntries,
-  recentlyUsedVerses
-);
+      const { data: recentMessages, error: recentMessagesError } = await userSupabase
+        .from("daily_messages")
+        .select("verse_reference")
+        .eq("user_id", user.id)
+        .not("verse_reference", "is", null)
+        .order("message_date", { ascending: false })
+        .limit(60);
 
-const prompt = buildDailyPrompt({
-  verseReference: selectedVerse.verseReference,
-  verseText: selectedVerse.verseText,
-  mode: selectedVerse.mode,
-  themes: selectedVerse.themes,
-  principles: selectedVerse.principles,
-  count: 1,
-});
+      if (recentMessagesError) {
+        console.log("Recent daily messages lookup error:", recentMessagesError.message);
+      }
 
-const aiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${openAiKey}`,
-  },
-  body: JSON.stringify({
-    model: "gpt-4o-mini",
-    messages: [
-      {
-        role: "system",
-        content:
-          "You write short, grounded, emotionally honest Christian morning encouragement.",
-      },
-      {
-        role: "user",
-        content: prompt,
-      },
-    ],
-    temperature: 0.8,
-    max_tokens: 160,
-  }),
-});
+      const recentlyUsedVerses = (recentMessages ?? [])
+        .map((item) => item.verse_reference)
+        .filter(Boolean);
 
-const aiData = await aiResponse.json();
-const rawOutput = aiData?.choices?.[0]?.message?.content?.trim() ?? "";
+      const selectedVerse = await chooseDailyVerse(
+        userSupabase,
+        recentEntries,
+        recentlyUsedVerses
+      );
 
-let parsed: any = null;
+      const { data: verseRow, error: verseLookupError } = await adminSupabase
+        .from("bible_verses")
+        .select("id, reference")
+        .eq("reference", selectedVerse.verseReference)
+        .maybeSingle();
 
-try {
-  parsed = JSON.parse(rawOutput);
-} catch {
-  parsed = null;
-}
+      if (verseLookupError) {
+        console.log("Personalized verse lookup error:", verseLookupError.message);
+      }
 
-const normalizedMessage =
-  parsed &&
-  typeof parsed.message === "string" &&
-  parsed.message.trim().length > 0
-    ? parsed.message.trim()
-    : "God’s mercy is new this morning. Receive His grace, trust His presence, and take the next step in peace.";
+      if (verseRow?.id) {
+        const { data: verseMessageRow, error: verseMessageError } = await adminSupabase
+          .from("verse_messages")
+          .select("message_text")
+          .eq("verse_id", verseRow.id)
+          .eq("variant_key", "v1")
+          .eq("active", true)
+          .maybeSingle();
 
-const nextMessageIndex =
-  existingMessages && existingMessages.length > 0
-    ? Math.max(...existingMessages.map((item) => item.message_index ?? 0)) + 1
-    : 0;
+        if (verseMessageError) {
+          console.log("Personalized verse message lookup error:", verseMessageError.message);
+        }
 
-const messageToSave = {
-  user_id: user.id,
-  message_date: today,
-  message_text: normalizedMessage,
-  verse_reference: selectedVerse.verseReference,
-  verse_query: selectedVerse.verseReference,
-  message_index: nextMessageIndex,
-  is_primary: nextMessageIndex === 0,
-};
-
-const { error: insertError } = await adminSupabase
-  .from("daily_messages")
-  .insert(messageToSave);
-
-if (insertError) {
-  console.log("Daily message insert error:", insertError.message);
-}
-
-return new Response(
-  JSON.stringify({
-    message: messageToSave.message_text,
-    verse_reference: messageToSave.verse_reference,
-    verse_query: messageToSave.verse_query,
-    message_index: messageToSave.message_index,
-    is_primary: messageToSave.is_primary,
-  }),
-  {
-    headers: { "Content-Type": "application/json" },
-    status: 200,
-  }
-);
+        selectedMessageText = verseMessageRow?.message_text ?? null;
+        selectedVerseReference = verseRow.reference ?? selectedVerse.verseReference;
+      }
     }
+
+    const fallbackMessage =
+      "God’s mercy is new this morning. Receive His grace, trust His presence, and take the next step in peace.";
+
+    const messageToSave = {
+      user_id: user.id,
+      message_date: today,
+      message_text: selectedMessageText ?? fallbackMessage,
+      verse_reference: selectedVerseReference,
+      verse_query: selectedVerseReference,
+      message_index: 0,
+      is_primary: true,
+    };
+
+    if (forceRegenerate && existingMessages && existingMessages.length > 0) {
+      const { error: replaceError } = await adminSupabase
+        .from("daily_messages")
+        .delete()
+        .eq("user_id", user.id)
+        .eq("message_date", today);
+
+      if (replaceError) {
+        console.log("Daily message replace delete error:", replaceError.message);
+      }
+    }
+
+    const { error: insertError } = await adminSupabase
+      .from("daily_messages")
+      .insert(messageToSave);
+
+    if (insertError) {
+      console.log("Daily message insert error:", insertError.message);
+    }
+
+    return new Response(
+      JSON.stringify({
+        message: messageToSave.message_text,
+        verse_reference: messageToSave.verse_reference,
+        verse_query: messageToSave.verse_query,
+        message_index: messageToSave.message_index,
+        is_primary: messageToSave.is_primary,
+      }),
+      {
+        headers: { "Content-Type": "application/json" },
+        status: 200,
+      }
+    );
+  }
 
     return new Response(
       JSON.stringify({

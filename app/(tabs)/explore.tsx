@@ -139,17 +139,42 @@ function replaceDateParts(
   return formatDateString(year, month, day);
 }
 
-function getNextDateForWeekday(targetDay: number) {
+function getTimeStringToMinutes(time: string | null) {
+  if (!time) return 0;
+  const [hours, minutes] = time.split(":");
+  return (Number(hours) || 0) * 60 + (Number(minutes) || 0);
+}
+
+function getCurrentMinuteOfDay() {
+  const now = new Date();
+  return now.getHours() * 60 + now.getMinutes();
+}
+
+function getNextDateForWeekday(targetDay: number, timeOfDay?: string | null) {
   const now = new Date();
   const currentDay = now.getDay();
   let diff = targetDay - currentDay;
 
   if (diff < 0) diff += 7;
-  if (diff === 0) diff = 7;
 
-  now.setDate(now.getDate() + diff);
+  if (diff === 0) {
+    const selectedMinutes = getTimeStringToMinutes(timeOfDay ?? null);
+    const currentMinutes = getCurrentMinuteOfDay();
 
-  return formatDateString(now.getFullYear(), now.getMonth() + 1, now.getDate());
+    if (selectedMinutes < currentMinutes) {
+      diff = 7;
+    }
+  }
+
+  const result = new Date(now);
+  result.setHours(0, 0, 0, 0);
+  result.setDate(now.getDate() + diff);
+
+  return formatDateString(
+    result.getFullYear(),
+    result.getMonth() + 1,
+    result.getDate()
+  );
 }
 
 function getCadenceTitle(cadence: ReminderCadence) {
@@ -624,14 +649,34 @@ export default function ReminderGroupsScreen() {
     if (!pendingTimeCadence) return;
 
     const cadence = pendingTimeCadence;
+    const schedule = schedulesByCadence[cadence];
+    const nextTime = build24HourTime(
+      pendingTimeHour || "12",
+      pendingTimeMinute || "00",
+      pendingTimePeriod
+    );
+
     setPendingTimeCadence(null);
 
+    if (!schedule) {
+      await updateSchedule(cadence, {
+        time_of_day: nextTime,
+      });
+      return;
+    }
+
+    if (cadence === "weekly") {
+      const weekday = new Date(`${schedule.anchor_date}T00:00:00`).getDay();
+
+      await updateSchedule(cadence, {
+        time_of_day: nextTime,
+        anchor_date: getNextDateForWeekday(weekday, nextTime),
+      });
+      return;
+    }
+
     await updateSchedule(cadence, {
-      time_of_day: build24HourTime(
-        pendingTimeHour || "12",
-        pendingTimeMinute || "00",
-        pendingTimePeriod
-      ),
+      time_of_day: nextTime,
     });
   }
 
@@ -768,7 +813,7 @@ export default function ReminderGroupsScreen() {
 
     if (currentSelector.type === "weekday") {
       await updateSchedule(schedule.cadence, {
-        anchor_date: getNextDateForWeekday(value),
+        anchor_date: getNextDateForWeekday(value, schedule.time_of_day),
       });
       return;
     }
