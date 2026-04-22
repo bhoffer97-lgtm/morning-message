@@ -18,7 +18,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { syncLocalNotifications } from "../../lib/notifications/syncNotifications";
 import { supabase } from "../../lib/supabase";
 
-const reminderBackground = require("../../assets/images/morning-nature-3.jpg");
+const reminderBackground = require("../../assets/images/morning-nature-19.jpg");
 
 type Entry = {
   id: string;
@@ -1526,31 +1526,45 @@ export default function RemindersScreen() {
             <View
               style={{
                 paddingHorizontal: 20,
-                paddingTop: 18,
+                paddingTop: 45,
                 paddingBottom: 12,
               }}
             >
-              <Text
+              <View
                 style={{
-                  fontSize: 28,
-                  fontWeight: "700",
-                  color: "#111",
-                  marginBottom: 6,
+                  alignItems: "center",
+                  marginBottom: 18,
                 }}
               >
-                Reminders
-              </Text>
+                <Text
+                  style={{
+                    fontSize: 28,
+                    fontWeight: "700",
+                    color: "#111",
+                    textAlign: "center",
+                    textShadowColor: "rgba(0,0,0,0.35)",
+                    textShadowOffset: { width: 0, height: 1 },
+                    textShadowRadius: 6,
+                    marginBottom: 6,
+                  }}
+                >
+                  Entries
+                </Text>
 
-              <Text
-                style={{
-                  fontSize: 15,
-                  color: "#111",
-                  lineHeight: 22,
-                  marginBottom: 14,
-                }}
-              >
-                Search and browse your full reminder library.
-              </Text>
+                <Text
+                  style={{
+                    fontSize: 15,
+                    color: "#111",
+                    textAlign: "center",
+                    lineHeight: 22,
+                    textShadowColor: "rgba(0,0,0,0.25)",
+                    textShadowOffset: { width: 0, height: 1 },
+                    textShadowRadius: 4,
+                  }}
+                >
+                  Search and browse your library of entries
+                </Text>
+              </View>
 
                <View
                 style={{

@@ -1,3 +1,4 @@
+import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { useFocusEffect } from "@react-navigation/native";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Notifications from "expo-notifications";
@@ -24,12 +25,10 @@ import { syncLocalNotifications } from "../../lib/notifications/syncNotification
 import { supabase } from "../../lib/supabase";
 
 const morningImages = [
-  require("../../assets/images/morning-nature-1.jpg"),
-  require("../../assets/images/morning-nature-2.jpg"),
-  require("../../assets/images/morning-nature-3.jpg"),
-  require("../../assets/images/morning-nature-4.jpg"),
+  require("../../assets/images/morning-nature-10.jpg"),
 ];
 
+const backgroundImage = morningImages[0];
 type Entry = {
   id: string;
   title: string | null;
@@ -735,7 +734,7 @@ export default function HomeScreen() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isRegeneratingMessage, setIsRegeneratingMessage] = useState(false);
   const [handledCount, setHandledCount] = useState(0);
-  const [animatedMorningMessage, setAnimatedMorningMessage] = useState("");
+  const [showMorningMessage, setShowMorningMessage] = useState(false);
   const [pendingNotificationData, setPendingNotificationData] = useState<{
     kind?: string;
     cadence?: string;
@@ -747,13 +746,10 @@ export default function HomeScreen() {
   const injectedNotificationHandledRef = useRef(false);
   const upcomingSectionYRef = useRef(0);
   const scrollY = useRef(new Animated.Value(0)).current;
-  const messageWriteTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastAnimatedMessageRef = useRef<string | null>(null);
+   const messageRevealTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const messageRevealAnim = useRef(new Animated.Value(0)).current;
   useLocalSearchParams<{ resetHomeAt?: string }>();
-
-  const [backgroundImage] = useState(
-    morningImages[Math.floor(Math.random() * morningImages.length)]
-  );
+  const backgroundImage = morningImages[0];
 
   const currentDailyMessage = dailyMessages[currentMessageIndex] ?? null;
 
@@ -1313,12 +1309,13 @@ async function loadProfileDigestSettings() {
    const completeEntryCycle = async (entry: DisplayEntry) => {
     if (isCompletingEntryId) return;
 
-    setPendingCompleteIds((current) =>
-      current.includes(entry.id) ? current : [...current, entry.id]
-    );
-    setPendingUndoIds((current) => current.filter((id) => id !== entry.id));
-    setIsCompletingEntryId(entry.id);
-    showToast('Moving to "Handled Today"');
+ setPendingCompleteIds((current) =>
+  current.includes(entry.id) ? current : [...current, entry.id]
+);
+setPendingUndoIds((current) => current.filter((id) => id !== entry.id));
+setIsCompletingEntryId(entry.id);
+setHandledCount((current) => current + 1);
+showToast('Moving to "Handled Today"');
 
     try {
       const {
@@ -1340,11 +1337,12 @@ async function loadProfileDigestSettings() {
           : null,
       });
 
-      if (error) {
-        console.log("complete_entry_cycle error:", error.message);
-        Alert.alert("Unable to complete", error.message);
-        return;
-      }
+ if (error) {
+  console.log("complete_entry_cycle error:", error.message);
+  setHandledCount((current) => Math.max(0, current - 1));
+  Alert.alert("Unable to complete", error.message);
+  return;
+}
 
       if (selectedEntry?.id === entry.id && data) {
         setSelectedEntry({
@@ -1364,22 +1362,23 @@ async function loadProfileDigestSettings() {
       } catch (syncError) {
         console.log("Complete entry notification sync error:", syncError);
       }
-    } finally {
-      setPendingCompleteIds((current) => current.filter((id) => id !== entry.id));
-      setIsCompletingEntryId(null);
-    }
+ } finally {
+  setPendingCompleteIds((current) => current.filter((id) => id !== entry.id));
+  setIsCompletingEntryId(null);
+  loadHandledCount();
+}
   };
 
   const uncompleteEntryCycle = async (entry: DisplayEntry) => {
     if (isCompletingEntryId) return;
 
-    setPendingUndoIds((current) =>
-      current.includes(entry.id) ? current : [...current, entry.id]
-    );
-    setPendingCompleteIds((current) => current.filter((id) => id !== entry.id));
-    setIsCompletingEntryId(entry.id);
-    showToast('Moving to "For Today"');
-
+ setPendingUndoIds((current) =>
+  current.includes(entry.id) ? current : [...current, entry.id]
+);
+setPendingCompleteIds((current) => current.filter((id) => id !== entry.id));
+setIsCompletingEntryId(entry.id);
+setHandledCount((current) => Math.max(0, current - 1));
+showToast('Moving to "For Today"');
     try {
       const {
         data: { user },
@@ -1395,11 +1394,12 @@ async function loadProfileDigestSettings() {
         p_user_id: user.id,
       });
 
-      if (error) {
-        console.log("uncomplete_entry_cycle error:", error.message);
-        Alert.alert("Unable to undo", error.message);
-        return;
-      }
+ if (error) {
+  console.log("uncomplete_entry_cycle error:", error.message);
+  setHandledCount((current) => current + 1);
+  Alert.alert("Unable to undo", error.message);
+  return;
+}
 
       if (selectedEntry?.id === entry.id && data) {
         setSelectedEntry({
@@ -1419,12 +1419,12 @@ async function loadProfileDigestSettings() {
       } catch (syncError) {
         console.log("Undo entry notification sync error:", syncError);
       }
-    } finally {
-      setPendingUndoIds((current) => current.filter((id) => id !== entry.id));
-      setIsCompletingEntryId(null);
-    }
+ } finally {
+  setPendingUndoIds((current) => current.filter((id) => id !== entry.id));
+  setIsCompletingEntryId(null);
+  loadHandledCount();
+}
   };
-
    useEffect(() => {
     const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
     const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
@@ -1603,48 +1603,53 @@ async function loadProfileDigestSettings() {
     currentDailyMessage?.message ||
     "";
 
-  useEffect(() => {
+   useEffect(() => {
     const nextMessage = fullMorningMessage.trim();
 
-    if (messageWriteTimeoutRef.current) {
-      clearTimeout(messageWriteTimeoutRef.current);
-      messageWriteTimeoutRef.current = null;
+    if (messageRevealTimeoutRef.current) {
+      clearTimeout(messageRevealTimeoutRef.current);
+      messageRevealTimeoutRef.current = null;
     }
 
     if (!nextMessage) {
-      setAnimatedMorningMessage("Preparing your morning message…");
+      setShowMorningMessage(false);
+      messageRevealAnim.setValue(0);
       return;
     }
 
-    if (lastAnimatedMessageRef.current === nextMessage) {
-      setAnimatedMorningMessage(nextMessage);
-      return;
-    }
+    setShowMorningMessage(false);
+    messageRevealAnim.setValue(0);
 
-    lastAnimatedMessageRef.current = nextMessage;
-    setAnimatedMorningMessage("");
+    messageRevealTimeoutRef.current = setTimeout(() => {
+      setShowMorningMessage(true);
 
-    let cursor = 0;
-    const stepSize = nextMessage.length > 70 ? 3 : 2;
-
-    const writeNext = () => {
-      cursor = Math.min(nextMessage.length, cursor + stepSize);
-      setAnimatedMorningMessage(nextMessage.slice(0, cursor));
-
-      if (cursor < nextMessage.length) {
-        messageWriteTimeoutRef.current = setTimeout(writeNext, 42);
-      }
-    };
-
-    messageWriteTimeoutRef.current = setTimeout(writeNext, 180);
+      Animated.timing(messageRevealAnim, {
+        toValue: 1,
+        duration: 520,
+        useNativeDriver: true,
+      }).start();
+    }, 80);
 
     return () => {
-      if (messageWriteTimeoutRef.current) {
-        clearTimeout(messageWriteTimeoutRef.current);
-        messageWriteTimeoutRef.current = null;
+      if (messageRevealTimeoutRef.current) {
+        clearTimeout(messageRevealTimeoutRef.current);
+        messageRevealTimeoutRef.current = null;
       }
     };
-  }, [fullMorningMessage]);
+  }, [fullMorningMessage, messageRevealAnim]);
+
+   const messageRevealOpacity = messageRevealAnim.interpolate({
+    inputRange: [0, 0.2, 1],
+    outputRange: [0, 0.35, 1],
+    extrapolate: "clamp",
+  });
+
+  const messageRevealTranslateY = messageRevealAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [-18, 0],
+    extrapolate: "clamp",
+  });
+
 
   function renderSectionTitle(title: string, subtitle?: string) {
   
@@ -1827,13 +1832,13 @@ async function loadProfileDigestSettings() {
         style={{
           backgroundColor:
             variant === "dark"
-              ? "rgba(17,24,39,0.58)"
-              : "rgba(17,24,39,0.34)",
-          borderRadius: 20,
-          padding: 14,
-          marginBottom: 14,
+              ? "rgba(15,23,42,0.68)"
+              : "rgba(15,23,42,0.52)",
+          borderRadius: 24,
+          padding: 16,
+          marginBottom: 16,
           borderWidth: 1,
-          borderColor: "rgba(255,255,255,0.10)",
+          borderColor: "rgba(255,255,255,0.08)",
         }}
       >
         {renderSectionTitle(title)}
@@ -1906,7 +1911,22 @@ async function loadProfileDigestSettings() {
               opacity: backgroundDimOpacity,
             }}
           />
-
+          <LinearGradient
+            pointerEvents="none"
+            colors={[
+              "rgba(0,0,0,0)",
+              "rgba(0,0,0,0.06)",
+              "rgba(0,0,0,0.22)",
+              "rgba(0,0,0,0.52)",
+            ]}
+            style={{
+              position: "absolute",
+              left: 0,
+              right: 0,
+              bottom: 0,
+              height: "80%",
+            }}
+          />
           <KeyboardAvoidingView
             style={{ flex: 1 }}
             behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -2065,77 +2085,182 @@ async function loadProfileDigestSettings() {
                   { useNativeDriver: false }
                 )}
                 contentContainerStyle={{
-                  paddingHorizontal: 20,
+                  paddingHorizontal: 3,
                   paddingBottom: 220,
-                  paddingTop: 92,
+                  paddingTop: 80,
                 }}
               >
-                <Pressable
-                  onPress={() => {
-                    if (currentDailyMessage?.verse_reference) {
-                      loadVerse(currentDailyMessage.verse_reference);
-                    }
-                  }}
-                  onLongPress={() => {
-                    generateDailyMessage(true);
-                  }}
+                 <View
                   style={{
-                    minHeight: 230,
-                    paddingTop: 30,
-                    paddingBottom: 42,
-                    paddingHorizontal: 12,
-                    justifyContent: "center",
+                    minHeight: 360,
+                    paddingTop: 20,
+                    paddingBottom: 28,
+                    paddingHorizontal: 18,
+                    justifyContent: "flex-start",
                     alignItems: "center",
                   }}
                 >
-                  <Text
+                  <Pressable
+                    onPress={() => {
+                      if (currentDailyMessage?.verse_reference) {
+                        loadVerse(currentDailyMessage.verse_reference);
+                      }
+                    }}
+                    onLongPress={() => {
+                      generateDailyMessage(true);
+                    }}
                     style={{
-                      fontSize: 34,
-                      lineHeight: 44,
-                      color: "white",
-                      textAlign: "center",
-                      fontWeight: "600",
-                      letterSpacing: 0.2,
-                      textShadowColor: "rgba(0,0,0,0.42)",
-                      textShadowOffset: { width: 0, height: 2 },
-                      textShadowRadius: 10,
+                      alignSelf: "stretch",
+                      alignItems: "center",
                     }}
                   >
-                    {animatedMorningMessage || "Preparing your morning message…"}
-                  </Text>
+                      <View
+                      style={{
+                        maxWidth: 330,
+                        minHeight: 220,
+                        justifyContent: "flex-start",
+                        alignItems: "center",
+                      }}
+                    >
+                      <Animated.Text
+                        style={{
+                          fontSize: 40,
+                          lineHeight: 50,
+                          color: "white",
+                          textAlign: "center",
+                          fontWeight: "700",
+                          letterSpacing: 0.12,
+                          textShadowColor: "rgba(0,0,0,0.60)",
+                          textShadowOffset: { width: 0, height: 2 },
+                          textShadowRadius: 16,
+                          opacity: messageRevealOpacity,
+                          transform: [{ translateY: messageRevealTranslateY }],
+                        }}
+                      >
+                        {showMorningMessage ? fullMorningMessage : ""}
+                      </Animated.Text>
+                    </View>
 
-                  {!!currentDailyMessage?.verse_reference && (
+                    {!!currentDailyMessage?.verse_reference && (
+                      <View
+                        style={{
+                          marginTop: 20,
+                          alignSelf: "stretch",
+                          alignItems: "center",
+                        }}
+                      >
+                        <Pressable
+                          onPress={async () => {
+                            if (!currentDailyMessage?.verse_reference) return;
+                            await loadVerse(currentDailyMessage.verse_reference);
+                          }}
+                          style={{
+                            alignSelf: "center",
+                            paddingVertical: 9,
+                            paddingHorizontal: 18,
+                            borderRadius: 999,
+                            backgroundColor: "rgba(17,24,39,0.34)",
+                            borderWidth: 1,
+                            borderColor: "rgba(255,255,255,0.14)",
+                          }}
+                        >
+                          <Text
+                            style={{
+                              fontSize: 15,
+                              color: "#f4ead8",
+                              textAlign: "center",
+                              fontWeight: "700",
+                              letterSpacing: 0.3,
+                              textShadowColor: "rgba(0,0,0,0.28)",
+                              textShadowOffset: { width: 0, height: 1 },
+                              textShadowRadius: 2,
+                            }}
+                          >
+                            {currentDailyMessage.verse_reference}
+                          </Text>
+                        </Pressable>
+                      </View>
+                    )}
+                  </Pressable>
+
+                  <Pressable
+                    onPress={() => {
+                      router.push({
+                        pathname: "/compose",
+                        params: {
+                          mode: "create",
+                        },
+                      });
+                    }}
+                    hitSlop={10}
+                    style={{
+                      marginTop: 42,
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
                     <View
                       style={{
-                        marginTop: 18,
-                        alignSelf: "center",
-                        paddingVertical: 8,
-                        paddingHorizontal: 16,
-                        borderRadius: 999,
-                        backgroundColor: "rgba(17,24,39,0.24)",
+                        width: 76,
+                        height: 76,
+                        borderRadius: 38,
+                        alignItems: "center",
+                        justifyContent: "center",
+                        backgroundColor: "rgba(247,239,222,0.96)",
                         borderWidth: 1,
-                        borderColor: "rgba(255,255,255,0.18)",
+                        borderColor: "rgba(255,255,255,0.86)",
+                        shadowColor: "#000",
+                        shadowOpacity: 0.22,
+                        shadowRadius: 18,
+                        shadowOffset: { width: 0, height: 10 },
+                        elevation: 12,
+                        marginBottom: 10,
                       }}
                     >
                       <Text
                         style={{
-                          fontSize: 13,
-                          color: "#f4ead8",
-                          textAlign: "center",
+                          fontSize: 30,
+                          color: "#8b6f47",
                           fontWeight: "700",
-                          letterSpacing: 0.3,
-                          textShadowColor: "rgba(0,0,0,0.25)",
-                          textShadowOffset: { width: 0, height: 1 },
-                          textShadowRadius: 2,
+                          lineHeight: 32,
                         }}
                       >
-                        {currentDailyMessage.verse_reference}
+                        ✎
                       </Text>
                     </View>
-                  )}
-                </Pressable>
 
-                <View style={{ height: 8 }} />
+                    <Text
+                      style={{
+                        fontSize: 16,
+                        fontWeight: "700",
+                        color: "white",
+                        textAlign: "center",
+                        textShadowColor: "rgba(0,0,0,0.40)",
+                        textShadowOffset: { width: 0, height: 1 },
+                        textShadowRadius: 6,
+                      }}
+                    >
+                      Write Entry
+                    </Text>
+
+                    <Text
+                      style={{
+                        marginTop: 4,
+                        fontSize: 13,
+                        lineHeight: 18,
+                        color: "rgba(255,255,255,0.82)",
+                        textAlign: "center",
+                        textShadowColor: "rgba(0,0,0,0.28)",
+                        textShadowOffset: { width: 0, height: 1 },
+                        textShadowRadius: 4,
+                      }}
+                    >
+                      Prayer, goal, affirmation, or reminder
+                    </Text>
+                  </Pressable>
+                </View>
+
+                <View style={{ height: 70 }} />
 
                  {renderSectionCard(
                   "For Today",
@@ -2159,12 +2284,12 @@ async function loadProfileDigestSettings() {
                     upcomingSectionYRef.current = event.nativeEvent.layout.y;
                   }}
                   style={{
-                    backgroundColor: "rgba(17,24,39,0.58)",
-                    borderRadius: 20,
-                    padding: 14,
-                    marginBottom: 14,
+                    backgroundColor: "rgba(15,23,42,0.68)",
+                    borderRadius: 24,
+                    padding: 16,
+                    marginBottom: 16,
                     borderWidth: 1,
-                    borderColor: "rgba(255,255,255,0.10)",
+                    borderColor: "rgba(255,255,255,0.08)",
                   }}
                 >
                   <Pressable
@@ -2661,70 +2786,101 @@ async function loadProfileDigestSettings() {
             </View>
           </Modal>
 
-          <Modal visible={showHomeMenu} transparent animationType="fade">
-            <Pressable
-              onPress={() => setShowHomeMenu(false)}
+           <Modal visible={showHomeMenu} transparent animationType="fade">
+            <View
               style={{
                 flex: 1,
-                backgroundColor: "rgba(0,0,0,0.18)",
-                justifyContent: "flex-start",
-                alignItems: "flex-end",
-                paddingTop: 86,
-                paddingRight: 16,
-                paddingLeft: 16,
+                backgroundColor: "rgba(0,0,0,0.34)",
+                flexDirection: "row",
               }}
             >
-              <Pressable
-                onPress={() => {}}
+              <View
                 style={{
-                  width: 220,
-                  backgroundColor: "rgba(255,255,255,0.97)",
-                  borderRadius: 16,
-                  borderWidth: 1,
-                  borderColor: "rgba(255,255,255,0.95)",
-                  overflow: "hidden",
+                  width: "80%",
+                  maxWidth: 300,
+                  backgroundColor: "#0b0d12",
+                  paddingTop: 56,
+                  paddingHorizontal: 18,
+                  paddingBottom: 28,
                 }}
               >
+                <Pressable
+                  onPress={() => setShowHomeMenu(false)}
+                  hitSlop={10}
+                  style={{
+                    width: 40,
+                    height: 40,
+                    marginBottom: 18,
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <Text
+                    style={{
+                      color: "white",
+                      fontSize: 22,
+                      fontWeight: "700",
+                      lineHeight: 22,
+                    }}
+                  >
+                    ☰
+                  </Text>
+                </Pressable>
+
+                <Text
+                  style={{
+                    color: "white",
+                    fontSize: 24,
+                    fontWeight: "700",
+                    marginBottom: 26,
+                    letterSpacing: 0.2,
+                  }}
+                >
+                  Morning Message
+                </Text>
+
                  <Pressable
                   onPress={() => {
                     setShowHomeMenu(false);
                     Alert.alert("Account", "Account screen coming soon.");
                   }}
                   style={{
+                    flexDirection: "row",
+                    alignItems: "center",
                     paddingVertical: 14,
-                    paddingHorizontal: 16,
-                    borderBottomWidth: 1,
-                    borderBottomColor: "#e5e7eb",
                   }}
                 >
+                  <MaterialIcons name="person-outline" size={22} color="white" />
                   <Text
                     style={{
-                      fontSize: 15,
+                      marginLeft: 16,
+                      fontSize: 18,
                       fontWeight: "600",
-                      color: "#111827",
+                      color: "white",
                     }}
                   >
                     Account
                   </Text>
                 </Pressable>
 
-                 <Pressable
+                <Pressable
                   onPress={async () => {
                     setShowHomeMenu(false);
                     await loadRecentDeletedEntries();
                   }}
                   style={{
+                    flexDirection: "row",
+                    alignItems: "center",
                     paddingVertical: 14,
-                    paddingHorizontal: 16,
-                    borderBottomWidth: 1,
-                    borderBottomColor: "#e5e7eb",
                   }}
                 >
+                  <MaterialIcons name="restore-from-trash" size={22} color="white" />
                   <Text
                     style={{
-                      fontSize: 15,
+                      marginLeft: 16,
+                      fontSize: 18,
                       fontWeight: "600",
-                      color: "#111827",
+                      color: "white",
                     }}
                   >
                     Restore Deleted Items
@@ -2732,24 +2888,136 @@ async function loadProfileDigestSettings() {
                 </Pressable>
 
                 <Pressable
-                  onPress={handleSignOut}
+                  onPress={() => {
+                    setShowHomeMenu(false);
+                    Alert.alert(
+                      "Count Report",
+                      `Handled count: ${handledCount}\n\nDetailed report screen comes next.`
+                    );
+                  }}
                   style={{
+                    flexDirection: "row",
+                    alignItems: "center",
                     paddingVertical: 14,
-                    paddingHorizontal: 16,
                   }}
                 >
+                  <MaterialIcons name="bar-chart" size={22} color="white" />
                   <Text
                     style={{
-                      fontSize: 15,
+                      marginLeft: 16,
+                      fontSize: 18,
                       fontWeight: "600",
-                      color: "#b91c1c",
+                      color: "white",
+                    }}
+                  >
+                    Count Report
+                  </Text>
+                </Pressable>
+
+                <View style={{ height: 18 }} />
+
+                <Pressable
+                  onPress={() => {
+                    setShowHomeMenu(false);
+                    router.push("/(tabs)/reminders");
+                  }}
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    paddingVertical: 14,
+                  }}
+                >
+                  <MaterialIcons name="list-alt" size={22} color="white" />
+                  <Text
+                    style={{
+                      marginLeft: 16,
+                      fontSize: 18,
+                      fontWeight: "600",
+                      color: "white",
+                    }}
+                  >
+                    Entries
+                  </Text>
+                </Pressable>
+
+                <Pressable
+                  onPress={() => {
+                    setShowHomeMenu(false);
+                    router.push("/(tabs)/completed");
+                  }}
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    paddingVertical: 14,
+                  }}
+                >
+                  <MaterialIcons name="archive" size={22} color="white" />
+                  <Text
+                    style={{
+                      marginLeft: 16,
+                      fontSize: 18,
+                      fontWeight: "600",
+                      color: "white",
+                    }}
+                  >
+                    Archive
+                  </Text>
+                </Pressable>
+
+                <Pressable
+                  onPress={() => {
+                    setShowHomeMenu(false);
+                    router.push("/(tabs)/explore");
+                  }}
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    paddingVertical: 14,
+                  }}
+                >
+                  <MaterialIcons name="notifications-none" size={22} color="white" />
+                  <Text
+                    style={{
+                      marginLeft: 16,
+                      fontSize: 18,
+                      fontWeight: "600",
+                      color: "white",
+                    }}
+                  >
+                    Reminders
+                  </Text>
+                </Pressable>
+
+                <Pressable
+                  onPress={handleSignOut}
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    paddingVertical: 14,
+                    marginTop: 8,
+                  }}
+                >
+                  <MaterialIcons name="logout" size={22} color="white" />
+                  <Text
+                    style={{
+                      marginLeft: 16,
+                      fontSize: 18,
+                      fontWeight: "600",
+                      color: "white",
                     }}
                   >
                     Sign Out
                   </Text>
                 </Pressable>
-              </Pressable>
-            </Pressable>
+              </View>
+
+              <Pressable
+                onPress={() => setShowHomeMenu(false)}
+                style={{
+                  flex: 1,
+                }}
+              />
+            </View>
           </Modal>
 
           <Modal visible={showUpcomingDaysModal} transparent animationType="fade">
@@ -3272,43 +3540,90 @@ async function loadProfileDigestSettings() {
               </Pressable>
             </Pressable>
           </Modal>
-
-          <Modal visible={showVerseModal} transparent animationType="slide">
+          <Modal visible={showVerseModal} transparent animationType="fade">
             <Pressable
               onPress={() => setShowVerseModal(false)}
               style={{
                 flex: 1,
-                backgroundColor: "rgba(0,0,0,0.35)",
-                justifyContent: "flex-end",
+                backgroundColor: "rgba(0,0,0,0.34)",
+                justifyContent: "center",
+                alignItems: "center",
+                paddingHorizontal: 24,
               }}
             >
               <Pressable
                 onPress={() => {}}
                 style={{
-                  backgroundColor: "white",
-                  borderTopLeftRadius: 20,
-                  borderTopRightRadius: 20,
-                  padding: 24,
-                  paddingBottom: 40,
+                  width: "100%",
+                  maxWidth: 360,
+                  backgroundColor: "rgba(17,24,39,0.94)",
+                  borderRadius: 24,
+                  paddingTop: 18,
+                  paddingHorizontal: 20,
+                  paddingBottom: 18,
+                  borderWidth: 1,
+                  borderColor: "rgba(255,255,255,0.12)",
+                  shadowColor: "#000",
+                  shadowOpacity: 0.28,
+                  shadowRadius: 24,
+                  shadowOffset: { width: 0, height: 12 },
+                  elevation: 14,
                 }}
               >
-                <Text
+                <View
                   style={{
-                    fontSize: 18,
-                    fontWeight: "600",
+                    flexDirection: "row",
+                    alignItems: "flex-start",
+                    justifyContent: "space-between",
+                    gap: 12,
                     marginBottom: 12,
                   }}
                 >
-                  {currentDailyMessage?.verse_reference
-                    ? `${currentDailyMessage.verse_reference} (NET)`
-                    : "Verse (NET)"}
-                </Text>
+                  <Text
+                    style={{
+                      flex: 1,
+                      fontSize: 18,
+                      fontWeight: "700",
+                      color: "white",
+                      lineHeight: 24,
+                    }}
+                  >
+                    {currentDailyMessage?.verse_reference
+                      ? `${currentDailyMessage.verse_reference} (NET)`
+                      : "Verse (NET)"}
+                  </Text>
+
+                  <Pressable
+                    onPress={() => setShowVerseModal(false)}
+                    hitSlop={10}
+                    style={{
+                      width: 28,
+                      height: 28,
+                      borderRadius: 14,
+                      alignItems: "center",
+                      justifyContent: "center",
+                      backgroundColor: "rgba(255,255,255,0.10)",
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 16,
+                        fontWeight: "700",
+                        color: "white",
+                        lineHeight: 16,
+                      }}
+                    >
+                      ×
+                    </Text>
+                  </Pressable>
+                </View>
 
                 <Text
                   style={{
                     fontSize: 16,
-                    lineHeight: 24,
-                    marginBottom: 20,
+                    lineHeight: 25,
+                    color: "rgba(255,255,255,0.94)",
+                    marginBottom: 14,
                   }}
                 >
                   {verseText}
@@ -3317,14 +3632,15 @@ async function loadProfileDigestSettings() {
                 <Text
                   style={{
                     fontSize: 11,
-                    color: "#777",
+                    lineHeight: 16,
+                    color: "rgba(255,255,255,0.62)",
                   }}
                 >
                   NET Bible® copyright ©1996–2019 Biblical Studies Press.
                 </Text>
               </Pressable>
             </Pressable>
-          </Modal>
+          </Modal> 
         </SafeAreaView>
       </ImageBackground>
     </GestureHandlerRootView>

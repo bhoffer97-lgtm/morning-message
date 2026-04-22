@@ -12,12 +12,12 @@ type TabBarProps = {
 };
 
 function getTabConfig(routeName: string) {
-  if (routeName === "index") {
-    return {
-      label: "Home",
-      icon: "sun.max.fill" as const,
-    };
-  }
+ if (routeName === "index") {
+  return {
+    label: "Home",
+    icon: "house.fill" as const,
+  };
+}
 
   if (routeName === "reminders") {
     return {
@@ -55,24 +55,23 @@ function FloatingTabBar({ state, descriptors, navigation }: TabBarProps) {
         style={{
           flexDirection: "row",
           alignItems: "center",
-          gap: 12,
         }}
       >
 <View
   style={{
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+    paddingHorizontal: 26,
+    paddingVertical: 10,
     borderRadius: 999,
-    backgroundColor: "rgba(17,24,39,0.84)",
+    backgroundColor: "rgba(8,12,20,0.94)",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.18)",
+    borderColor: "rgba(255,255,255,0.22)",
     shadowColor: "#000",
-    shadowOpacity: 0.22,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 12,
+    shadowOpacity: 0.28,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 14,
   }}
 >
           {state.routes.map((route: any, index: number) => {
@@ -112,18 +111,18 @@ function FloatingTabBar({ state, descriptors, navigation }: TabBarProps) {
                   flexDirection: "row",
                   alignItems: "center",
                   justifyContent: "center",
-                  minHeight: 46,
-                  minWidth: 42,
-                  paddingHorizontal: isFocused ? 14 : 10,
-                  marginHorizontal: 2,
+                  minHeight: 52,
+                  minWidth: 48,
+                  paddingHorizontal: isFocused ? 16 : 12,
+                  marginHorizontal: 3,
                   borderRadius: 999,
-                  backgroundColor: isFocused ? "rgba(255,255,255,0.18)" : "transparent",
+                  backgroundColor: isFocused ? "rgba(255,255,255,0.24)" : "transparent",
                 }}
               >
                 <IconSymbol
-                  size={20}
+                  size={22}
                   name={config.icon}
-                  color={isFocused ? "white" : "rgba(255,255,255,0.72)"}
+                  color={isFocused ? "white" : "rgba(255,255,255,0.80)"}
                 />
 
                 {isFocused ? (
@@ -131,7 +130,7 @@ function FloatingTabBar({ state, descriptors, navigation }: TabBarProps) {
                     style={{
                       marginLeft: 8,
                       color: "white",
-                      fontSize: 12,
+                      fontSize: 13,
                       fontWeight: "700",
                     }}
                   >
@@ -142,27 +141,6 @@ function FloatingTabBar({ state, descriptors, navigation }: TabBarProps) {
             );
           })}
         </View>
-
-        <Pressable
-          onPress={() => navigation.navigate("/compose", { mode: "create" })}
-          style={{
-            width: 62,
-            height: 62,
-            borderRadius: 31,
-            alignItems: "center",
-            justifyContent: "center",
-            backgroundColor: "rgba(247,239,222,0.98)",
-            borderWidth: 1,
-            borderColor: "rgba(255,255,255,0.86)",
-            shadowColor: "#000",
-            shadowOpacity: 0.24,
-            shadowRadius: 20,
-            shadowOffset: { width: 0, height: 10 },
-            elevation: 14,
-          }}
-        >
-          <IconSymbol size={24} name="square.and.pencil" color="#8b6f47" />
-        </Pressable>
       </View>
     </View>
   );

@@ -15,7 +15,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { syncLocalNotifications } from "../../lib/notifications/syncNotifications";
 import { supabase } from "../../lib/supabase";
 
-const archivedHeaderImage = require("../../assets/images/morning-nature-4.jpg");
+const archivedHeaderImage = require("../../assets/images/morning-nature-21.jpg");
 
 type CadenceFilter = "all" | "daily" | "weekly" | "monthly" | "yearly";
 
@@ -230,31 +230,22 @@ export default function CompletedScreen() {
   return (
   <GestureHandlerRootView style={{ flex: 1 }}>
     <ImageBackground source={archivedHeaderImage} style={{ flex: 1 }} resizeMode="cover">
-      <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.30)" }}>
+      <View style={{ flex: 1, backgroundColor: "rgba(255,255,255,0.45)" }}>
         <SafeAreaView style={{ flex: 1, backgroundColor: "transparent" }}>
 
-          {/* ===== FIXED HEADER ===== */}
-          <View
-            style={{
-              position: "absolute",
-              top: 0,
-              left: 0,
-              right: 0,
-              zIndex: 20,
-              paddingHorizontal: 20,
-              paddingTop: 100,
-              paddingBottom: 28,
-              backgroundColor: "rgba(0,0,0,0.25)",
-            }}
-          >
-            {/* Title */}
            <View
             style={{
-              marginTop: 10,
-              marginBottom: 48,
-              alignItems: "center",
+              paddingHorizontal: 20,
+              paddingTop: 45,
+              paddingBottom: 12,
             }}
           >
+            <View
+              style={{
+                alignItems: "center",
+                marginBottom: 18,
+              }}
+            >
               <Text
                 style={{
                   fontSize: 28,
@@ -264,13 +255,27 @@ export default function CompletedScreen() {
                   textShadowColor: "rgba(0,0,0,0.35)",
                   textShadowOffset: { width: 0, height: 1 },
                   textShadowRadius: 6,
+                  marginBottom: 6,
                 }}
               >
                 Take time to reflect
               </Text>
+
+              <Text
+                style={{
+                  fontSize: 15,
+                  color: "rgba(255,255,255,0.92)",
+                  textAlign: "center",
+                  lineHeight: 22,
+                  textShadowColor: "rgba(0,0,0,0.25)",
+                  textShadowOffset: { width: 0, height: 1 },
+                  textShadowRadius: 4,
+                }}
+              >
+                Read through your archived entries
+              </Text>
             </View>
 
-            {/* Search + Dropdown Row */}
             <View
               style={{
                 flexDirection: "row",
@@ -278,72 +283,16 @@ export default function CompletedScreen() {
                 gap: 10,
               }}
             >
-              {/* Search */}
-              <View
-                style={{
-                  flex: 1,
-                  flexDirection: "row",
-                  alignItems: "center",
-                  backgroundColor: "rgba(255,255,255,0.92)",
-                  borderRadius: 14,
-                  paddingLeft: 14,
-                  paddingRight: 10,
-                }}
-              >
-                <TextInput
-                  placeholder="Search..."
-                  placeholderTextColor="rgba(0,0,0,0.45)"
-                  value={searchText}
-                  onChangeText={setSearchText}
-                  onFocus={() => setIsSearchFocused(true)}
-                  onBlur={() => setIsSearchFocused(false)}
-                  style={{
-                    flex: 1,
-                    paddingVertical: 12,
-                    fontSize: 15,
-                    color: "black",
-                  }}
-                />
-
-                {searchText.trim().length > 0 ? (
-                  <Pressable
-                    onPress={() => setSearchText("")}
-                    hitSlop={10}
-                    style={{
-                      width: 22,
-                      height: 22,
-                      borderRadius: 11,
-                      alignItems: "center",
-                      justifyContent: "center",
-                      backgroundColor: "rgba(0,0,0,0.10)",
-                    }}
-                  >
-                    <Text
-                      style={{
-                        fontSize: 14,
-                        fontWeight: "700",
-                        color: "#374151",
-                        lineHeight: 14,
-                      }}
-                    >
-                      ×
-                    </Text>
-                  </Pressable>
-                ) : null}
-              </View>
-
-              {/* Dropdown */}
               <Pressable
                 onPress={() => setShowCadenceMenu(true)}
                 style={{
-                  paddingVertical: 12,
-                  paddingHorizontal: 14,
-                  borderRadius: 12,
-                  backgroundColor: "#f3f4f6",
-                  justifyContent: "center",
+                  paddingVertical: 11,
+                  paddingHorizontal: 13,
+                  borderRadius: 10,
+                  backgroundColor: "rgba(255,255,255,0.88)",
                 }}
               >
-                <Text style={{ fontSize: 14, fontWeight: "600", color: "#333" }}>
+                <Text style={{ fontSize: 14, fontWeight: "600", color: "#374151" }}>
                   {selectedCadence === "all"
                     ? "All"
                     : selectedCadence === "daily"
@@ -352,23 +301,60 @@ export default function CompletedScreen() {
                     ? "Weekly"
                     : selectedCadence === "monthly"
                     ? "Monthly"
-                    : "Yearly"} ▼
+                    : "Yearly"}{" "}
+                  ▼
                 </Text>
               </Pressable>
+
+              <View style={{ flex: 1, position: "relative" }}>
+                <TextInput
+                  placeholder="Search..."
+                  placeholderTextColor="#6b7280"
+                  value={searchText}
+                  onChangeText={setSearchText}
+                  onFocus={() => setIsSearchFocused(true)}
+                  onBlur={() => setIsSearchFocused(false)}
+                  style={{
+                    backgroundColor: "rgba(255,255,255,0.88)",
+                    borderWidth: 1,
+                    borderColor: "#d8d8d8",
+                    borderRadius: 10,
+                    paddingHorizontal: 12,
+                    paddingRight: 44,
+                    paddingVertical: 11,
+                    fontSize: 15,
+                    color: "black",
+                  }}
+                />
+
+                {!!searchText.trim() && (
+                  <Pressable
+                    onPress={() => setSearchText("")}
+                    hitSlop={10}
+                    style={{
+                      position: "absolute",
+                      right: 12,
+                      top: 11,
+                      padding: 2,
+                    }}
+                  >
+                    <Text style={{ fontSize: 16, color: "#777", fontWeight: "600" }}>×</Text>
+                  </Pressable>
+                )}
+              </View>
             </View>
           </View>
 
           {/* ===== SCROLLABLE CONTENT ===== */}
-          <ScrollView
+           <ScrollView
             ref={scrollViewRef}
             keyboardShouldPersistTaps="handled"
             contentContainerStyle={{
-              paddingTop: 240,
               paddingHorizontal: 20,
               paddingBottom: 20,
             }}
           >
-            <View style={{ paddingTop: 6 }}>
+            <View style={{ paddingTop: 2 }}>
 
               {filteredEntries.map((entry) => {
                  const cadenceLabel = getCadenceLabel(entry);
