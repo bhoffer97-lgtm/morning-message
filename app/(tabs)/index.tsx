@@ -1742,26 +1742,22 @@ showToast('Moving to "For Today"');
             </Text>
           </View>
 
-            <View
+          <Text
             style={{
-              alignSelf: "flex-start",
-              marginTop: 5,
-              backgroundColor: "rgba(107,114,128,0.72)",
-              borderRadius: 10,
-              paddingVertical: 5,
-              paddingHorizontal: 8,
+              marginTop: 6,
+              marginLeft: 2,
+              fontSize: 12,
+              lineHeight: 17,
+              fontWeight: "500",
+              color: "rgba(255,255,255,0.78)",
+              textShadowColor: "rgba(0,0,0,0.18)",
+              textShadowOffset: { width: 0, height: 1 },
+              textShadowRadius: 2,
             }}
+            numberOfLines={1}
           >
-            <Text
-              style={{
-                fontSize: 12,
-                fontWeight: "600",
-                color: "white",
-              }}
-            >
-              {getEntrySubtitle(entry)}
-            </Text>
-          </View>
+            {getEntrySubtitle(entry)}
+          </Text>
         </Pressable>
 
         {allowComplete || isHandled ? (

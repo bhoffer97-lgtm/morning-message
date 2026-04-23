@@ -1102,35 +1102,35 @@ const selectorOptions = useMemo(() => {
             }}
             keyboardShouldPersistTaps="handled"
           >
-            {!hasLoadedSchedules ? (
-              <View
+          {!hasLoadedSchedules && schedules.length === 0 ? (
+            <View
+              style={{
+                backgroundColor: "rgba(255,255,255,0.72)",
+                borderRadius: 16,
+                padding: 16,
+                borderWidth: 1,
+                borderColor: "#e5e7eb",
+              }}
+            >
+              <Text
                 style={{
-                  backgroundColor: "rgba(255,255,255,0.72)",
-                  borderRadius: 16,
-                  padding: 16,
-                  borderWidth: 1,
-                  borderColor: "#e5e7eb",
+                  fontSize: 15,
+                  fontWeight: "600",
+                  color: "#475569",
                 }}
               >
-                <Text
-                  style={{
-                    fontSize: 15,
-                    fontWeight: "600",
-                    color: "#475569",
-                  }}
-                >
-                  Loading cadence settings...
-                </Text>
-              </View>
-            ) : (
-              <>
-                {renderScheduleCard(schedulesByCadence.daily)}
-                {renderScheduleCard(schedulesByCadence.weekly)}
-                {renderScheduleCard(schedulesByCadence.monthly)}
-                {renderScheduleCard(schedulesByCadence.quarterly)}
-                {renderScheduleCard(schedulesByCadence.yearly)}
-              </>
-            )}
+                Loading reminders...
+              </Text>
+            </View>
+          ) : (
+            <>
+              {renderScheduleCard(schedulesByCadence.daily)}
+              {renderScheduleCard(schedulesByCadence.weekly)}
+              {renderScheduleCard(schedulesByCadence.monthly)}
+              {renderScheduleCard(schedulesByCadence.quarterly)}
+              {renderScheduleCard(schedulesByCadence.yearly)}
+            </>
+          )}
           </ScrollView>
 
             <Modal visible={!!selectorState} transparent animationType="slide">

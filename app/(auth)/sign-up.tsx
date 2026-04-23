@@ -1,16 +1,20 @@
 import { router } from "expo-router";
 import { useState } from "react";
 import {
-    Alert,
-    KeyboardAvoidingView,
-    Platform,
-    Pressable,
-    Text,
-    TextInput,
-    View,
+  Alert,
+  ImageBackground,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
+  View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { supabase } from "../../lib/supabase";
+
+const authBackground = require("../../assets/images/morning-nature-10.jpg");
 
 export default function SignUpScreen() {
   const [email, setEmail] = useState("");
@@ -63,121 +67,167 @@ export default function SignUpScreen() {
   }
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: "white" }}>
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-      >
-        <View
-          style={{
-            flex: 1,
-            paddingHorizontal: 20,
-            paddingTop: 24,
-            paddingBottom: 24,
-          }}
-        >
-          <Text
-            style={{
-              fontSize: 24,
-              fontWeight: "700",
-              color: "#111827",
-              marginBottom: 10,
-            }}
+    <ImageBackground source={authBackground} resizeMode="cover" style={{ flex: 1 }}>
+      <View style={{ flex: 1, backgroundColor: "rgba(255,255,255,0.34)" }}>
+        <SafeAreaView style={{ flex: 1, backgroundColor: "transparent" }}>
+          <KeyboardAvoidingView
+            style={{ flex: 1 }}
+            behavior={Platform.OS === "ios" ? "padding" : "height"}
           >
-            Create Account
-          </Text>
-
-          <Text
-            style={{
-              fontSize: 14,
-              lineHeight: 22,
-              color: "#6b7280",
-              marginBottom: 24,
-            }}
-          >
-            Create the account you want this app tied to long term.
-          </Text>
-
-          <TextInput
-            value={email}
-            onChangeText={setEmail}
-            autoCapitalize="none"
-            keyboardType="email-address"
-            placeholder="Email"
-            placeholderTextColor="#9ca3af"
-            style={{
-              borderWidth: 1,
-              borderColor: "#d1d5db",
-              borderRadius: 12,
-              paddingHorizontal: 12,
-              paddingVertical: 12,
-              fontSize: 15,
-              color: "black",
-              marginBottom: 12,
-              backgroundColor: "white",
-            }}
-          />
-
-          <TextInput
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-            placeholder="Password"
-            placeholderTextColor="#9ca3af"
-            style={{
-              borderWidth: 1,
-              borderColor: "#d1d5db",
-              borderRadius: 12,
-              paddingHorizontal: 12,
-              paddingVertical: 12,
-              fontSize: 15,
-              color: "black",
-              marginBottom: 12,
-              backgroundColor: "white",
-            }}
-          />
-
-          <TextInput
-            value={confirmPassword}
-            onChangeText={setConfirmPassword}
-            secureTextEntry
-            placeholder="Confirm password"
-            placeholderTextColor="#9ca3af"
-            style={{
-              borderWidth: 1,
-              borderColor: "#d1d5db",
-              borderRadius: 12,
-              paddingHorizontal: 12,
-              paddingVertical: 12,
-              fontSize: 15,
-              color: "black",
-              marginBottom: 18,
-              backgroundColor: "white",
-            }}
-          />
-
-          <Pressable
-            onPress={handleSignUp}
-            disabled={isWorking}
-            style={{
-              backgroundColor: isWorking ? "#93c5fd" : "#2563eb",
-              borderRadius: 12,
-              paddingVertical: 14,
-              alignItems: "center",
-            }}
-          >
-            <Text
-              style={{
-                color: "white",
-                fontSize: 15,
-                fontWeight: "700",
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={{
+                flexGrow: 1,
+                paddingHorizontal: 24,
+                paddingTop: 30,
+                paddingBottom: 32,
               }}
             >
-              {isWorking ? "Creating Account..." : "Create Account"}
-            </Text>
-          </Pressable>
-        </View>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+              <Text
+                style={{
+                  fontSize: 36,
+                  fontWeight: "700",
+                  color: "#4e3b27",
+                  textAlign: "center",
+                  marginTop: 56,
+                  marginBottom: 0,
+                  textShadowColor: "rgba(255,255,255,0.18)",
+                  textShadowOffset: { width: 0, height: 1 },
+                  textShadowRadius: 3,
+                }}
+              >
+                Morning Message
+              </Text>
+
+              <View
+                style={{
+                  flex: 1,
+                  justifyContent: "center",
+                  paddingTop: 56,
+                  width: "100%",
+                  alignItems: "center",
+                }}
+              >
+                <View style={{ width: 320 }}>
+                  <TextInput
+                    value={email}
+                    onChangeText={setEmail}
+                    autoCapitalize="none"
+                    keyboardType="email-address"
+                    placeholder="Email"
+                    placeholderTextColor="#8b7a67"
+                    style={{
+                      borderWidth: 1,
+                      borderColor: "rgba(139,111,71,0.28)",
+                      borderRadius: 14,
+                      paddingHorizontal: 14,
+                      paddingVertical: 13,
+                      fontSize: 15,
+                      color: "#2b2118",
+                      marginBottom: 12,
+                      backgroundColor: "rgba(255,255,255,0.9)",
+                    }}
+                  />
+
+                  <TextInput
+                    value={password}
+                    onChangeText={setPassword}
+                    secureTextEntry
+                    placeholder="Password"
+                    placeholderTextColor="#8b7a67"
+                    style={{
+                      borderWidth: 1,
+                      borderColor: "rgba(139,111,71,0.28)",
+                      borderRadius: 14,
+                      paddingHorizontal: 14,
+                      paddingVertical: 13,
+                      fontSize: 15,
+                      color: "#2b2118",
+                      marginBottom: 12,
+                      backgroundColor: "rgba(255,255,255,0.9)",
+                    }}
+                  />
+
+                  <TextInput
+                    value={confirmPassword}
+                    onChangeText={setConfirmPassword}
+                    secureTextEntry
+                    placeholder="Confirm Password"
+                    placeholderTextColor="#8b7a67"
+                    style={{
+                      borderWidth: 1,
+                      borderColor: "rgba(139,111,71,0.28)",
+                      borderRadius: 14,
+                      paddingHorizontal: 14,
+                      paddingVertical: 13,
+                      fontSize: 15,
+                      color: "#2b2118",
+                      marginBottom: 14,
+                      backgroundColor: "rgba(255,255,255,0.9)",
+                    }}
+                  />
+
+                  <Pressable
+                    onPress={handleSignUp}
+                    disabled={isWorking}
+                    style={{
+                      width: 320,
+                      backgroundColor: isWorking ? "#b59a75" : "#8b6f47",
+                      borderRadius: 14,
+                      paddingVertical: 15,
+                      alignItems: "center",
+                      marginBottom: 12,
+                      borderWidth: 1,
+                      borderColor: "rgba(255,255,255,0.55)",
+                    }}
+                  >
+                    <Text
+                      style={{
+                        color: "#fffaf2",
+                        fontSize: 15,
+                        fontWeight: "700",
+                      }}
+                    >
+                      {isWorking ? "Creating Account..." : "Create Account"}
+                    </Text>
+                  </Pressable>
+
+                  <View
+                    style={{
+                      alignItems: "center",
+                      marginTop: 8,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 14,
+                        color: "white",
+                        textAlign: "center",
+                        marginBottom: 4,
+                      }}
+                    >
+                      Already have an account?
+                    </Text>
+
+                    <Pressable onPress={() => router.replace("/(auth)/sign-in")}>
+                      <Text
+                        style={{
+                          fontSize: 14,
+                          fontWeight: "700",
+                          color: "white",
+                          textAlign: "center",
+                        }}
+                      >
+                        Sign In
+                      </Text>
+                    </Pressable>
+                  </View>
+                </View>
+              </View>
+            </ScrollView>
+          </KeyboardAvoidingView>
+        </SafeAreaView>
+      </View>
+    </ImageBackground>
   );
 }

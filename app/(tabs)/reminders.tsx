@@ -522,21 +522,21 @@ function getCadenceSummaryText(
   let firstSentence = "";
 
   if (cadence === "daily") {
-    firstSentence = `Daily entries are scheduled for ${timeLabel}.`;
+    firstSentence = `Daily reminder is set for ${timeLabel}.`;
   } else if (cadence === "weekly") {
     const weeklyAnchorDay = schedule.anchor_date
       ? new Date(`${schedule.anchor_date}T00:00:00`).getDay()
       : 0;
 
-    firstSentence = `Weekly entries are scheduled for ${weekdayLabel(
+    firstSentence = `Weekly reminder is set for ${weekdayLabel(
       weeklyAnchorDay as WeekdayValue
-    )} at ${timeLabel}.`;
+    )}'s at ${timeLabel}.`;
   } else if (cadence === "monthly") {
     const monthlyDay = schedule.anchor_date
       ? new Date(`${schedule.anchor_date}T00:00:00`).getDate()
       : 1;
 
-    firstSentence = `Monthly entries are scheduled for day ${monthlyDay} at ${timeLabel}.`;
+firstSentence = `Monthly reminder is set for the ${getOrdinal(monthlyDay)} at ${timeLabel}.`;
   } else {
     const recurringDate = schedule.anchor_date
       ? new Date(`${schedule.anchor_date}T00:00:00`)
@@ -547,10 +547,16 @@ function getCadenceSummaryText(
       day: "numeric",
     });
 
+     const monthName = recurringDate.toLocaleDateString([], {
+      month: "long",
+    });
+    const dayOfMonth = recurringDate.getDate();
+    const monthDayWithOrdinal = `${monthName} ${getOrdinal(dayOfMonth)}`;
+
     firstSentence =
       cadence === "quarterly"
-        ? `Quarterly entries are scheduled for ${monthDay} at ${timeLabel}.`
-        : `Yearly entries are scheduled for ${monthDay} at ${timeLabel}.`;
+        ? `Quarterly reminder is set for ${monthDayWithOrdinal} at ${timeLabel}.`
+        : `Yearly reminder is set for ${monthDayWithOrdinal} at ${timeLabel}.`;
   }
 
   if (!schedule.is_enabled) {
@@ -1641,29 +1647,6 @@ export default function RemindersScreen() {
                   )}
                 </View>
               </View>
-
-              {!!selectedCadenceSummary ? (
-                <View
-                  style={{
-                    marginTop: 10,
-                    backgroundColor: "rgba(255,255,255,0.82)",
-                    borderRadius: 10,
-                    paddingVertical: 10,
-                    paddingHorizontal: 12,
-                  }}
-                >
-                  <Text
-                    style={{
-                      fontSize: 13,
-                      lineHeight: 19,
-                      color: "#374151",
-                      fontWeight: "600",
-                    }}
-                  >
-                    {selectedCadenceSummary}
-                  </Text>
-                </View>
-              ) : null}
             </View>
 
              <ScrollView
@@ -1710,51 +1693,44 @@ export default function RemindersScreen() {
               ) : (
                 groupedUpcomingEntries.map((group) => (
                   <View key={group.key} style={{ marginBottom: 18 }}>
-                     {selectedCadenceFilter === "all" ? (
-                      <View
-                        style={{
-                          alignItems: "center",
-                          marginBottom: 10,
-                        }}
-                      >
-                        <View
-                          style={{
-                            flexDirection: "row",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            flexWrap: "wrap",
-                            alignSelf: "center",
-                            backgroundColor: "rgba(255,255,255,0.88)",
-                            borderRadius: 8,
-                            paddingVertical: 4,
-                            paddingHorizontal: 10,
-                          }}
-                        >
-                          <Text
-                            style={{
-                              fontSize: 13,
-                              fontWeight: "700",
-                              color: "#111827",
-                            }}
-                          >
-                            {group.title}
-                          </Text>
-
-                          {group.showCustomNote ? (
-                            <Text
-                              style={{
-                                fontSize: 12,
-                                fontWeight: "700",
-                                color: "#2563eb",
-                                marginLeft: 8,
-                              }}
-                            >
-                              * notification enabled
-                            </Text>
-                          ) : null}
-                        </View>
-                      </View>
-                    ) : null}
+{selectedCadenceFilter !== "custom" && selectedCadenceFilter !== "handled" ? (
+  <View
+    style={{
+      width: "100%",
+      marginTop: group.key === groupedUpcomingEntries[0]?.key ? 2 : 10,
+      marginBottom: 12,
+      borderRadius: 14,
+      paddingVertical: 11,
+      paddingHorizontal: 14,
+      backgroundColor: "rgba(139,111,71,0.14)",
+      borderWidth: 1,
+      borderColor: "rgba(78,59,39,0.16)",
+    }}
+  >
+    <Text
+      style={{
+        fontSize: 14,
+        lineHeight: 20,
+        fontWeight: "700",
+        color: "#3f2f1f",
+      }}
+    >
+      {group.key === "daily"
+        ? getCadenceSummaryText("daily", reminderSchedules)
+        : group.key === "weekly"
+        ? getCadenceSummaryText("weekly", reminderSchedules)
+        : group.key === "monthly"
+        ? getCadenceSummaryText("monthly", reminderSchedules)
+        : group.key === "quarterly"
+        ? getCadenceSummaryText("quarterly", reminderSchedules)
+        : group.key === "yearly"
+        ? getCadenceSummaryText("yearly", reminderSchedules)
+        : group.key === "custom"
+        ? "Custom"
+        : "Handled"}
+    </Text>
+  </View>
+) : null}
 
                      {group.entries.map((entry) => (
                       <Pressable
@@ -1802,28 +1778,21 @@ export default function RemindersScreen() {
                         </View>
 
                          {group.key === "custom" || group.key === "handled" ? (
-                          <View
-                            style={{
-                              alignSelf: "flex-start",
-                              marginTop: 5,
-                              backgroundColor: "rgba(107,114,128,0.72)",
-                              borderRadius: 10,
-                              paddingVertical: 5,
-                              paddingHorizontal: 8,
-                            }}
-                          >
-                            <Text
-                              style={{
-                                fontSize: 12,
-                                fontWeight: "600",
-                                color: "white",
-                              }}
-                            >
-                              {group.key === "custom"
-                                ? getCustomInlineSummary(entry)
-                                : getHandledInlineSummary(entry)}
-                            </Text>
-                          </View>
+                        <Text
+                          style={{
+                            marginTop: 6,
+                            marginLeft: 2,
+                            fontSize: 12,
+                            lineHeight: 17,
+                            fontWeight: "500",
+                            color: "rgba(17,24,39,0.72)",
+                          }}
+                          numberOfLines={1}
+                        >
+                          {group.key === "custom"
+                            ? getCustomInlineSummary(entry)
+                            : getHandledInlineSummary(entry)}
+                        </Text>
                         ) : null}
                       </Pressable>
                     ))}

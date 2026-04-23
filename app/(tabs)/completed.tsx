@@ -392,27 +392,19 @@ export default function CompletedScreen() {
                         {entry.title?.trim() || "Untitled Entry"}
                       </Text>
                     </View>
-
-                    <View
+                    <Text
                       style={{
-                        alignSelf: "flex-start",
-                        backgroundColor: "rgba(31,31,31,0.72)",
-                        borderRadius: 10,
-                        paddingVertical: 4,
-                        paddingHorizontal: 8,
+                        marginTop: 6,
+                        marginLeft: 2,
+                        fontSize: 12,
+                        lineHeight: 17,
+                        fontWeight: "500",
+                        color: "rgba(17,24,39,0.72)",
                       }}
+                      numberOfLines={1}
                     >
-                      <Text
-                        style={{
-                          fontSize: 12,
-                          fontWeight: "600",
-                          color: "white",
-                        }}
-                        numberOfLines={1}
-                      >
-                        {cadenceLabel} • {getArchivedText(entry)}
-                      </Text>
-                    </View>
+                      {cadenceLabel} • {getArchivedText(entry)}
+                    </Text>
                   </Pressable>
                 );
               })}
@@ -517,7 +509,7 @@ export default function CompletedScreen() {
               keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}
               contentContainerStyle={{
-                paddingBottom: 36,
+                paddingBottom: 170,
                 alignItems: "stretch",
               }}
             >
@@ -556,26 +548,19 @@ export default function CompletedScreen() {
                       {selectedArchivedEntry.title?.trim() || "Untitled Entry"}
                     </Text>
 
-                    <View
+                    <Text
                       style={{
-                        backgroundColor: "rgba(255,255,255,0.78)",
-                        borderRadius: 999,
-                        paddingVertical: 7,
-                        paddingHorizontal: 12,
-                        alignSelf: "center",
+                        marginTop: 6,
+                        fontSize: 12,
+                        lineHeight: 17,
+                        fontWeight: "500",
+                        color: "rgba(17,24,39,0.72)",
+                        textAlign: "center",
                       }}
+                      numberOfLines={1}
                     >
-                      <Text
-                        style={{
-                          fontSize: 12,
-                          fontWeight: "600",
-                          color: "#4b5563",
-                          textAlign: "center",
-                        }}
-                      >
-                        {getCadenceLabel(selectedArchivedEntry)} • {getArchivedText(selectedArchivedEntry)}
-                      </Text>
-                    </View>
+                      {getCadenceLabel(selectedArchivedEntry)} • {getArchivedText(selectedArchivedEntry)}
+                    </Text>
                   </View>
 
                   <View
@@ -591,7 +576,7 @@ export default function CompletedScreen() {
                       shadowRadius: 18,
                       shadowOffset: { width: 0, height: 8 },
                       elevation: 6,
-                      marginBottom: 20,
+                      marginBottom: 18,
                     }}
                   >
                     <Text
@@ -607,128 +592,127 @@ export default function CompletedScreen() {
                     </Text>
                   </View>
 
-                  {selectedArchivedEntry.resolution_note ? (
-                    <View
-                      style={{
-                        backgroundColor: "rgba(255,255,255,0.76)",
-                        borderRadius: 18,
-                        padding: 16,
-                        marginBottom: 20,
-                        borderWidth: 1,
-                        borderColor: "rgba(255,255,255,0.92)",
-                      }}
-                    >
-                      <Text
-                        style={{
-                          fontSize: 12,
-                          fontWeight: "700",
-                          color: "#4b5563",
-                          textTransform: "uppercase",
-                          letterSpacing: 0.8,
-                          marginBottom: 6,
-                        }}
-                      >
-                        Archive note
-                      </Text>
+                  <View style={{ height: 6 }} />
+                </>
+              )}
+            </ScrollView>
 
-                      <Text
-                        style={{
-                          fontSize: 15,
-                          lineHeight: 24,
-                          color: "#334155",
-                        }}
-                      >
-                        {selectedArchivedEntry.resolution_note}
-                      </Text>
-                    </View>
-                  ) : null}
-
-                  <View
-                    style={{
-                      flexDirection: "row",
-                      flexWrap: "wrap",
-                      justifyContent: "center",
-                      gap: 10,
-                      marginBottom: 14,
-                    }}
-                  >
-                    <Pressable
-                      onPress={() => {
-                        setShowArchivedEntryModal(false);
-                        setSelectedArchivedEntry(null);
-                        restoreEntry(selectedArchivedEntry.id);
-                      }}
-                      style={{
-                        backgroundColor: "rgba(220,252,231,0.92)",
-                        paddingVertical: 11,
-                        paddingHorizontal: 18,
-                        borderRadius: 999,
-                        borderWidth: 1,
-                        borderColor: "rgba(255,255,255,0.95)",
-                        minWidth: 110,
-                        alignItems: "center",
-                      }}
-                    >
-                      <Text
-                        style={{
-                          color: "#166534",
-                          fontSize: 14,
-                          fontWeight: "700",
-                        }}
-                      >
-                        Restore
-                      </Text>
-                    </Pressable>
-
-                    <Pressable
-                      onPress={() => confirmDeleteEntry(selectedArchivedEntry.id)}
-                      style={{
-                        backgroundColor: "rgba(255,255,255,0.72)",
-                        paddingVertical: 11,
-                        paddingHorizontal: 18,
-                        borderRadius: 999,
-                        borderWidth: 1,
-                        borderColor: "rgba(255,255,255,0.92)",
-                        minWidth: 110,
-                        alignItems: "center",
-                      }}
-                    >
-                      <Text
-                        style={{
-                          color: "#7f1d1d",
-                          fontSize: 14,
-                          fontWeight: "700",
-                        }}
-                      >
-                        Delete
-                      </Text>
-                    </Pressable>
-                  </View>
-
+            {!!selectedArchivedEntry && (
+              <View
+                style={{
+                  position: "absolute",
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  paddingHorizontal: 18,
+                  paddingTop: 12,
+                  paddingBottom: 20,
+                  backgroundColor: "rgba(255,255,255,0.82)",
+                  borderTopWidth: 1,
+                  borderTopColor: "rgba(255,255,255,0.95)",
+                }}
+              >
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "stretch",
+                    gap: 8,
+                  }}
+                >
                   <Pressable
                     onPress={() => {
                       setShowArchivedEntryModal(false);
                       setSelectedArchivedEntry(null);
                     }}
+                    hitSlop={10}
                     style={{
-                      alignSelf: "center",
-                      paddingVertical: 10,
-                      paddingHorizontal: 18,
+                      flex: 1,
+                      minHeight: 54,
+                      alignItems: "center",
+                      justifyContent: "center",
+                      borderRadius: 12,
+                      borderWidth: 1,
+                      borderColor: "rgba(107,114,128,0.38)",
+                      backgroundColor: "rgba(255,255,255,0.62)",
+                      paddingHorizontal: 8,
                     }}
                   >
                     <Text
                       style={{
-                        fontSize: 14,
-                        fontWeight: "700",
                         color: "#374151",
+                        fontSize: 15,
+                        fontWeight: "700",
+                        textAlign: "center",
                       }}
                     >
                       Return
                     </Text>
                   </Pressable>
-                </>
-              )}
-            </ScrollView>
+
+                  <Pressable
+                    onPress={() => {
+                      if (!selectedArchivedEntry) return;
+                      setShowArchivedEntryModal(false);
+                      setSelectedArchivedEntry(null);
+                      restoreEntry(selectedArchivedEntry.id);
+                    }}
+                    hitSlop={10}
+                    style={{
+                      flex: 1,
+                      minHeight: 54,
+                      alignItems: "center",
+                      justifyContent: "center",
+                      borderRadius: 12,
+                      borderWidth: 1,
+                      borderColor: "rgba(107,114,128,0.38)",
+                      backgroundColor: "rgba(255,255,255,0.62)",
+                      paddingHorizontal: 8,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        color: "#166534",
+                        fontSize: 15,
+                        fontWeight: "700",
+                        textAlign: "center",
+                      }}
+                    >
+                      Restore
+                    </Text>
+                  </Pressable>
+
+                  <Pressable
+                    onPress={() => {
+                      if (!selectedArchivedEntry) return;
+                      confirmDeleteEntry(selectedArchivedEntry.id);
+                    }}
+                    hitSlop={10}
+                    style={{
+                      flex: 1,
+                      minHeight: 54,
+                      alignItems: "center",
+                      justifyContent: "center",
+                      borderRadius: 12,
+                      borderWidth: 1,
+                      borderColor: "rgba(107,114,128,0.38)",
+                      backgroundColor: "rgba(255,255,255,0.62)",
+                      paddingHorizontal: 8,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        color: "#7f1d1d",
+                        fontSize: 15,
+                        fontWeight: "700",
+                        textAlign: "center",
+                      }}
+                    >
+                      Delete
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+            )}
           </View>
         </SafeAreaView>
       </View>
