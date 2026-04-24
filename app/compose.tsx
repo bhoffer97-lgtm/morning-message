@@ -14,6 +14,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -252,6 +253,13 @@ function getCustomScheduleSummary(
   return `Every ${repeatValue} ${repeatUnit} at ${timeText} starting ${dateText}`;
 }
 
+function getAIModeDisplayLabel(mode: AIWriteMode) {
+  if (mode === "prayer") return "Prayer";
+  if (mode === "affirmation") return "Affirmation";
+  if (mode === "goal") return "Goal";
+  return "Reminder";
+}
+
 const composeBackground = require("../assets/images/morning-nature-1.jpg");
 
 export default function ComposeScreen() {
@@ -262,7 +270,10 @@ export default function ComposeScreen() {
     reminderEntryId?: string;
   }>();
 
-  const inputRef = useRef<TextInput | null>(null);
+const inputRef = useRef<TextInput | null>(null);
+const { height: screenHeight } = useWindowDimensions();
+const composeScrollRef = useRef<ScrollView | null>(null);
+const journalCardYRef = useRef(0);
 
   const composeMode = params.mode === "edit" ? "edit" : "create";
   const editingEntryId = typeof params.entryId === "string" ? params.entryId : null;
@@ -273,8 +284,9 @@ export default function ComposeScreen() {
   const [text, setText] = useState("");
   const [title, setTitle] = useState("");
   const [selectedAIMode, setSelectedAIMode] = useState<AIWriteMode>("reminder");
-  const [showAITypeModal, setShowAITypeModal] = useState(false);
-   const [showTitleSaveModal, setShowTitleSaveModal] = useState(false);
+  const [showAITypeModal, setShowAITypeModal] = useState(composeMode === "create");
+  const [hasSelectedEntryType, setHasSelectedEntryType] = useState(composeMode === "edit");
+  const [showTitleSaveModal, setShowTitleSaveModal] = useState(false);
   const [showCustomSetupModal, setShowCustomSetupModal] = useState(false);
   const [showRevertAI, setShowRevertAI] = useState(false);
   const [preAIText, setPreAIText] = useState<string | null>(null);
@@ -311,20 +323,33 @@ export default function ComposeScreen() {
   const dotAnim2 = useRef(new Animated.Value(0.35)).current;
   const dotAnim3 = useRef(new Animated.Value(0.35)).current;
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      inputRef.current?.focus();
-    }, 120);
+useEffect(() => {
+  if (composeMode === "create") {
+    return;
+  }
 
-    return () => clearTimeout(timer);
-  }, []);
+  const timer = setTimeout(() => {
+    inputRef.current?.focus();
+  }, 120);
+
+  return () => clearTimeout(timer);
+}, [composeMode]);
 
   useEffect(() => {
     const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
     const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
 
-    const showSub = Keyboard.addListener(showEvent, () => setIsKeyboardVisible(true));
-    const hideSub = Keyboard.addListener(hideEvent, () => setIsKeyboardVisible(false));
+  const showSub = Keyboard.addListener(showEvent, () => {
+  setIsKeyboardVisible(true);
+
+  setTimeout(() => {
+    if (inputRef.current?.isFocused()) {
+      liftJournalCard();
+    }
+  }, 120);
+});
+
+const hideSub = Keyboard.addListener(hideEvent, () => setIsKeyboardVisible(false));
 
     return () => {
       showSub.remove();
@@ -337,6 +362,8 @@ export default function ComposeScreen() {
       await loadProfileDigestSettings();
 
       if (composeMode === "edit" && editingEntryId) {
+        setHasSelectedEntryType(true);
+        setShowAITypeModal(false);
         await loadEntryForEdit(editingEntryId);
         return;
       }
@@ -345,6 +372,8 @@ export default function ComposeScreen() {
       setText("");
       setTitle("");
       setSelectedAIMode("reminder");
+      setHasSelectedEntryType(false);
+      setShowAITypeModal(true);
       setShowRevertAI(false);
       setPreAIText(null);
       setPreAITitle(null);
@@ -640,11 +669,47 @@ export default function ComposeScreen() {
     }
   }
 
-  function handleAIHelp() {
-    if (!text.trim() || isAIWorking) return;
-    setShowAITypeModal(true);
+function chooseEntryType(aiType: AIWriteMode) {
+  setSelectedAIMode(aiType);
+  setHasSelectedEntryType(true);
+  setShowAITypeModal(false);
+
+  setTimeout(() => {
+    inputRef.current?.focus();
+    liftJournalCard();
+  }, Platform.OS === "ios" ? 180 : 220);
+}
+
+function closeEntryTypePicker() {
+  if (!hasSelectedEntryType && composeMode === "create" && !text.trim()) {
+    closeCompose();
+    return;
   }
 
+  setShowAITypeModal(false);
+}
+
+function handleAIHelp() {
+  if (!text.trim() || isAIWorking) return;
+  runAIHelpForType(selectedAIMode);
+}
+function liftJournalCard() {
+  requestAnimationFrame(() => {
+    composeScrollRef.current?.scrollTo({
+      y: Math.max(0, journalCardYRef.current - 10),
+      animated: true,
+    });
+  });
+}
+
+function handleEntryTextChange(value: string) {
+  const wasEmpty = text.trim().length === 0;
+  setText(value);
+
+  if (wasEmpty && value.trim().length > 0) {
+    setTimeout(liftJournalCard, 40);
+  }
+}
    function closeCompose() {
     Keyboard.dismiss();
 
@@ -926,6 +991,10 @@ export default function ComposeScreen() {
     return `Yearly Reminder occurs on ${monthDay} at ${timeLabel}`;
   }, [selectedSaveCadence, reminderSchedules]);
 
+const journalInputMinHeight = isKeyboardVisible
+  ? 360
+  : Math.max(460, screenHeight - 330);
+
     return (
     <>
       <Stack.Screen
@@ -950,371 +1019,113 @@ export default function ComposeScreen() {
             style={{ flex: 1 }}
             behavior={Platform.OS === "ios" ? "padding" : undefined}
           >
+          <View
+            style={{
+              paddingHorizontal: 20,
+              paddingTop: 44,
+              paddingBottom: 8,
+            }}
+          >
             <View
               style={{
-                paddingHorizontal: 16,
-                paddingTop: 54,
-                paddingBottom: 10,
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "space-between",
               }}
             >
-              <View
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                }}
-              >
               <Pressable
                 onPress={closeCompose}
-                hitSlop={10}
+                hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
                 style={{
-                  minWidth: 64,
-                  height: 40,
-                  borderRadius: 20,
+                  width: 92,
+                  minHeight: 52,
                   justifyContent: "center",
-                  alignItems: "center",
-                  backgroundColor: "rgba(0,0,0,0.20)",
-                  borderWidth: 1,
-                  borderColor: "rgba(255,255,255,0.14)",
-                  paddingHorizontal: 12,
+                  alignItems: "flex-start",
                 }}
               >
                 <Text
                   style={{
-                    fontSize: 16,
+                    fontSize: 17,
                     fontWeight: "700",
                     color: "white",
-                    textShadowColor: "rgba(0,0,0,0.35)",
+                    textShadowColor: "rgba(0,0,0,0.38)",
                     textShadowOffset: { width: 0, height: 1 },
-                    textShadowRadius: 4,
+                    textShadowRadius: 5,
                   }}
                 >
-                  Back
+                  Cancel
                 </Text>
               </Pressable>
 
-                <Text
-                  style={{
-                    fontSize: 18,
-                    fontWeight: "700",
-                    color: "white",
-                    textShadowColor: "rgba(0,0,0,0.35)",
-                    textShadowOffset: { width: 0, height: 1 },
-                    textShadowRadius: 4,
-                  }}
-                >
-                  Write Entry
-                </Text>
-
-                <Pressable
-                  onPress={openSaveEntryModal}
-                  disabled={!text.trim() || isSaving || isLoadingEntry}
-                  hitSlop={10}
-                  style={{
-                    minWidth: 64,
-                    height: 40,
-                    borderRadius: 20,
-                    justifyContent: "center",
-                    alignItems: "center",
-                    backgroundColor: "rgba(0,0,0,0.20)",
-                    borderWidth: 1,
-                    borderColor: "rgba(255,255,255,0.14)",
-                    paddingHorizontal: 12,
-                    opacity: !text.trim() || isSaving || isLoadingEntry ? 0.45 : 1,
-                  }}
-                >
-                  <Text
-                    style={{
-                      fontSize: 16,
-                      fontWeight: "700",
-                      color: "white",
-                      textShadowColor: "rgba(0,0,0,0.35)",
-                      textShadowOffset: { width: 0, height: 1 },
-                      textShadowRadius: 4,
-                    }}
-                  >
-                    Save
-                  </Text>
-                </Pressable>
-              </View>
-            </View>
-
-            <ScrollView
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={{
-                paddingHorizontal: 12,
-                paddingTop: 6,
-                paddingBottom: isKeyboardVisible ? 220 : 34,
-              }}
-            >
-               <View
+              <Pressable
+                onPress={() => setShowAITypeModal(true)}
+                hitSlop={10}
                 style={{
-                  backgroundColor: "rgba(250,246,236,0.94)",
-                  borderRadius: 28,
-                  padding: 16,
+                  minHeight: 38,
+                  borderRadius: 19,
+                  paddingHorizontal: 16,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  backgroundColor: "rgba(250,246,236,0.92)",
                   borderWidth: 1,
-                  borderColor: "rgba(255,255,255,0.72)",
-                  shadowColor: "#000",
-                  shadowOpacity: 0.10,
-                  shadowRadius: 14,
-                  shadowOffset: { width: 0, height: 8 },
-                  elevation: 5,
-                  marginBottom: 14,
+                  borderColor: "rgba(255,255,255,0.62)",
                 }}
               >
                 <Text
                   style={{
-                    fontSize: 12,
-                    fontWeight: "700",
-                    letterSpacing: 1,
-                    textTransform: "uppercase",
+                    fontSize: 14,
+                    fontWeight: "800",
                     color: "#8b6f47",
-                    marginBottom: 14,
                   }}
                 >
-                  Entry Type
+                  {getAIModeDisplayLabel(selectedAIMode)} ▼
                 </Text>
+              </Pressable>
 
-                <View
-                  style={{
-                    flexDirection: "row",
-                    gap: 8,
-                    marginBottom: 16,
-                  }}
-                >
-                  {(
-                    [
-                      { key: "reminder", label: "Reminder" },
-                      { key: "goal", label: "Goal" },
-                      { key: "prayer", label: "Prayer" },
-                      { key: "affirmation", label: "Affirm..." },
-                    ] as const
-                  ).map((option) => {
-                    const selected = selectedAIMode === option.key;
-
-                    return (
-                      <Pressable
-                        key={option.key}
-                        onPress={() => setSelectedAIMode(option.key)}
-                        style={{
-                          flex: 1,
-                          minHeight: 40,
-                          borderRadius: 14,
-                          borderWidth: 1,
-                          borderColor: selected ? "rgba(139,111,71,0.28)" : "rgba(0,0,0,0.08)",
-                          backgroundColor: selected ? "rgba(139,111,71,0.12)" : "rgba(255,255,255,0.55)",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          paddingHorizontal: 4,
-                        }}
-                      >
-                        <Text
-                          style={{
-                            fontSize: 12,
-                            fontWeight: "700",
-                            color: selected ? "#8b6f47" : "#374151",
-                            textAlign: "center",
-                          }}
-                          numberOfLines={1}
-                        >
-                          {option.label}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-
+              <Pressable
+                onPress={openSaveEntryModal}
+                disabled={!text.trim() || isSaving || isLoadingEntry}
+                hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
+                style={{
+                  width: 92,
+                  minHeight: 52,
+                  justifyContent: "center",
+                  alignItems: "flex-end",
+                  opacity: !text.trim() || isSaving || isLoadingEntry ? 0.42 : 1,
+                }}
+              >
                 <Text
                   style={{
-                    fontSize: 12,
-                    fontWeight: "700",
-                    letterSpacing: 1,
-                    textTransform: "uppercase",
-                    color: "#8b6f47",
-                    marginBottom: 10,
+                    fontSize: 17,
+                    fontWeight: "800",
+                    color: "white",
+                    textShadowColor: "rgba(0,0,0,0.38)",
+                    textShadowOffset: { width: 0, height: 1 },
+                    textShadowRadius: 5,
                   }}
                 >
-                  Notification
+                  Save
                 </Text>
-
-                <View
-                  style={{
-                    flexDirection: "row",
-                    gap: 8,
-                    marginBottom: 12,
-                  }}
-                >
-                  <Pressable
-                    onPress={() => {
-                      setSaveScheduleSource("none");
-                      setSelectedSaveCadence("daily");
-                      setShowCadencePicker(false);
-                    }}
-                    style={{
-                      flex: 1,
-                      minHeight: 42,
-                      borderRadius: 14,
-                      borderWidth: 1,
-                      borderColor:
-                        saveScheduleSource === "none" ? "rgba(139,111,71,0.28)" : "rgba(0,0,0,0.08)",
-                      backgroundColor:
-                        saveScheduleSource === "none"
-                          ? "rgba(139,111,71,0.12)"
-                          : "rgba(255,255,255,0.55)",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      paddingHorizontal: 8,
-                    }}
-                  >
-                    <Text
-                      style={{
-                        fontSize: 14,
-                        fontWeight: "700",
-                        color: saveScheduleSource === "none" ? "#8b6f47" : "#374151",
-                        textAlign: "center",
-                      }}
-                    >
-                      None
-                    </Text>
-                  </Pressable>
-
-                  <Pressable
-                    onPress={() => {
-                      setSaveScheduleSource("digest");
-                      setShowCadencePicker(true);
-                    }}
-                    style={{
-                      flex: 1,
-                      minHeight: 42,
-                      borderRadius: 14,
-                      borderWidth: 1,
-                      borderColor:
-                        saveScheduleSource === "digest" ? "rgba(139,111,71,0.28)" : "rgba(0,0,0,0.08)",
-                      backgroundColor:
-                        saveScheduleSource === "digest"
-                          ? "rgba(139,111,71,0.12)"
-                          : "rgba(255,255,255,0.55)",
-                      flexDirection: "row",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      paddingHorizontal: 12,
-                    }}
-                  >
-                    <Text
-                      style={{
-                        fontSize: 14,
-                        fontWeight: "700",
-                        color: saveScheduleSource === "digest" ? "#8b6f47" : "#374151",
-                        textTransform: "capitalize",
-                      }}
-                    >
-                      {selectedSaveCadence}
-                    </Text>
-
-                    <Text
-                      style={{
-                        fontSize: 14,
-                        fontWeight: "700",
-                        color: "#6b7280",
-                        marginLeft: 8,
-                      }}
-                    >
-                      ▼
-                    </Text>
-                  </Pressable>
-
-                  <Pressable
-                    onPress={() => {
-                      setShowCadencePicker(false);
-                      openCustomSetup();
-                    }}
-                    style={{
-                      flex: 1,
-                      minHeight: 42,
-                      borderRadius: 14,
-                      borderWidth: 1,
-                      borderColor:
-                        saveScheduleSource === "custom" ? "rgba(139,111,71,0.28)" : "rgba(0,0,0,0.08)",
-                      backgroundColor:
-                        saveScheduleSource === "custom"
-                          ? "rgba(139,111,71,0.12)"
-                          : "rgba(255,255,255,0.55)",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      paddingHorizontal: 8,
-                    }}
-                  >
-                    <Text
-                      style={{
-                        fontSize: 14,
-                        fontWeight: "700",
-                        color: saveScheduleSource === "custom" ? "#8b6f47" : "#374151",
-                        textAlign: "center",
-                      }}
-                    >
-                      Custom
-                    </Text>
-                  </Pressable>
-                </View>
-
-                {saveScheduleSource === "digest" ? (
-                  <View
-                    style={{
-                      backgroundColor: "rgba(255,255,255,0.62)",
-                      borderRadius: 14,
-                      borderWidth: 1,
-                      borderColor: "rgba(0,0,0,0.06)",
-                      paddingHorizontal: 12,
-                      paddingVertical: 10,
-                    }}
-                  >
-                    <Text
-                      numberOfLines={1}
-                      ellipsizeMode="tail"
-                      style={{
-                        fontSize: 12,
-                        color: "#475569",
-                      }}
-                    >
-                      {selectedDigestDescription}
-                    </Text>
-                  </View>
-                ) : null}
-
-                {saveScheduleSource === "custom" ? (
-                  <Pressable
-                    onPress={openCustomSetup}
-                    style={{
-                      backgroundColor: "rgba(255,255,255,0.62)",
-                      borderRadius: 14,
-                      borderWidth: 1,
-                      borderColor: "rgba(0,0,0,0.06)",
-                      paddingHorizontal: 12,
-                      paddingVertical: 10,
-                    }}
-                  >
-                    <Text
-                      numberOfLines={1}
-                      ellipsizeMode="tail"
-                      style={{
-                        fontSize: 12,
-                        color: "#475569",
-                      }}
-                    >
-                      {getCustomScheduleSummary(
-                        customScheduleMode,
-                        customScheduleTime,
-                        customDueDate,
-                        customIntervalValue,
-                        customIntervalUnit
-                      )}
-                    </Text>
-                  </Pressable>
-                ) : null}
-              </View>
+              </Pressable>
+            </View>
+          </View>
+              <ScrollView
+              ref={composeScrollRef}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{
+                flexGrow: 1,
+                paddingHorizontal: 12,
+                paddingTop: 0,
+                paddingBottom: isKeyboardVisible ? 220 : 24,
+              }}
+            >
+              <View style={{ height: 4 }} />
 
               <View
+                onLayout={(event) => {
+                  journalCardYRef.current = event.nativeEvent.layout.y;
+                }}
                 style={{
                   backgroundColor: "rgba(250,246,236,0.95)",
                   borderRadius: 28,
@@ -1330,128 +1141,136 @@ export default function ComposeScreen() {
                   elevation: 6,
                 }}
               >
-                <View
-                  style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: 10,
-                    marginBottom: 10,
-                  }}
-                >
-                  <Text
-                    style={{
-                      fontSize: 12,
-                      fontWeight: "700",
-                      letterSpacing: 1,
-                      textTransform: "uppercase",
-                      color: "#8b6f47",
-                    }}
-                  >
-                    Journal Entry
-                  </Text>
+              <View
+              style={{
+                marginBottom: 12,
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 20,
+                  fontWeight: "800",
+                  letterSpacing: 0.5,
+                  color: "#8b6f47",
+                  marginBottom: 10,
+                }}
+              >
+                Write what's on your mind...
+              </Text>
 
-                  <View
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 8,
+                }}
+              >
+                {showRevertAI && preAIText !== null && (
+                  <Pressable
+                    onPress={() => {
+                      setText(preAIText);
+                      setTitle(preAITitle ?? "");
+                      setShowRevertAI(false);
+                      setPreAIText(null);
+                      setPreAITitle(null);
+                      inputRef.current?.focus();
+                    }}
                     style={{
-                      flexDirection: "row",
+                      minHeight: 42,
+                      borderRadius: 21,
                       alignItems: "center",
-                      gap: 8,
+                      justifyContent: "center",
+                      backgroundColor: "rgba(245,158,11,0.14)",
+                      borderWidth: 1,
+                      borderColor: "rgba(245,158,11,0.25)",
+                      paddingHorizontal: 14,
                     }}
                   >
-                    {showRevertAI && preAIText !== null && (
-                      <Pressable
-                        onPress={() => {
-                          setText(preAIText);
-                          setTitle(preAITitle ?? "");
-                          setShowRevertAI(false);
-                          setPreAIText(null);
-                          setPreAITitle(null);
-                          inputRef.current?.focus();
-                        }}
-                        style={{
-                          minHeight: 34,
-                          borderRadius: 17,
-                          alignItems: "center",
-                          justifyContent: "center",
-                          backgroundColor: "rgba(245,158,11,0.14)",
-                          borderWidth: 1,
-                          borderColor: "rgba(245,158,11,0.25)",
-                          paddingHorizontal: 12,
-                        }}
-                      >
-                        <Text
-                          style={{
-                            fontSize: 12,
-                            color: "#b45309",
-                            fontWeight: "700",
-                          }}
-                        >
-                          ↺ Revert
-                        </Text>
-                      </Pressable>
-                    )}
-
-                    <Pressable
-                      onPress={handleAIHelp}
+                    <Text
                       style={{
-                        minHeight: 34,
-                        borderRadius: 17,
-                        alignItems: "center",
-                        justifyContent: "center",
-                        backgroundColor: "rgba(255,255,255,0.92)",
-                        borderWidth: 1,
-                        borderColor: "rgba(0,0,0,0.08)",
-                        paddingHorizontal: 12,
+                        fontSize: 13,
+                        color: "#b45309",
+                        fontWeight: "800",
                       }}
                     >
-                      {isAIWorking ? (
-                        <View style={{ flexDirection: "row", gap: 3 }}>
-                          <Animated.View
-                            style={{
-                              width: 4,
-                              height: 4,
-                              borderRadius: 2,
-                              backgroundColor: "#2e6cff",
-                              opacity: dotAnim1,
-                            }}
-                          />
-                          <Animated.View
-                            style={{
-                              width: 4,
-                              height: 4,
-                              borderRadius: 2,
-                              backgroundColor: "#2e6cff",
-                              opacity: dotAnim2,
-                            }}
-                          />
-                          <Animated.View
-                            style={{
-                              width: 4,
-                              height: 4,
-                              borderRadius: 2,
-                              backgroundColor: "#2e6cff",
-                              opacity: dotAnim3,
-                            }}
-                          />
-                        </View>
-                      ) : (
-                        <Text
-                          style={{
-                            fontSize: 12,
-                            fontWeight: "700",
-                            color: "#374151",
-                          }}
-                        >
-                          ✨ AI help write
-                        </Text>
-                      )}
-                    </Pressable>
-                  </View>
-                </View>
+                      ↺ Revert
+                    </Text>
+                  </Pressable>
+                )}
+
+                <Pressable
+                  onPress={handleAIHelp}
+                  disabled={!text.trim() || isAIWorking}
+                  hitSlop={8}
+                  style={{
+                    minHeight: 46,
+                    borderRadius: 23,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    backgroundColor: text.trim()
+                      ? "#8b6f47"
+                      : "rgba(139,111,71,0.22)",
+                    borderWidth: 1,
+                    borderColor: text.trim()
+                      ? "rgba(78,59,39,0.35)"
+                      : "rgba(139,111,71,0.22)",
+                    paddingHorizontal: 18,
+                    shadowColor: "#000",
+                    shadowOpacity: text.trim() ? 0.12 : 0,
+                    shadowRadius: 8,
+                    shadowOffset: { width: 0, height: 4 },
+                    elevation: text.trim() ? 3 : 0,
+                    opacity: !text.trim() ? 0.75 : 1,
+                  }}
+                >
+                  {isAIWorking ? (
+                    <View style={{ flexDirection: "row", gap: 3 }}>
+                      <Animated.View
+                        style={{
+                          width: 4,
+                          height: 4,
+                          borderRadius: 2,
+                          backgroundColor: "#fffaf2",
+                          opacity: dotAnim1,
+                        }}
+                      />
+                      <Animated.View
+                        style={{
+                          width: 4,
+                          height: 4,
+                          borderRadius: 2,
+                          backgroundColor: "#fffaf2",
+                          opacity: dotAnim2,
+                        }}
+                      />
+                      <Animated.View
+                        style={{
+                          width: 4,
+                          height: 4,
+                          borderRadius: 2,
+                          backgroundColor: "#fffaf2",
+                          opacity: dotAnim3,
+                        }}
+                      />
+                    </View>
+                  ) : (
+                    <Text
+                      style={{
+                        fontSize: 14,
+                        fontWeight: "800",
+                        color: text.trim() ? "#fffaf2" : "#8b6f47",
+                      }}
+                    >
+                      ✨ AI Help Write
+                    </Text>
+                  )}
+                </Pressable>
+              </View>
+            </View>
 
                 <Animated.View
                   style={{
-                    minHeight: 360,
+                    minHeight: journalInputMinHeight,
                     opacity: textFadeAnim,
                     transform: [{ scale: textScaleAnim }],
                   }}
@@ -1460,13 +1279,16 @@ export default function ComposeScreen() {
                     <TextInput
                       ref={inputRef}
                       value={text}
-                      onChangeText={setText}
-                      placeholder="Write what’s on your mind…"
+                      onChangeText={handleEntryTextChange}
+                      onFocus={() => {
+                        setTimeout(liftJournalCard, 80);
+                      }}
+                      placeholder="Begin typing…"
                       placeholderTextColor="#9ca3af"
                       multiline
                       scrollEnabled
                       style={{
-                        minHeight: 360,
+                        minHeight: journalInputMinHeight,
                         borderWidth: 0,
                         backgroundColor: "transparent",
                         paddingTop: 10,
@@ -1520,7 +1342,7 @@ export default function ComposeScreen() {
 
         <Modal visible={showAITypeModal} transparent animationType="fade">
           <Pressable
-            onPress={() => setShowAITypeModal(false)}
+            onPress={closeEntryTypePicker}
             style={{
               flex: 1,
               backgroundColor: "rgba(0,0,0,0.35)",
@@ -1531,57 +1353,69 @@ export default function ComposeScreen() {
             <Pressable
               onPress={() => {}}
               style={{
-                backgroundColor: "white",
-                borderRadius: 20,
+                backgroundColor: "rgba(31,41,55,0.94)",
+                borderRadius: 24,
                 padding: 20,
+                borderWidth: 1,
+                borderColor: "rgba(255,255,255,0.10)",
               }}
             >
               <Text
                 style={{
-                  fontSize: 20,
-                  fontWeight: "700",
-                  color: "black",
-                  marginBottom: 8,
+                  fontSize: 22,
+                  fontWeight: "800",
+                  color: "white",
+                  marginBottom: 18,
+                  textAlign: "center",
                 }}
               >
-                Choose the kind of entry you want help crafting
+                What are you writing?
               </Text>
 
               {(
                 [
-                  { key: "prayer", label: "Prayer" },
-                  { key: "goal", label: "Goal" },
-                  { key: "affirmation", label: "Affirmation" },
                   { key: "reminder", label: "Reminder" },
+                  { key: "goal", label: "Goal" },
+                  { key: "prayer", label: "Prayer" },
+                  { key: "affirmation", label: "Affirmation" },
                 ] as const
-              ).map((option) => (
-                <Pressable
-                  key={option.key}
-                  onPress={() => runAIHelpForType(option.key)}
-                  style={{
-                    backgroundColor: "#f8fafc",
-                    borderRadius: 14,
-                    paddingVertical: 14,
-                    paddingHorizontal: 14,
-                    marginBottom: 10,
-                    borderWidth: 1,
-                    borderColor: "#e5e7eb",
-                  }}
-                >
-                  <Text
+              ).map((option) => {
+                const selected = selectedAIMode === option.key;
+
+                return (
+                  <Pressable
+                    key={option.key}
+                    onPress={() => chooseEntryType(option.key)}
                     style={{
-                      fontSize: 15,
-                      fontWeight: "600",
-                      color: "#111827",
+                      backgroundColor: selected
+                        ? "rgba(255,255,255,0.18)"
+                        : "rgba(255,255,255,0.07)",
+                      borderRadius: 16,
+                      paddingVertical: 15,
+                      paddingHorizontal: 14,
+                      marginBottom: 10,
+                      borderWidth: 1,
+                      borderColor: selected
+                        ? "rgba(255,255,255,0.28)"
+                        : "rgba(255,255,255,0.08)",
                     }}
                   >
-                    {option.label}
-                  </Text>
-                </Pressable>
-              ))}
+                    <Text
+                      style={{
+                        fontSize: 16,
+                        fontWeight: "800",
+                        color: "white",
+                        textAlign: "center",
+                      }}
+                    >
+                      {option.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
 
               <Pressable
-                onPress={() => setShowAITypeModal(false)}
+                onPress={closeEntryTypePicker}
                 style={{
                   paddingVertical: 10,
                   marginTop: 2,
@@ -1590,12 +1424,12 @@ export default function ComposeScreen() {
                 <Text
                   style={{
                     textAlign: "center",
-                    color: "#6b7280",
+                    color: "rgba(255,255,255,0.72)",
                     fontSize: 14,
-                    fontWeight: "600",
+                    fontWeight: "700",
                   }}
                 >
-                  Cancel
+                  {hasSelectedEntryType ? "Cancel" : "Go Back"}
                 </Text>
               </Pressable>
             </Pressable>
@@ -1731,17 +1565,16 @@ export default function ComposeScreen() {
                 Save Entry
               </Text>
 
-              <Text
-                style={{
-                  fontSize: 14,
-                  color: "rgba(255,255,255,0.72)",
-                  marginBottom: 12,
-                  lineHeight: 20,
-                }}
-              >
-                Review the title before saving.
-              </Text>
-
+            <Text
+              style={{
+                fontSize: 14,
+                color: "rgba(255,255,255,0.72)",
+                marginBottom: 12,
+                lineHeight: 20,
+              }}
+            >
+              Review the title and reminder settings.
+            </Text>
               <Text
                 style={{
                   fontSize: 13,
@@ -1753,55 +1586,257 @@ export default function ComposeScreen() {
                 Title
               </Text>
 
-              <View
-                style={{
-                  position: "relative",
-                  marginBottom: 16,
-                }}
-              >
-                <TextInput
-                  value={title}
-                  onChangeText={setTitle}
-                  placeholder="Entry title"
-                  placeholderTextColor="rgba(255,255,255,0.40)"
-                  autoFocus
+                <View
                   style={{
-                    borderWidth: 1,
-                    borderColor: "rgba(255,255,255,0.10)",
-                    borderRadius: 14,
-                    paddingLeft: 12,
-                    paddingRight: title.trim() ? 40 : 12,
-                    paddingVertical: 12,
-                    fontSize: 15,
-                    color: "white",
-                    backgroundColor: "rgba(255,255,255,0.06)",
+                    position: "relative",
+                    marginBottom: 16,
                   }}
-                />
-
-                {!!title.trim() && (
-                  <Pressable
-                    onPress={() => setTitle("")}
-                    hitSlop={10}
+                >
+                  <TextInput
+                    value={title}
+                    onChangeText={setTitle}
+                    placeholder="Entry title"
+                    placeholderTextColor="rgba(255,255,255,0.40)"
+                    autoFocus
                     style={{
-                      position: "absolute",
-                      right: 10,
-                      top: 0,
-                      bottom: 0,
+                      borderWidth: 1,
+                      borderColor: "rgba(255,255,255,0.10)",
+                      borderRadius: 14,
+                      paddingLeft: 12,
+                      paddingRight: title.trim() ? 40 : 12,
+                      paddingVertical: 12,
+                      fontSize: 15,
+                      color: "white",
+                      backgroundColor: "rgba(255,255,255,0.06)",
+                    }}
+                  />
+
+                  {!!title.trim() && (
+                    <Pressable
+                      onPress={() => setTitle("")}
+                      hitSlop={10}
+                      style={{
+                        position: "absolute",
+                        right: 10,
+                        top: 0,
+                        bottom: 0,
+                        justifyContent: "center",
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 18,
+                          fontWeight: "700",
+                          color: "rgba(255,255,255,0.40)",
+                        }}
+                      >
+                        ×
+                      </Text>
+                    </Pressable>
+                  )}
+                </View>
+
+                <Text
+                  style={{
+                    fontSize: 13,
+                    fontWeight: "700",
+                    color: "rgba(255,255,255,0.82)",
+                    marginBottom: 8,
+                  }}
+                >
+                  Reminder
+                </Text>
+
+                <View
+                  style={{
+                    flexDirection: "row",
+                    gap: 8,
+                    marginBottom: 12,
+                  }}
+                >
+                  <Pressable
+                    onPress={() => {
+                      setSaveScheduleSource("none");
+                      setSelectedSaveCadence("daily");
+                      setShowCadencePicker(false);
+                    }}
+                    style={{
+                      flex: 1,
+                      minHeight: 42,
+                      borderRadius: 14,
+                      borderWidth: 1,
+                      borderColor:
+                        saveScheduleSource === "none"
+                          ? "rgba(255,255,255,0.26)"
+                          : "rgba(255,255,255,0.10)",
+                      backgroundColor:
+                        saveScheduleSource === "none"
+                          ? "rgba(255,255,255,0.16)"
+                          : "rgba(255,255,255,0.06)",
+                      alignItems: "center",
                       justifyContent: "center",
+                      paddingHorizontal: 8,
                     }}
                   >
                     <Text
                       style={{
-                        fontSize: 18,
-                        fontWeight: "700",
-                        color: "rgba(255,255,255,0.40)",
+                        fontSize: 14,
+                        fontWeight: "800",
+                        color: "white",
+                        textAlign: "center",
                       }}
                     >
-                      ×
+                      None
                     </Text>
                   </Pressable>
-                )}
-              </View>
+                  <Pressable
+                    onPress={() => {
+                      if (saveScheduleSource === "digest") {
+                        setShowCadencePicker(true);
+                        return;
+                      }
+
+                      setSaveScheduleSource("digest");
+                      setSelectedSaveCadence("daily");
+                      setShowCadencePicker(false);
+                    }}
+                    style={{
+                      flex: 1,
+                      minHeight: 42,
+                      borderRadius: 14,
+                      borderWidth: 1,
+                      borderColor:
+                        saveScheduleSource === "digest"
+                          ? "rgba(255,255,255,0.26)"
+                          : "rgba(255,255,255,0.10)",
+                      backgroundColor:
+                        saveScheduleSource === "digest"
+                          ? "rgba(255,255,255,0.16)"
+                          : "rgba(255,255,255,0.06)",
+                      flexDirection: "row",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      paddingHorizontal: 10,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 14,
+                        fontWeight: "800",
+                        color: "white",
+                        textTransform: "capitalize",
+                      }}
+                      numberOfLines={1}
+                    >
+                      {selectedSaveCadence}
+                    </Text>
+
+                    <Text
+                      style={{
+                        fontSize: 12,
+                        fontWeight: "800",
+                        color: "rgba(255,255,255,0.70)",
+                        marginLeft: 6,
+                      }}
+                    >
+                      ▼
+                    </Text>
+                  </Pressable>
+
+                  <Pressable
+                    onPress={() => {
+                      setShowCadencePicker(false);
+                      openCustomSetup();
+                    }}
+                    style={{
+                      flex: 1,
+                      minHeight: 42,
+                      borderRadius: 14,
+                      borderWidth: 1,
+                      borderColor:
+                        saveScheduleSource === "custom"
+                          ? "rgba(255,255,255,0.26)"
+                          : "rgba(255,255,255,0.10)",
+                      backgroundColor:
+                        saveScheduleSource === "custom"
+                          ? "rgba(255,255,255,0.16)"
+                          : "rgba(255,255,255,0.06)",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      paddingHorizontal: 8,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 14,
+                        fontWeight: "800",
+                        color: "white",
+                        textAlign: "center",
+                      }}
+                    >
+                      Custom
+                    </Text>
+                  </Pressable>
+                </View>
+
+                {saveScheduleSource === "digest" ? (
+                  <View
+                    style={{
+                      backgroundColor: "rgba(255,255,255,0.08)",
+                      borderRadius: 14,
+                      borderWidth: 1,
+                      borderColor: "rgba(255,255,255,0.08)",
+                      paddingHorizontal: 12,
+                      paddingVertical: 10,
+                      marginBottom: 16,
+                    }}
+                  >
+                    <Text
+                      numberOfLines={2}
+                      ellipsizeMode="tail"
+                      style={{
+                        fontSize: 12,
+                        lineHeight: 17,
+                        color: "rgba(255,255,255,0.76)",
+                      }}
+                    >
+                      {selectedDigestDescription}
+                    </Text>
+                  </View>
+                ) : null}
+
+                {saveScheduleSource === "custom" ? (
+                  <Pressable
+                    onPress={openCustomSetup}
+                    style={{
+                      backgroundColor: "rgba(255,255,255,0.08)",
+                      borderRadius: 14,
+                      borderWidth: 1,
+                      borderColor: "rgba(255,255,255,0.08)",
+                      paddingHorizontal: 12,
+                      paddingVertical: 10,
+                      marginBottom: 16,
+                    }}
+                  >
+                    <Text
+                      numberOfLines={2}
+                      ellipsizeMode="tail"
+                      style={{
+                        fontSize: 12,
+                        lineHeight: 17,
+                        color: "rgba(255,255,255,0.76)",
+                      }}
+                    >
+                      {getCustomScheduleSummary(
+                        customScheduleMode,
+                        customScheduleTime,
+                        customDueDate,
+                        customIntervalValue,
+                        customIntervalUnit
+                      )}
+                    </Text>
+                  </Pressable>
+                ) : null}
 
               <View
                 style={{

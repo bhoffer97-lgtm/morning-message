@@ -765,6 +765,22 @@ export default function HomeScreen() {
   const backgroundImage = morningImages[0];
 
   const currentDailyMessage = dailyMessages[currentMessageIndex] ?? null;
+  const canGoToOlderMessage = currentMessageIndex < dailyMessages.length - 1;
+const canGoToNewerMessage = currentMessageIndex > 0;
+
+function goToOlderMessage() {
+  setVerseText(null);
+  setShowVerseModal(false);
+  setCurrentMessageIndex((current) =>
+    Math.min(current + 1, Math.max(0, dailyMessages.length - 1))
+  );
+}
+
+function goToNewerMessage() {
+  setVerseText(null);
+  setShowVerseModal(false);
+  setCurrentMessageIndex((current) => Math.max(0, current - 1));
+}
 
    function showToast(message: string) {
     setToastMessage(message);
@@ -1328,7 +1344,6 @@ async function loadProfileDigestSettings() {
 setPendingUndoIds((current) => current.filter((id) => id !== entry.id));
 setIsCompletingEntryId(entry.id);
 setHandledCount((current) => current + 1);
-showToast('Moving to "Handled Today"');
 
     try {
       const {
@@ -1391,7 +1406,7 @@ showToast('Moving to "Handled Today"');
 setPendingCompleteIds((current) => current.filter((id) => id !== entry.id));
 setIsCompletingEntryId(entry.id);
 setHandledCount((current) => Math.max(0, current - 1));
-showToast('Moving to "For Today"');
+
     try {
       const {
         data: { user },
@@ -1586,12 +1601,17 @@ showToast('Moving to "For Today"');
     [homeEntries]
   );
 
-  const handledTodayEntries = useMemo(
-    () => homeEntries.filter((entry) => entry.section === "handled_today"),
-    [homeEntries]
-  );
+const handledTodayEntries = useMemo(
+  () => homeEntries.filter((entry) => entry.section === "handled_today"),
+  [homeEntries]
+);
 
-  const carriedOverEntries = useMemo(
+const todayEmptyText =
+  handledTodayEntries.length > 0
+    ? "No more scheduled items for today"
+    : "No scheduled items for today";
+
+const carriedOverEntries = useMemo(
     () => homeEntries.filter((entry) => entry.section === "carried_over"),
     [homeEntries]
   );
@@ -1705,9 +1725,20 @@ const headerScrimOpacity = scrollY.interpolate({
    function renderEntryRow(entry: DisplayEntry, allowComplete = false) {
     const isBlue = entry.type === "reminder";
     const isCompleting = isCompletingEntryId === entry.id;
+    const isMovingToHandled = pendingCompleteIds.includes(entry.id);
+    const isMovingBack = pendingUndoIds.includes(entry.id);
+
     const isHandled =
-      pendingCompleteIds.includes(entry.id) ||
-      (entry.section === "handled_today" && !pendingUndoIds.includes(entry.id));
+      isMovingToHandled ||
+      (entry.section === "handled_today" && !isMovingBack);
+
+    const rowStatusText = isMovingToHandled
+      ? "Checked off today..."
+      : isMovingBack
+      ? "Back on today's list..."
+      : getEntrySubtitle(entry);
+
+    const isRowStatusActive = isMovingToHandled || isMovingBack;
 
     return (
       <View
@@ -1766,15 +1797,15 @@ const headerScrimOpacity = scrollY.interpolate({
               marginLeft: 2,
               fontSize: 12,
               lineHeight: 17,
-              fontWeight: "500",
-              color: "rgba(255,255,255,0.78)",
+              fontWeight: isRowStatusActive ? "800" : "500",
+              color: isRowStatusActive ? "#f4ead8" : "rgba(255,255,255,0.78)",
               textShadowColor: "rgba(0,0,0,0.18)",
               textShadowOffset: { width: 0, height: 1 },
               textShadowRadius: 2,
             }}
             numberOfLines={1}
           >
-            {getEntrySubtitle(entry)}
+            {rowStatusText}
           </Text>
         </Pressable>
 
@@ -1857,34 +1888,7 @@ const headerScrimOpacity = scrollY.interpolate({
       >
         {renderSectionTitle(title)}
 
-        {(allowComplete || title === "Handled Today") && entries.length > 0 ? (
-          <View
-            style={{
-              flexDirection: "row",
-              justifyContent: "space-between",
-              alignItems: "center",
-              marginBottom: 6,
-            }}
-          >
-            <View />
-
-              <Text
-              style={{
-                fontSize: 11,
-                fontWeight: "700",
-                color: "white",
-                letterSpacing: 0.2,
-                textShadowColor: "rgba(0,0,0,0.25)",
-                textShadowOffset: { width: 0, height: 1 },
-                textShadowRadius: 2,
-              }}
-            >
-              Handled
-            </Text>
-          </View>
-        ) : null}
-
-        {entries.length === 0 ? (
+         {entries.length === 0 ? (
           <Text
             style={{
               fontSize: 14,
@@ -2001,88 +2005,161 @@ const headerScrimOpacity = scrollY.interpolate({
                     alignItems: "center",
                   }}
                 >
-                  <Pressable
-                    onPress={() => {
-                      if (currentDailyMessage?.verse_reference) {
-                        loadVerse(currentDailyMessage.verse_reference);
-                      }
-                    }}
-                    onLongPress={() => {
-                      generateDailyMessage(true);
-                    }}
+                <View
+                  style={{
+                    alignSelf: "stretch",
+                    alignItems: "center",
+                  }}
+                >
+                <Pressable
+                  onPress={() => {
+                    if (currentDailyMessage?.verse_reference) {
+                      loadVerse(currentDailyMessage.verse_reference);
+                    }
+                  }}
+                  style={{
+                    alignSelf: "stretch",
+                    alignItems: "center",
+                  }}
+                >
+                  <View
                     style={{
+                      maxWidth: 330,
+                      minHeight: 220,
+                      justifyContent: "flex-start",
+                      alignItems: "center",
+                    }}
+                  >
+                    <Animated.Text
+                      style={{
+                        fontSize: 40,
+                        lineHeight: 50,
+                        color: "white",
+                        textAlign: "center",
+                        fontWeight: "700",
+                        letterSpacing: 0.12,
+                        textShadowColor: "rgba(0,0,0,0.60)",
+                        textShadowOffset: { width: 0, height: 2 },
+                        textShadowRadius: 16,
+                        opacity: messageRevealOpacity,
+                        transform: [{ translateY: messageRevealTranslateY }],
+                      }}
+                    >
+                      {showMorningMessage ? fullMorningMessage : ""}
+                    </Animated.Text>
+                  </View>
+                </Pressable>
+
+                {!!currentDailyMessage?.verse_reference && (
+                  <View
+                    style={{
+                      marginTop: 20,
                       alignSelf: "stretch",
                       alignItems: "center",
                     }}
                   >
-                      <View
+                    <View
                       style={{
-                        maxWidth: 330,
-                        minHeight: 220,
-                        justifyContent: "flex-start",
+                        flexDirection: "row",
                         alignItems: "center",
+                        justifyContent: "center",
+                        gap: 10,
                       }}
                     >
-                      <Animated.Text
-                        style={{
-                          fontSize: 40,
-                          lineHeight: 50,
-                          color: "white",
-                          textAlign: "center",
-                          fontWeight: "700",
-                          letterSpacing: 0.12,
-                          textShadowColor: "rgba(0,0,0,0.60)",
-                          textShadowOffset: { width: 0, height: 2 },
-                          textShadowRadius: 16,
-                          opacity: messageRevealOpacity,
-                          transform: [{ translateY: messageRevealTranslateY }],
-                        }}
-                      >
-                        {showMorningMessage ? fullMorningMessage : ""}
-                      </Animated.Text>
-                    </View>
-
-                    {!!currentDailyMessage?.verse_reference && (
-                      <View
-                        style={{
-                          marginTop: 20,
-                          alignSelf: "stretch",
-                          alignItems: "center",
-                        }}
-                      >
+                      {canGoToNewerMessage ? (
                         <Pressable
-                          onPress={async () => {
-                            if (!currentDailyMessage?.verse_reference) return;
-                            await loadVerse(currentDailyMessage.verse_reference);
-                          }}
+                          onPress={goToNewerMessage}
+                          hitSlop={12}
                           style={{
-                            alignSelf: "center",
-                            paddingVertical: 9,
-                            paddingHorizontal: 18,
-                            borderRadius: 999,
-                            backgroundColor: "rgba(17,24,39,0.34)",
-                            borderWidth: 1,
-                            borderColor: "rgba(255,255,255,0.14)",
+                            width: 34,
+                            height: 34,
+                            borderRadius: 17,
+                            alignItems: "center",
+                            justifyContent: "center",
                           }}
                         >
                           <Text
                             style={{
-                              fontSize: 15,
-                              color: "#f4ead8",
-                              textAlign: "center",
+                              color: "white",
+                              fontSize: 28,
                               fontWeight: "700",
-                              letterSpacing: 0.3,
-                              textShadowColor: "rgba(0,0,0,0.28)",
+                              lineHeight: 30,
+                              textShadowColor: "rgba(0,0,0,0.35)",
                               textShadowOffset: { width: 0, height: 1 },
-                              textShadowRadius: 2,
+                              textShadowRadius: 4,
                             }}
                           >
-                            {currentDailyMessage.verse_reference}
+                            ‹
                           </Text>
                         </Pressable>
-                      </View>
-                    )}
-                  </Pressable>
+                      ) : (
+                        <View style={{ width: 34, height: 34 }} />
+                      )}
+
+                      <Pressable
+                        onPress={async () => {
+                          if (!currentDailyMessage?.verse_reference) return;
+                          await loadVerse(currentDailyMessage.verse_reference);
+                        }}
+                        style={{
+                          alignSelf: "center",
+                          paddingVertical: 10,
+                          paddingHorizontal: 20,
+                          borderRadius: 999,
+                          backgroundColor: "rgba(17,24,39,0.68)",
+                          borderWidth: 1,
+                          borderColor: "rgba(255,255,255,0.24)",
+                        }}
+                      >
+                        <Text
+                          style={{
+                            fontSize: 15,
+                            color: "#fff7e8",
+                            textAlign: "center",
+                            fontWeight: "800",
+                            letterSpacing: 0.35,
+                            textShadowColor: "rgba(0,0,0,0.42)",
+                            textShadowOffset: { width: 0, height: 1 },
+                            textShadowRadius: 3,
+                          }}
+                        >
+                          {currentDailyMessage.verse_reference}
+                        </Text>
+                      </Pressable>
+
+                      {canGoToOlderMessage ? (
+                        <Pressable
+                          onPress={goToOlderMessage}
+                          hitSlop={12}
+                          style={{
+                            width: 34,
+                            height: 34,
+                            borderRadius: 17,
+                            alignItems: "center",
+                            justifyContent: "center",
+                          }}
+                        >
+                          <Text
+                            style={{
+                              color: "white",
+                              fontSize: 28,
+                              fontWeight: "700",
+                              lineHeight: 30,
+                              textShadowColor: "rgba(0,0,0,0.35)",
+                              textShadowOffset: { width: 0, height: 1 },
+                              textShadowRadius: 4,
+                            }}
+                          >
+                            ›
+                          </Text>
+                        </Pressable>
+                      ) : (
+                        <View style={{ width: 34, height: 34 }} />
+                      )}
+                    </View>
+                  </View>
+                )}
+                </View>
 
                   <Pressable
                     onPress={() => {
@@ -2132,20 +2209,6 @@ const headerScrimOpacity = scrollY.interpolate({
 
                     <Text
                       style={{
-                        fontSize: 16,
-                        fontWeight: "700",
-                        color: "white",
-                        textAlign: "center",
-                        textShadowColor: "rgba(0,0,0,0.40)",
-                        textShadowOffset: { width: 0, height: 1 },
-                        textShadowRadius: 6,
-                      }}
-                    >
-                      Write Entry
-                    </Text>
-
-                    <Text
-                      style={{
                         marginTop: 4,
                         fontSize: 13,
                         lineHeight: 18,
@@ -2163,17 +2226,17 @@ const headerScrimOpacity = scrollY.interpolate({
 
                 <View style={{ height: 34 }} />
 
-                 {renderSectionCard(
+                {renderSectionCard(
                   "Reminders for today",
                   forTodayEntries,
                   true,
-                  "No reminders scheduled for today"
+                  todayEmptyText
                 )}
 
-                {renderSectionCard("Reminders carried over", carriedOverEntries, true)}
+                {renderSectionCard("Past items", carriedOverEntries, true)}
 
                 {renderSectionCard(
-                  "Reminders handled today",
+                  "Checked off today",
                   handledTodayEntries,
                   false,
                   undefined,
@@ -2282,9 +2345,7 @@ const headerScrimOpacity = scrollY.interpolate({
                         </Text>
                       </Pressable>
 
-                      <Pressable
-                        onPress={() => generateDailyMessage(true)}
-                        hitSlop={10}
+                        <View
                         style={{
                           flex: 1,
                           alignItems: "center",
@@ -2306,7 +2367,7 @@ const headerScrimOpacity = scrollY.interpolate({
                         >
                           Morning Message
                         </Text>
-                      </Pressable>
+                      </View>
 
                       <View
                         style={{
@@ -2346,10 +2407,10 @@ const headerScrimOpacity = scrollY.interpolate({
 
                         <Pressable
                           onPress={() =>
-                            Alert.alert(
-                              "Handled",
-                              `Handled count: ${handledCount}\n\nDetailed stats screen comes next.`
-                            )
+                          Alert.alert(
+                            "Checked",
+                            `Checked count: ${handledCount}\n\nDetailed stats screen comes next.`
+                          )
                           }
                           hitSlop={10}
                           style={{
@@ -2817,7 +2878,7 @@ const headerScrimOpacity = scrollY.interpolate({
                                     lineHeight: 19,
                                   }}
                                 >
-                                  {selectedEntryIsHandled ? "Undo Handled" : "Mark Handled"}
+                                  {selectedEntryIsHandled ? "Undo Check" : "Check Off"}
                                 </Text>
                               </Pressable>
                             </View>
@@ -2935,9 +2996,9 @@ const headerScrimOpacity = scrollY.interpolate({
                 <Pressable
                   onPress={() => {
                     setShowHomeMenu(false);
-                    Alert.alert(
-                      "Count Report",
-                      `Handled count: ${handledCount}\n\nDetailed report screen comes next.`
+                  Alert.alert(
+                    "Checked",
+                    `Checked count: ${handledCount}\n\nDetailed stats screen comes next.`
                     );
                   }}
                   style={{

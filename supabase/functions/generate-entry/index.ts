@@ -576,26 +576,18 @@ return new Response(JSON.stringify({ text: textOutput, title: titleOutput }), {
       console.log("Profile lookup error:", profileError.message);
     }
 
-    const currentCuratedDayIndex = Number(profileRow?.curated_day_index ?? 0);
-    const lastHomeMessageDate = profileRow?.last_home_message_date ?? null;
+ const currentCuratedDayIndex = Number(profileRow?.curated_day_index ?? 0);
+const lastHomeMessageDate = profileRow?.last_home_message_date ?? null;
 
-    let targetCuratedDayIndex = currentCuratedDayIndex;
+const isNewHomeMessageDay = today !== lastHomeMessageDate;
 
-    if (!forceRegenerate && today !== lastHomeMessageDate && currentCuratedDayIndex < 30) {
-      targetCuratedDayIndex = currentCuratedDayIndex + 1;
+// Days 1-30 use the curated schedule.
+// Day 31 and beyond use the personalized/tag-based path.
+const targetCuratedDayIndex = isNewHomeMessageDay
+  ? Math.min(currentCuratedDayIndex + 1, 31)
+  : currentCuratedDayIndex;
 
-      const { error: profileUpdateError } = await adminSupabase
-        .from("profiles")
-        .update({
-          curated_day_index: targetCuratedDayIndex,
-          last_home_message_date: today,
-        })
-        .eq("id", user.id);
-
-      if (profileUpdateError) {
-        console.log("Profile curated progress update error:", profileUpdateError.message);
-      }
-    }
+const shouldUpdateProfileProgress = isNewHomeMessageDay;
 
     let selectedMessageText: string | null = null;
     let selectedVerseReference: string | null = null;
@@ -724,14 +716,25 @@ return new Response(JSON.stringify({ text: textOutput, title: titleOutput }), {
       }
     }
 
-    const { error: insertError } = await adminSupabase
-      .from("daily_messages")
-      .insert(messageToSave);
+ const { error: insertError } = await adminSupabase
+  .from("daily_messages")
+  .insert(messageToSave);
 
-    if (insertError) {
-      console.log("Daily message insert error:", insertError.message);
-    }
+if (insertError) {
+  console.log("Daily message insert error:", insertError.message);
+} else if (shouldUpdateProfileProgress) {
+  const { error: profileUpdateError } = await adminSupabase
+    .from("profiles")
+    .update({
+      curated_day_index: targetCuratedDayIndex,
+      last_home_message_date: today,
+    })
+    .eq("id", user.id);
 
+  if (profileUpdateError) {
+    console.log("Profile daily progress update error:", profileUpdateError.message);
+  }
+}
     return new Response(
       JSON.stringify({
         message: messageToSave.message_text,
