@@ -580,27 +580,40 @@ function formatHandledDate(dateString: string | null) {
 function getEntrySubtitle(entry: DisplayEntry) {
   const displayDate = getDisplayDate(entry);
   const origin = getReminderOriginLabel(entry);
+  const showDueLabel = origin === "CUSTOM";
 
   if (entry.section === "handled_today") {
-    const dueText = displayDate ? formatDueDateTime(displayDate) : "";
+    const dateText = displayDate ? formatDueDateTime(displayDate) : "";
 
-    if (dueText) {
-      return `${origin} • Due ${dueText}`;
+    if (dateText) {
+      return showDueLabel ? `${origin} • Due ${dateText}` : `${origin} • ${dateText}`;
     }
 
     return origin;
   }
 
   if (entry.section === "for_today") {
-    return displayDate ? `${origin} • Due ${formatDueDateTime(displayDate)}` : origin;
+    return displayDate
+      ? showDueLabel
+        ? `${origin} • Due ${formatDueDateTime(displayDate)}`
+        : `${origin} • ${formatDueDateTime(displayDate)}`
+      : origin;
   }
 
   if (entry.section === "carried_over") {
-    return displayDate ? `${origin} • Due ${formatDueDateTime(displayDate)}` : origin;
+    return displayDate
+      ? showDueLabel
+        ? `${origin} • Due ${formatDueDateTime(displayDate)}`
+        : `${origin} • ${formatDueDateTime(displayDate)}`
+      : origin;
   }
 
   if (entry.section === "upcoming") {
-    return displayDate ? `${origin} • Due ${formatDueDateTime(displayDate)}` : origin;
+    return displayDate
+      ? showDueLabel
+        ? `${origin} • Due ${formatDueDateTime(displayDate)}`
+        : `${origin} • ${formatDueDateTime(displayDate)}`
+      : origin;
   }
 
   return origin;
@@ -746,7 +759,7 @@ export default function HomeScreen() {
   const injectedNotificationHandledRef = useRef(false);
   const upcomingSectionYRef = useRef(0);
   const scrollY = useRef(new Animated.Value(0)).current;
-   const messageRevealTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const messageRevealTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const messageRevealAnim = useRef(new Animated.Value(0)).current;
   useLocalSearchParams<{ resetHomeAt?: string }>();
   const backgroundImage = morningImages[0];
@@ -1592,11 +1605,16 @@ showToast('Moving to "For Today"');
     return selectedEntry ? isEntryCurrentlyHandled(selectedEntry, reminderSchedules) : false;
   }, [selectedEntry, reminderSchedules]);
 
-  const backgroundDimOpacity = scrollY.interpolate({
+   const backgroundDimOpacity = scrollY.interpolate({
     inputRange: [0, 120, 300, 650],
     outputRange: [0, 0.18, 0.42, 0.72],
     extrapolate: "clamp",
   });
+const headerScrimOpacity = scrollY.interpolate({
+  inputRange: [0, 8, 28, 70],
+  outputRange: [0, 0.24, 0.68, 0.94],
+  extrapolate: "clamp",
+});
 
   const fullMorningMessage =
     currentDailyMessage?.message_text ||
@@ -1927,150 +1945,37 @@ showToast('Moving to "For Today"');
             style={{ flex: 1 }}
             behavior={Platform.OS === "ios" ? "padding" : "height"}
           >
-            <View style={{ flex: 1 }}>
-               <View
-                pointerEvents="box-none"
+             <View style={{ flex: 1 }}>
+
+              <Animated.View
+              pointerEvents="none"
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                right: 0,
+                height: 150,
+                zIndex: 19,
+                opacity: headerScrimOpacity,
+              }}
+            >
+              <LinearGradient
+                colors={[
+                  "rgba(138,121,107,0.98)",
+                  "rgba(160,141,123,0.82)",
+                  "rgba(183,161,140,0.42)",
+                  "rgba(183,161,140,0.10)",
+                  "rgba(183,161,140,0)",
+                ]}
                 style={{
                   position: "absolute",
                   top: 0,
                   left: 0,
                   right: 0,
-                  zIndex: 20,
-                  paddingHorizontal: 16,
-                  paddingTop: 14,
+                  bottom: 0,
                 }}
-              >
-                <View
-                  style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                  }}
-                >
-                  <Pressable
-                    onPress={() => setShowHomeMenu(true)}
-                    hitSlop={10}
-                    style={{
-                      width: 40,
-                      height: 40,
-                      alignItems: "center",
-                      justifyContent: "center",
-                    }}
-                  >
-                    <Text
-                      style={{
-                        color: "white",
-                        fontSize: 20,
-                        fontWeight: "700",
-                        lineHeight: 20,
-                        textShadowColor: "rgba(0,0,0,0.35)",
-                        textShadowOffset: { width: 0, height: 1 },
-                        textShadowRadius: 4,
-                      }}
-                    >
-                      ☰
-                    </Text>
-                  </Pressable>
-
-                  <Pressable
-                    onPress={() => generateDailyMessage(true)}
-                    hitSlop={10}
-                    style={{
-                      flex: 1,
-                      alignItems: "center",
-                      justifyContent: "center",
-                      paddingHorizontal: 12,
-                    }}
-                  >
-                    <Text
-                      style={{
-                        color: "white",
-                        fontSize: 17,
-                        fontWeight: "700",
-                        letterSpacing: 0.2,
-                        textShadowColor: "rgba(0,0,0,0.35)",
-                        textShadowOffset: { width: 0, height: 1 },
-                        textShadowRadius: 4,
-                      }}
-                      numberOfLines={1}
-                    >
-                      Morning Message
-                    </Text>
-                  </Pressable>
-
-                  <View
-                    style={{
-                      flexDirection: "row",
-                      alignItems: "center",
-                      gap: 8,
-                    }}
-                  >
-                    <Pressable
-                      onPress={() =>
-                        Alert.alert(
-                          "Share",
-                          "Share card setup is coming in Phase 3. For now, this is the new header placement."
-                        )
-                      }
-                      hitSlop={10}
-                      style={{
-                        width: 40,
-                        height: 40,
-                        alignItems: "center",
-                        justifyContent: "center",
-                      }}
-                    >
-                      <Text
-                        style={{
-                          color: "white",
-                          fontSize: 18,
-                          fontWeight: "700",
-                          textShadowColor: "rgba(0,0,0,0.35)",
-                          textShadowOffset: { width: 0, height: 1 },
-                          textShadowRadius: 4,
-                        }}
-                      >
-                        ↗
-                      </Text>
-                    </Pressable>
-
-                    <Pressable
-                      onPress={() =>
-                        Alert.alert(
-                          "Handled",
-                          `Handled count: ${handledCount}\n\nDetailed stats screen comes next.`
-                        )
-                      }
-                      hitSlop={10}
-                      style={{
-                        minWidth: 42,
-                        height: 30,
-                        borderRadius: 15,
-                        paddingHorizontal: 10,
-                        alignItems: "center",
-                        justifyContent: "center",
-                        backgroundColor: "rgba(0,0,0,0.22)",
-                        borderWidth: 1,
-                        borderColor: "rgba(255,255,255,0.16)",
-                      }}
-                    >
-                      <Text
-                        style={{
-                          color: "white",
-                          fontSize: 13,
-                          fontWeight: "800",
-                          textShadowColor: "rgba(0,0,0,0.25)",
-                          textShadowOffset: { width: 0, height: 1 },
-                          textShadowRadius: 3,
-                        }}
-                      >
-                        {handledCount}
-                      </Text>
-                    </Pressable>
-                  </View>
-                </View>
-              </View>
-
+              />
+            </Animated.View>
               <Animated.ScrollView
                 ref={scrollViewRef}
                 keyboardShouldPersistTaps="handled"
@@ -2080,11 +1985,11 @@ showToast('Moving to "For Today"');
                   [{ nativeEvent: { contentOffset: { y: scrollY } } }],
                   { useNativeDriver: false }
                 )}
-                contentContainerStyle={{
-                  paddingHorizontal: 3,
-                  paddingBottom: 220,
-                  paddingTop: 80,
-                }}
+              contentContainerStyle={{
+                paddingHorizontal: 3,
+                paddingBottom: 220,
+                paddingTop: 94,
+              }}
               >
                  <View
                   style={{
@@ -2256,19 +2161,19 @@ showToast('Moving to "For Today"');
                   </Pressable>
                 </View>
 
-                <View style={{ height: 70 }} />
+                <View style={{ height: 34 }} />
 
                  {renderSectionCard(
-                  "For Today",
+                  "Reminders for today",
                   forTodayEntries,
                   true,
-                  "Nothing needs attention right now."
+                  "No reminders scheduled for today"
                 )}
 
-                {renderSectionCard("Carried Over", carriedOverEntries, true)}
+                {renderSectionCard("Reminders carried over", carriedOverEntries, true)}
 
                 {renderSectionCard(
-                  "Handled Today",
+                  "Reminders handled today",
                   handledTodayEntries,
                   false,
                   undefined,
@@ -2319,7 +2224,7 @@ showToast('Moving to "For Today"');
                       color: "rgba(255,255,255,0.72)",
                     }}
                   >
-                      Nothing upcoming in this range.
+                      Nothing upcoming in this range
                     </Text>
                   ) : (
                     upcomingEntries.map((entry) => (
@@ -2327,9 +2232,153 @@ showToast('Moving to "For Today"');
                     ))
                   )}
                 </View>
-              </Animated.ScrollView>
-            </View>
-          </KeyboardAvoidingView>
+                </Animated.ScrollView>
+               <View
+                pointerEvents="box-none"
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  zIndex: 20,
+                }}
+              >
+                    <View
+                      style={{
+                        paddingHorizontal: 12,
+                        paddingTop: 18,
+                        paddingBottom: 2,
+                      }}
+                    >
+                      <View
+                        style={{
+                          flexDirection: "row",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                        }}
+                      >
+                      <Pressable
+                        onPress={() => setShowHomeMenu(true)}
+                        hitSlop={10}
+                        style={{
+                          width: 40,
+                          height: 40,
+                          alignItems: "center",
+                          justifyContent: "center",
+                        }}
+                      >
+                        <Text
+                          style={{
+                            color: "white",
+                            fontSize: 22,
+                            fontWeight: "700",
+                            lineHeight: 20,
+                            textShadowColor: "rgba(0,0,0,0.35)",
+                            textShadowOffset: { width: 0, height: 1 },
+                            textShadowRadius: 4,
+                          }}
+                        >
+                          ☰
+                        </Text>
+                      </Pressable>
+
+                      <Pressable
+                        onPress={() => generateDailyMessage(true)}
+                        hitSlop={10}
+                        style={{
+                          flex: 1,
+                          alignItems: "center",
+                          justifyContent: "center",
+                          paddingHorizontal: 12,
+                        }}
+                      >
+                        <Text
+                          style={{
+                            color: "white",
+                            fontSize: 22,
+                            fontWeight: "700",
+                            letterSpacing: 0.2,
+                            textShadowColor: "rgba(0,0,0,0.35)",
+                            textShadowOffset: { width: 0, height: 1 },
+                            textShadowRadius: 4,
+                          }}
+                          numberOfLines={1}
+                        >
+                          Morning Message
+                        </Text>
+                      </Pressable>
+
+                      <View
+                        style={{
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: 8,
+                        }}
+                      >
+                        <Pressable
+                          onPress={() =>
+                            Alert.alert(
+                              "Share",
+                              "Share card setup is coming in Phase 3. For now, this is the new header placement."
+                            )
+                          }
+                          hitSlop={10}
+                          style={{
+                            width: 40,
+                            height: 40,
+                            alignItems: "center",
+                            justifyContent: "center",
+                          }}
+                        >
+                          <Text
+                            style={{
+                              color: "white",
+                              fontSize: 22,
+                              fontWeight: "700",
+                              textShadowColor: "rgba(0,0,0,0.35)",
+                              textShadowOffset: { width: 0, height: 1 },
+                              textShadowRadius: 4,
+                            }}
+                          >
+                            ↗
+                          </Text>
+                        </Pressable>
+
+                        <Pressable
+                          onPress={() =>
+                            Alert.alert(
+                              "Handled",
+                              `Handled count: ${handledCount}\n\nDetailed stats screen comes next.`
+                            )
+                          }
+                          hitSlop={10}
+                          style={{
+                            minWidth: 42,
+                            height: 30,
+                            paddingHorizontal: 10,
+                            alignItems: "center",
+                            justifyContent: "center",
+                          }}
+                        >
+                          <Text
+                            style={{
+                              color: "white",
+                              fontSize: 18,
+                              fontWeight: "800",
+                              textShadowColor: "rgba(0,0,0,0.25)",
+                              textShadowOffset: { width: 0, height: 1 },
+                              textShadowRadius: 3,
+                            }}
+                          >
+                            {handledCount}
+                          </Text>
+                        </Pressable>
+                      </View>
+                    </View>
+                  </View>
+                </View>
+              </View>
+             </KeyboardAvoidingView>
 
           {isArchivingEntry ? (
             <View
@@ -3616,8 +3665,8 @@ showToast('Moving to "For Today"');
 
                 <Text
                   style={{
-                    fontSize: 16,
-                    lineHeight: 25,
+                    fontSize: 18,
+                    lineHeight: 29,
                     color: "rgba(255,255,255,0.94)",
                     marginBottom: 14,
                   }}

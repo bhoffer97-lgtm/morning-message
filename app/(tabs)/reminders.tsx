@@ -610,6 +610,8 @@ function getHandledInlineSummary(entry: UpcomingEntry) {
       ? "CUSTOM"
       : "REMINDER";
 
+  const showDueLabel = origin === "CUSTOM";
+
   const dueDate = entry.last_completed_due_at_date
     ? `${entry.last_completed_due_at_date.toLocaleDateString([], {
         month: "numeric",
@@ -630,11 +632,13 @@ function getHandledInlineSummary(entry: UpcomingEntry) {
     : null;
 
   if (dueDate && handledDate) {
-    return `${origin} • Due ${dueDate} • Handled ${handledDate}`;
+    return showDueLabel
+      ? `${origin} • Due ${dueDate} • Handled ${handledDate}`
+      : `${origin} • ${dueDate} • Handled ${handledDate}`;
   }
 
   if (dueDate) {
-    return `${origin} • Due ${dueDate}`;
+    return showDueLabel ? `${origin} • Due ${dueDate}` : `${origin} • ${dueDate}`;
   }
 
   if (handledDate) {
