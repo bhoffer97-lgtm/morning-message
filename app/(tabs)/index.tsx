@@ -3,6 +3,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Notifications from "expo-notifications";
 import { router, useLocalSearchParams } from "expo-router";
+import * as Sharing from "expo-sharing";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
@@ -21,6 +22,7 @@ import {
 } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { captureRef } from "react-native-view-shot";
 import { syncLocalNotifications } from "../../lib/notifications/syncNotifications";
 import { supabase } from "../../lib/supabase";
 
@@ -29,6 +31,184 @@ const morningImages = [
 ];
 
 const backgroundImage = morningImages[0];
+type ShareGradientBackground = {
+  id: string;
+  label: string;
+  kind: "gradient";
+  colors: [string, string, ...string[]];
+};
+
+type ShareImageBackground = {
+  id: string;
+  label: string;
+  kind: "image";
+  image: any;
+};
+
+type ShareBackground = ShareGradientBackground | ShareImageBackground;
+
+type ShareFontKey =
+  | "classic"
+  | "refined"
+  | "soft"
+  | "elegant"
+  | "clean"
+  | "modern";
+
+const shareBackgrounds: ShareBackground[] = [
+  {
+    id: "photo-5",
+    label: "Photo 5",
+    kind: "image",
+    image: require("../../assets/images/morning-nature-5.jpg"),
+  },
+  {
+    id: "photo-6",
+    label: "Photo 6",
+    kind: "image",
+    image: require("../../assets/images/morning-nature-6.jpg"),
+  },
+  {
+    id: "photo-11",
+    label: "Photo 11",
+    kind: "image",
+    image: require("../../assets/images/morning-nature-11.jpg"),
+  },
+  {
+    id: "photo-13",
+    label: "Photo 13",
+    kind: "image",
+    image: require("../../assets/images/morning-nature-13.jpg"),
+  },
+  {
+    id: "photo-17",
+    label: "Photo 17",
+    kind: "image",
+    image: require("../../assets/images/morning-nature-17.jpg"),
+  },
+  {
+    id: "photo-19",
+    label: "Photo 19",
+    kind: "image",
+    image: require("../../assets/images/morning-nature-19.jpg"),
+  },
+  {
+    id: "photo-20",
+    label: "Photo 20",
+    kind: "image",
+    image: require("../../assets/images/morning-nature-20.jpg"),
+  },
+  {
+    id: "photo-28",
+    label: "Photo 28",
+    kind: "image",
+    image: require("../../assets/images/morning-nature-28.jpg"),
+  },
+
+  {
+    id: "sunrise",
+    label: "Sunrise",
+    kind: "gradient",
+    colors: ["#f1d6a8", "#d8bd93", "#9fb4bd", "#5d6f7a"],
+  },
+  {
+    id: "cloud-blue",
+    label: "Cloud Blue",
+    kind: "gradient",
+    colors: ["#ead8bf", "#c9d4dc", "#8fa8b4", "#526a76"],
+  },
+  {
+    id: "sage",
+    label: "Sage",
+    kind: "gradient",
+    colors: ["#ece6d5", "#cfd8c6", "#9ead9b", "#5f7066"],
+  },
+  {
+    id: "lavender",
+    label: "Lavender",
+    kind: "gradient",
+    colors: ["#efe3ea", "#d8c8db", "#aca0bd", "#6c6f86"],
+  },
+  {
+    id: "rose-gold",
+    label: "Rose Gold",
+    kind: "gradient",
+    colors: ["#f3ddd2", "#dfbcae", "#b28f88", "#6f6a73"],
+  },
+  {
+    id: "parchment",
+    label: "Parchment",
+    kind: "gradient",
+    colors: ["#f2e2c6", "#dcc39d", "#b4a08b", "#697177"],
+  },
+  {
+    id: "dawn",
+    label: "Dawn",
+    kind: "gradient",
+    colors: ["#d9d9d2", "#b9c5c8", "#8295a0", "#4f6473"],
+  },
+  {
+    id: "deep-blue",
+    label: "Deep Blue",
+    kind: "gradient",
+    colors: ["#dbe4ea", "#a8bbc8", "#6f8898", "#415565"],
+  },
+];
+
+const shareFontOptions: { key: ShareFontKey; label: string }[] = [
+  { key: "classic", label: "Classic" },
+  { key: "refined", label: "Refined" },
+  { key: "soft", label: "Soft" },
+  { key: "elegant", label: "Elegant" },
+  { key: "clean", label: "Clean" },
+  { key: "modern", label: "Modern" },
+];
+
+function getShareFontFamily(fontKey: ShareFontKey) {
+  if (fontKey === "refined") {
+    return Platform.select({
+      ios: "Avenir Next",
+      android: "sans-serif-medium",
+      default: undefined,
+    });
+  }
+
+  if (fontKey === "soft") {
+    return Platform.select({
+      ios: "Helvetica Neue",
+      android: "sans-serif-light",
+      default: undefined,
+    });
+  }
+
+  if (fontKey === "elegant") {
+    return Platform.select({
+      ios: "Palatino",
+      android: "serif",
+      default: undefined,
+    });
+  }
+
+  if (fontKey === "clean") {
+    return Platform.select({
+      ios: "Trebuchet MS",
+      android: "sans-serif",
+      default: undefined,
+    });
+  }
+
+  if (fontKey === "modern") {
+    return Platform.select({
+      ios: "Gill Sans",
+      android: "sans-serif-condensed",
+      default: undefined,
+    });
+  }
+
+  return undefined;
+}
+
+
 type Entry = {
   id: string;
   title: string | null;
@@ -97,6 +277,23 @@ function formatLocalDate(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
+function getShareMessageLines(message: string) {
+  const cleaned = message.replace(/\s+/g, " ").trim();
+  const words = cleaned.split(" ").filter(Boolean);
+
+  if (words.length < 6 || words.length > 10) {
+    return null;
+  }
+
+  const firstBreak = Math.ceil(words.length / 3);
+  const secondBreak = Math.ceil((words.length * 2) / 3);
+
+  return [
+    words.slice(0, firstBreak).join(" "),
+    words.slice(firstBreak, secondBreak).join(" "),
+    words.slice(secondBreak).join(" "),
+  ].filter(Boolean);
+}
 function isSameLocalDay(date: Date, compareDate: Date) {
   return (
     date.getFullYear() === compareDate.getFullYear() &&
@@ -725,7 +922,13 @@ export default function HomeScreen() {
   const [dailyMessages, setDailyMessages] = useState<DailyMessage[]>([]);
   const [currentMessageIndex, setCurrentMessageIndex] = useState(0);
   const [verseText, setVerseText] = useState<string | null>(null);
-   const [showVerseModal, setShowVerseModal] = useState(false);
+  const [showVerseModal, setShowVerseModal] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [shareVerseText, setShareVerseText] = useState<string | null>(null);
+  const [isLoadingShareVerse, setIsLoadingShareVerse] = useState(false);
+  const [selectedShareBackgroundId, setSelectedShareBackgroundId] = useState("photo-5");
+  const [selectedShareFont, setSelectedShareFont] = useState<ShareFontKey>("classic");
+  const [isSharingCard, setIsSharingCard] = useState(false);
   const [showHomeMenu, setShowHomeMenu] = useState(false);
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
   const [showRestoreDeletedModal, setShowRestoreDeletedModal] = useState(false);
@@ -756,6 +959,7 @@ export default function HomeScreen() {
 
    const scrollViewRef = useRef<ScrollView | null>(null);
   const messageScrollRef = useRef<ScrollView | null>(null);
+  const shareCardRef = useRef<View | null>(null);
   const injectedNotificationHandledRef = useRef(false);
   const upcomingSectionYRef = useRef(0);
   const scrollY = useRef(new Animated.Value(0)).current;
@@ -1159,23 +1363,89 @@ async function loadProfileDigestSettings() {
   }
 
 
-  async function loadVerse(reference: string) {
+ async function loadVerse(reference: string) {
+  const { data, error } = await supabase
+    .from("bible_verses")
+    .select("verse_text")
+    .eq("reference", reference)
+    .maybeSingle();
+
+  if (error) {
+    console.log("Verse load error:", error.message);
+    return;
+  }
+
+  if (data?.verse_text) {
+    setVerseText(data.verse_text);
+    setShowVerseModal(true);
+  }
+}
+
+async function openShareCardModal() {
+  if (!currentDailyMessage) {
+    Alert.alert("Nothing to share", "There is no Morning Message loaded yet.");
+    return;
+  }
+
+  setShowShareModal(true);
+  setShareVerseText(null);
+
+  if (!currentDailyMessage.verse_reference) {
+    return;
+  }
+
+  setIsLoadingShareVerse(true);
+
+  try {
     const { data, error } = await supabase
       .from("bible_verses")
       .select("verse_text")
-      .eq("reference", reference)
+      .eq("reference", currentDailyMessage.verse_reference)
       .maybeSingle();
 
     if (error) {
-      console.log("Verse load error:", error.message);
+      console.log("Share verse load error:", error.message);
       return;
     }
 
-    if (data?.verse_text) {
-      setVerseText(data.verse_text);
-      setShowVerseModal(true);
-    }
+    setShareVerseText(data?.verse_text ?? null);
+  } finally {
+    setIsLoadingShareVerse(false);
   }
+}
+
+async function handleShareImage() {
+  if (!shareCardRef.current || isSharingCard) {
+    return;
+  }
+
+  setIsSharingCard(true);
+
+  try {
+    const canShare = await Sharing.isAvailableAsync();
+
+    if (!canShare) {
+      Alert.alert("Sharing unavailable", "Sharing is not available on this device.");
+      return;
+    }
+
+    const uri = await captureRef(shareCardRef.current, {
+      format: "png",
+      quality: 1,
+      result: "tmpfile",
+    });
+
+    await Sharing.shareAsync(uri, {
+      mimeType: "image/png",
+      dialogTitle: "Share Morning Message",
+    });
+  } catch (error) {
+    console.log("Share card error:", error);
+    Alert.alert("Could not share", "Please try again.");
+  } finally {
+    setIsSharingCard(false);
+  }
+}
 
   async function fetchEntryById(entryId: string) {
     const { data, error } = await supabase
@@ -1636,11 +1906,16 @@ const headerScrimOpacity = scrollY.interpolate({
   extrapolate: "clamp",
 });
 
-  const fullMorningMessage =
-    currentDailyMessage?.message_text ||
-    currentDailyMessage?.message ||
-    "";
+ const fullMorningMessage =
+  currentDailyMessage?.message_text ||
+  currentDailyMessage?.message ||
+  "";
 
+const shareMessageLines = getShareMessageLines(fullMorningMessage);
+const selectedShareBackground =
+  shareBackgrounds.find((item) => item.id === selectedShareBackgroundId) ??
+  shareBackgrounds[0];
+const selectedShareFontFamily = getShareFontFamily(selectedShareFont);
    useEffect(() => {
     const nextMessage = fullMorningMessage.trim();
 
@@ -2376,21 +2651,16 @@ const headerScrimOpacity = scrollY.interpolate({
                           gap: 8,
                         }}
                       >
-                        <Pressable
-                          onPress={() =>
-                            Alert.alert(
-                              "Share",
-                              "Share card setup is coming in Phase 3. For now, this is the new header placement."
-                            )
-                          }
-                          hitSlop={10}
-                          style={{
-                            width: 40,
-                            height: 40,
-                            alignItems: "center",
-                            justifyContent: "center",
-                          }}
-                        >
+                      <Pressable
+                        onPress={openShareCardModal}
+                        hitSlop={10}
+                        style={{
+                          width: 40,
+                          height: 40,
+                          alignItems: "center",
+                          justifyContent: "center",
+                        }}
+                      >
                           <Text
                             style={{
                               color: "white",
@@ -3646,7 +3916,415 @@ const headerScrimOpacity = scrollY.interpolate({
               </Pressable>
             </Pressable>
           </Modal>
-          <Modal visible={showVerseModal} transparent animationType="fade">
+<Modal visible={showShareModal} transparent animationType="fade">
+  <View
+    style={{
+      flex: 1,
+      backgroundColor: "rgba(0,0,0,0.46)",
+      justifyContent: "center",
+      alignItems: "center",
+      paddingHorizontal: 14,
+      paddingVertical: 18,
+    }}
+  >
+    <View
+      style={{
+        width: "100%",
+        maxWidth: 390,
+        maxHeight: "96%",
+        backgroundColor: "rgba(17,24,39,0.96)",
+        borderRadius: 26,
+        padding: 14,
+        borderWidth: 1,
+        borderColor: "rgba(255,255,255,0.12)",
+      }}
+    >
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: 12,
+          gap: 12,
+        }}
+      >
+        <Text
+          style={{
+            flex: 1,
+            color: "white",
+            fontSize: 20,
+            fontWeight: "800",
+          }}
+        >
+          Share
+        </Text>
+
+        <Pressable
+          onPress={() => setShowShareModal(false)}
+          hitSlop={10}
+          style={{
+            width: 32,
+            height: 32,
+            borderRadius: 16,
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: "rgba(255,255,255,0.10)",
+          }}
+        >
+          <Text
+            style={{
+              color: "white",
+              fontSize: 18,
+              fontWeight: "800",
+              lineHeight: 18,
+            }}
+          >
+            ×
+          </Text>
+        </Pressable>
+      </View>
+
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{
+          alignItems: "center",
+          paddingBottom: 4,
+        }}
+      >
+        <View
+          ref={shareCardRef}
+          collapsable={false}
+          style={{
+            alignSelf: "center",
+            width: 300,
+            minHeight: 470,
+            borderRadius: 28,
+            overflow: "hidden",
+            backgroundColor: "#d8c3a5",
+            borderWidth: 1,
+            borderColor: "rgba(255,255,255,0.28)",
+          }}
+        >
+          {selectedShareBackground.kind === "image" ? (
+            <ImageBackground
+              source={selectedShareBackground.image}
+              resizeMode="cover"
+              style={StyleSheet.absoluteFillObject}
+            >
+              <LinearGradient
+                colors={[
+                  "rgba(245,229,196,0.42)",
+                  "rgba(180,150,118,0.22)",
+                  "rgba(32,44,56,0.56)",
+                ]}
+                style={StyleSheet.absoluteFillObject}
+              />
+            </ImageBackground>
+          ) : (
+            <LinearGradient
+              colors={selectedShareBackground.colors}
+              style={StyleSheet.absoluteFillObject}
+            />
+          )}
+
+          <View
+            style={{
+              flex: 1,
+              paddingHorizontal: 14,
+              paddingTop: 24,
+              paddingBottom: 16,
+            }}
+          >
+            <Text
+              style={{
+                color: "rgba(46,38,30,0.68)",
+                fontSize: 10,
+                fontWeight: "700",
+                letterSpacing: 6.5,
+                textAlign: "center",
+                textTransform: "uppercase",
+                marginBottom: 18,
+                fontFamily: selectedShareFontFamily,
+              }}
+            >
+              Morning Message
+            </Text>
+
+            <View
+              style={{
+                flex: 1,
+                justifyContent: "center",
+                paddingHorizontal: 10,
+                paddingTop: 8,
+                paddingBottom: 8,
+              }}
+            >
+              {shareMessageLines ? (
+                <View style={{ alignItems: "center" }}>
+                  {shareMessageLines.map((line, index) => (
+                    <Text
+                      key={`${line}-${index}`}
+                      style={{
+                        color: "rgba(46,38,30,0.86)",
+                        fontSize: 31,
+                        lineHeight: 40,
+                        fontWeight: "850",
+                        textAlign: "center",
+                        textShadowColor: "rgba(255,255,255,0.22)",
+                        textShadowOffset: { width: 0, height: 1 },
+                        textShadowRadius: 3,
+                        fontFamily: selectedShareFontFamily,
+                      }}
+                    >
+                      {line}
+                    </Text>
+                  ))}
+                </View>
+              ) : (
+                <Text
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.72}
+                  numberOfLines={4}
+                  style={{
+                    color: "rgba(46,38,30,0.86)",
+                    fontSize: 31,
+                    lineHeight: 40,
+                    fontWeight: "850",
+                    textAlign: "center",
+                    textShadowColor: "rgba(255,255,255,0.22)",
+                    textShadowOffset: { width: 0, height: 1 },
+                    textShadowRadius: 3,
+                    fontFamily: selectedShareFontFamily,
+                  }}
+                >
+                  {fullMorningMessage}
+                </Text>
+              )}
+            </View>
+
+            <View
+              style={{
+                marginTop: 8,
+                alignItems: "stretch",
+              }}
+            >
+              <View
+                style={{
+                  width: "100%",
+                  backgroundColor: "rgba(17,24,39,0.34)",
+                  borderRadius: 20,
+                  paddingVertical: 15,
+                  paddingHorizontal: 18,
+                  borderWidth: 1,
+                  borderColor: "rgba(255,255,255,0.13)",
+                }}
+              >
+                <Text
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.85}
+                  numberOfLines={1}
+                  style={{
+                    color: "#fff7e8",
+                    fontSize: 14,
+                    fontWeight: "900",
+                    textAlign: "center",
+                    letterSpacing: 0.45,
+                    marginBottom: 10,
+                    fontFamily: selectedShareFontFamily,
+                  }}
+                >
+                  {currentDailyMessage?.verse_reference ?? ""}
+                </Text>
+
+                <Text
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.72}
+                  numberOfLines={7}
+                  style={{
+                    color: "rgba(255,255,255,0.94)",
+                    fontSize: 14,
+                    lineHeight: 21,
+                    fontWeight: "600",
+                    textAlign: "center",
+                    marginBottom: 8,
+                    fontFamily: selectedShareFontFamily,
+                  }}
+                >
+                  {isLoadingShareVerse
+                    ? "Loading verse..."
+                    : shareVerseText || "Verse text will appear here."}
+                </Text>
+
+                <Text
+                  numberOfLines={2}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.85}
+                  style={{
+                    color: "rgba(255,255,255,0.52)",
+                    fontSize: 7.5,
+                    lineHeight: 10,
+                    textAlign: "center",
+                    fontFamily: selectedShareFontFamily,
+                  }}
+                >
+                  NET Bible® copyright ©1996–2019 Biblical Studies Press.
+                </Text>
+              </View>
+            </View>
+          </View>
+        </View>
+
+        <View style={{ width: "100%", marginTop: 14 }}>
+          <Text
+            style={{
+              color: "rgba(255,255,255,0.78)",
+              fontSize: 12,
+              fontWeight: "800",
+              marginBottom: 8,
+            }}
+          >
+            Background
+          </Text>
+
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{
+              gap: 8,
+              paddingRight: 4,
+            }}
+          >
+            {shareBackgrounds.map((background) => {
+              const selected = selectedShareBackgroundId === background.id;
+
+              return (
+                <Pressable
+                  key={background.id}
+                  onPress={() => setSelectedShareBackgroundId(background.id)}
+                  style={{
+                    width: 46,
+                    height: 54,
+                    borderRadius: 12,
+                    overflow: "hidden",
+                    borderWidth: selected ? 2 : 1,
+                    borderColor: selected
+                      ? "#fff7e8"
+                      : "rgba(255,255,255,0.18)",
+                  }}
+                >
+                  {background.kind === "image" ? (
+                    <ImageBackground
+                      source={background.image}
+                      resizeMode="cover"
+                      style={StyleSheet.absoluteFillObject}
+                    />
+                  ) : (
+                    <LinearGradient
+                      colors={background.colors}
+                      style={StyleSheet.absoluteFillObject}
+                    />
+                  )}
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </View>
+
+ <View
+  style={{
+    width: "100%",
+    marginTop: 14,
+  }}
+>
+  <Text
+    style={{
+      color: "rgba(255,255,255,0.78)",
+      fontSize: 12,
+      fontWeight: "800",
+      marginBottom: 8,
+    }}
+  >
+    Font
+  </Text>
+
+  <View
+    style={{
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: 8,
+    }}
+  >
+    {shareFontOptions.map((option) => {
+      const selected = selectedShareFont === option.key;
+
+      return (
+        <Pressable
+          key={option.key}
+          onPress={() => setSelectedShareFont(option.key)}
+          style={{
+            minWidth: "31%",
+            minHeight: 38,
+            paddingHorizontal: 12,
+            borderRadius: 12,
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: selected
+              ? "rgba(255,255,255,0.18)"
+              : "rgba(255,255,255,0.07)",
+            borderWidth: 1,
+            borderColor: selected
+              ? "rgba(255,255,255,0.28)"
+              : "rgba(255,255,255,0.08)",
+          }}
+        >
+          <Text
+            style={{
+              color: "white",
+              fontSize: 11,
+              fontWeight: "800",
+            }}
+          >
+            {option.label}
+          </Text>
+        </Pressable>
+      );
+    })}
+  </View>
+</View>
+
+        <Pressable
+          onPress={handleShareImage}
+          disabled={isSharingCard || isLoadingShareVerse}
+          style={{
+            width: "100%",
+            minHeight: 48,
+            borderRadius: 16,
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor:
+              isSharingCard || isLoadingShareVerse
+                ? "rgba(255,255,255,0.16)"
+                : "#fff7e8",
+            marginTop: 16,
+            opacity: isSharingCard || isLoadingShareVerse ? 0.68 : 1,
+          }}
+        >
+          <Text
+            style={{
+              color: "#111827",
+              fontSize: 15,
+              fontWeight: "900",
+            }}
+          >
+            {isSharingCard ? "Preparing..." : "Share Image"}
+          </Text>
+        </Pressable>
+      </ScrollView>
+    </View>
+  </View>
+</Modal>
+
+            <Modal visible={showVerseModal} transparent animationType="fade">
             <Pressable
               onPress={() => setShowVerseModal(false)}
               style={{
