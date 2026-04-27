@@ -30,7 +30,6 @@ type Entry = {
   updated_at: string | null;
   resolution_note: string | null;
   archived_at: string | null;
-  retired_at: string | null;
   needs_read: boolean;
   last_read_at: string | null;
   last_completed_at: string | null;
@@ -45,8 +44,6 @@ type Entry = {
   annual_day: number | null;
   anchor_date: string | null;
   digest_assignment: "none" | "daily" | "weekly" | "monthly" | "quarterly" | "yearly";
-  last_surface_at: string | null;
-  last_surface_window_key: string | null;
 };
 
 type UpcomingEntry = Entry & {
@@ -786,7 +783,7 @@ export default function RemindersScreen() {
     const { data, error } = await supabase
       .from("entries")
       .select(
-         "id, title, content, type, status, created_at, updated_at, resolution_note, archived_at, retired_at, needs_read, last_read_at, last_completed_at, last_completed_due_at, next_due_at, schedule_mode, due_date, due_time, interval_value, interval_unit, annual_month, annual_day, anchor_date, digest_assignment, last_surface_at, last_surface_window_key"
+         "id, title, content, type, status, created_at, updated_at, resolution_note, archived_at, needs_read, last_read_at, last_completed_at, last_completed_due_at, next_due_at, schedule_mode, due_date, due_time, interval_value, interval_unit, annual_month, annual_day, anchor_date, digest_assignment"
       )
       .eq("status", "active")
       .is("deleted_at", null)
@@ -876,7 +873,7 @@ export default function RemindersScreen() {
     const { data, error } = await supabase
       .from("entries")
       .select(
-        "id, title, content, type, status, created_at, updated_at, resolution_note, archived_at, retired_at, needs_read, last_read_at, last_completed_at, last_completed_due_at, next_due_at, schedule_mode, due_date, due_time, interval_value, interval_unit, annual_month, annual_day, anchor_date, digest_assignment, last_surface_at, last_surface_window_key"
+        "id, title, content, type, status, created_at, updated_at, resolution_note, archived_at, needs_read, last_read_at, last_completed_at, last_completed_due_at, next_due_at, schedule_mode, due_date, due_time, interval_value, interval_unit, annual_month, annual_day, anchor_date, digest_assignment"
       )
       .eq("id", entryId)
       .eq("status", "active")
@@ -1572,7 +1569,7 @@ export default function RemindersScreen() {
                     textShadowRadius: 4,
                   }}
                 >
-                  Search and browse your library of entries
+                  Search and browse your library
                 </Text>
               </View>
 

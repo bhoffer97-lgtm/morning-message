@@ -1,3 +1,4 @@
+import { useColorScheme } from "@/hooks/use-color-scheme";
 import { DarkTheme, DefaultTheme, ThemeProvider } from "@react-navigation/native";
 import * as Notifications from "expo-notifications";
 import { Stack, useRouter, useSegments } from "expo-router";
@@ -5,9 +6,11 @@ import { StatusBar } from "expo-status-bar";
 import { useEffect, useRef, useState } from "react";
 import { LogBox, View } from "react-native";
 import "react-native-reanimated";
-
-import { useColorScheme } from "@/hooks/use-color-scheme";
 import { syncLocalNotifications } from "../lib/notifications/syncNotifications";
+import {
+  configureRevenueCat,
+  getPremiumStatus,
+} from "../lib/subscriptions/revenueCat";
 import { supabase } from "../lib/supabase";
 
 Notifications.setNotificationHandler({
@@ -133,11 +136,26 @@ export default function RootLayout() {
         .from("profiles")
         .upsert({ id: currentUserId }, { onConflict: "id" });
 
-      if (profileError) {
-        console.log("Ensure profile error:", profileError.message);
-      }
+ if (profileError) {
+  console.log("Ensure profile error:", profileError.message);
+}
 
-      const { error: ensureSchedulesError } = await supabase.rpc(
+try {
+  await configureRevenueCat(currentUserId);
+
+  const hasPremiumAccess = await getPremiumStatus();
+
+  if (!hasPremiumAccess) {
+    router.replace("/paywall");
+    return;
+  }
+} catch (revenueCatError) {
+  console.log("RevenueCat configure error:", revenueCatError);
+  router.replace("/paywall");
+  return;
+}
+
+const { error: ensureSchedulesError } = await supabase.rpc(
         "ensure_default_reminder_schedules",
         {
           p_user_id: currentUserId,

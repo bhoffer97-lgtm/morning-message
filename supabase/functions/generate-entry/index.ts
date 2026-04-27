@@ -3,6 +3,31 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 type AIWriteMode = "prayer" | "affirmation" | "goal" | "reminder";
 
+type EntryInput = {
+  content: string;
+};
+
+type VerseMessageRow = {
+  id: string;
+  verse_id: string | null;
+  message_text: string | null;
+};
+
+type VerseRow = {
+  id: string;
+  reference: string | null;
+  primary_topic: string | null;
+  secondary_topics: string[] | null;
+  principles: string[] | null;
+  is_general_daily: boolean | null;
+};
+
+type SelectedMorningMessage = {
+  verseMessageId: string;
+  verseId: string;
+  messageText: string;
+  verseReference: string;
+};
 
 function countIntendedSentences(text: string) {
   const trimmed = text.trim();
@@ -25,15 +50,23 @@ function formatLocalDate(date: Date) {
 }
 
 function buildWritePrompt(aiMode: AIWriteMode, text: string, sentenceLimit: number) {
+  const prayerOpeners = ["Lord,", "Dear God,", "Father,"];
+  const selectedPrayerOpening =
+  prayerOpeners[Math.floor(Math.random() * prayerOpeners.length)];
   const typeGuidance =
     aiMode === "prayer"
       ? `
 For prayers:
+- Always return the result as a direct prayer addressed to God.
+- The prayer must begin exactly with "${selectedPrayerOpening}"
+- If the user's input is not already written as a prayer, gently turn it into one.
+- Use first-person prayer language such as "help me," "guide me," "give me," "teach me," "lead me," or "remind me" when it fits.
 - Point the user gently toward God.
-- It is good to use language like Lord, God, peace, trust, guidance, help, strength, comfort, presence, courage, wisdom, or hope when it fits naturally.
 - Keep it personal, simple, and sincere.
-- Do not sound formal or preachy.
+- Do not sound formal, dramatic, preachy, or overly religious.
+- Preserve the user's original meaning, but shape it into prayer language.
 - When possible, phrase the prayer around the strength, virtue, or grace the user needs rather than repeating the negative state.
+- Output only the prayer text.
 `
       : aiMode === "affirmation"
       ? `
@@ -109,74 +142,61 @@ ${text || ""}
 `;
 }
 
-function buildDailyPrompt(params: {
-  verseReference: string;
-  verseText: string;
-  mode: "general" | "matched";
-  themes: string[];
-  principles: string[];
-  count?: number;
-}) {
-  const { verseReference, verseText, mode, themes, principles } = params;
+function finalizeAITitle(originalText: string, aiTitle: string) {
+  const original = (originalText || "").trim();
+  const suggested = (aiTitle || "").trim();
 
-  const themeText = themes.length ? themes.join(", ") : "none";
-  const principleText = principles.length ? principles.join(", ") : "none";
+  if (!original && suggested) return suggested;
+  if (!original) return "New Entry";
 
-  return `
-You are writing 1 short morning message for a Christian app.
+  const cleaned = suggested
+    .replace(/^["'“”‘’]+|["'“”‘’]+$/g, "")
+    .replace(/[.!?;:]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 
-Your tone:
-- warm
-- grounded
-- hopeful
-- emotionally honest
-- spiritually mature
-- like a wise pastor-friend
+  if (!cleaned) {
+    return "New Entry";
+  }
 
-You are explicitly Christian and may naturally reference Jesus, God, God's love, compassion, forgiveness through Jesus, grace, prayer, truth, hope, surrender, and eternal perspective.
+  const lowerTitle = cleaned.toLowerCase();
 
-Rules:
-- The message must clearly connect to the provided Scripture.
-- Do not sound preachy, cheesy, shallow, manipulative, or judgmental.
-- Do not sound like you are analyzing the user's private journal.
-- If pain is present, be honest and real, not full of platitudes.
-- Not every message needs a call to action; reflection is often enough.
-- Keep the message to 1-2 sentences.
-- Return strict JSON only.
-- Do not include markdown.
-- Do not include commentary before or after the JSON.
-- Do not include verse_reference, verse_query, themes, principles, or explanations.
-- Use exactly this shape:
-{
-  "message": "..."
+  const weakTitles = new Set([
+    "new entry",
+    "prayer",
+    "affirmation",
+    "goal",
+    "reminder",
+    "help me",
+    "help us",
+    "guide me",
+    "lord please",
+    "dear lord",
+    "dear god",
+  ]);
+
+  if (weakTitles.has(lowerTitle)) {
+    return "New Entry";
+  }
+
+  const words = cleaned
+    .replace(/[^\w\s'-]/g, "")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 4);
+
+  const title = words
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(" ")
+    .trim();
+
+  return title || "New Entry";
 }
 
-Scripture for today:
-${verseReference}
-${verseText}
-
-Selection mode:
-${mode}
-
-Recent themes:
-${themeText}
-
-Helpful principles:
-${principleText}
-
-Write 1 distinct message built around this exact verse.
-`;
-}
-
-async function chooseDailyVerse(
-  supabase: any,
-  recentEntries: Array<{ content: string }>,
-  recentlyUsedVerses: string[]
-) {
-
- const recentText = recentEntries
-  .map((entry) => `${entry.content}`.toLowerCase())
-  .join(" ");
+function getThemeSignals(recentEntries: EntryInput[]) {
+  const recentText = recentEntries
+    .map((entry) => `${entry.content}`.toLowerCase())
+    .join(" ");
 
   const themeSignals = [
     {
@@ -209,69 +229,115 @@ async function chooseDailyVerse(
       keywords: ["purpose", "calling", "meaning", "work", "focus", "discipline"],
       principles: ["faithfulness", "obedience", "steadiness"],
     },
+    {
+      theme: "gratitude",
+      keywords: ["thankful", "gratitude", "grateful", "blessing", "blessed"],
+      principles: ["thankfulness", "joy", "contentment"],
+    },
+    {
+      theme: "family",
+      keywords: ["wife", "husband", "son", "daughter", "child", "children", "family", "marriage", "parent"],
+      principles: ["love", "patience", "service"],
+    },
   ];
 
- const matchedSignals = themeSignals.filter((signal) =>
-  signal.keywords.some((keyword) => recentText.includes(keyword))
-);
-
-const matchedThemes = matchedSignals.map((signal) => signal.theme);
-const matchedPrinciples = [...new Set(matchedSignals.flatMap((signal) => signal.principles))];
-
-let candidateVerses: any[] | null = null;
-let error: any = null;
-
-if (matchedThemes.length > 0) {
-  const primaryMatch = await supabase
-    .from("bible_verses")
-    .select("*")
-    .eq("active", true)
-    .in("primary_topic", matchedThemes)
-    .limit(40);
-
-  const secondaryMatch = await supabase
-    .from("bible_verses")
-    .select("*")
-    .eq("active", true)
-    .overlaps("secondary_topics", matchedThemes)
-    .limit(40);
-
-  error = primaryMatch.error ?? secondaryMatch.error;
-
-  const merged = [...(primaryMatch.data ?? []), ...(secondaryMatch.data ?? [])];
-  candidateVerses = Array.from(
-    new Map(merged.map((verse: any) => [verse.reference, verse])).values()
+  const matchedSignals = themeSignals.filter((signal) =>
+    signal.keywords.some((keyword) => recentText.includes(keyword))
   );
-} else {
-  const generalMatch = await supabase
-    .from("bible_verses")
-    .select("*")
-    .eq("active", true)
-    .eq("is_general_daily", true)
-    .limit(40);
 
-  candidateVerses = generalMatch.data ?? [];
-  error = generalMatch.error;
+  return {
+    matchedThemes: matchedSignals.map((signal) => signal.theme),
+    matchedPrinciples: [...new Set(matchedSignals.flatMap((signal) => signal.principles))],
+  };
 }
 
-if (error) {
-  console.log("chooseDailyVerse lookup error:", error.message);
-} else {
-  console.log(
-    "chooseDailyVerse sample columns:",
-    candidateVerses && candidateVerses.length > 0 ? Object.keys(candidateVerses[0]) : []
+async function getUsedVerseMessageIds(adminSupabase: any, userId: string) {
+  const { data, error } = await adminSupabase
+    .from("daily_messages")
+    .select("verse_message_id")
+    .eq("user_id", userId)
+    .not("verse_message_id", "is", null);
+
+  if (error) {
+    console.log("Used verse message lookup error:", error.message);
+    return new Set<string>();
+  }
+
+  return new Set(
+    (data ?? [])
+      .map((item: { verse_message_id: string | null }) => item.verse_message_id)
+      .filter(Boolean)
   );
 }
 
-    const filteredCandidates = (candidateVerses ?? []).filter(
-    (verse: any) => !recentlyUsedVerses.includes(verse.reference)
+async function chooseUnseenVerseMessage(params: {
+  adminSupabase: any;
+  userId: string;
+  recentEntries: EntryInput[];
+  extraUsedIds?: string[];
+}): Promise<SelectedMorningMessage | null> {
+  const { adminSupabase, userId, recentEntries, extraUsedIds = [] } = params;
+
+  const usedIds = await getUsedVerseMessageIds(adminSupabase, userId);
+  extraUsedIds.forEach((id) => usedIds.add(id));
+
+  const { data: messageRows, error: messageError } = await adminSupabase
+    .from("verse_messages")
+    .select("id, verse_id, message_text")
+    .eq("active", true)
+    .limit(2000);
+
+  if (messageError) {
+    console.log("Verse message pool lookup error:", messageError.message);
+    return null;
+  }
+
+  const unseenMessages = ((messageRows ?? []) as VerseMessageRow[]).filter(
+    (message) =>
+      message.id &&
+      message.verse_id &&
+      message.message_text &&
+      !usedIds.has(message.id)
   );
 
-  const usableCandidates =
-    filteredCandidates.length > 0 ? filteredCandidates : candidateVerses ?? [];
+  if (unseenMessages.length === 0) {
+    console.log("No unseen verse messages available for user:", userId);
+    return null;
+  }
 
-  const scoredCandidates = usableCandidates
-    .map((verse: any) => {
+  const verseIds = [
+    ...new Set(
+      unseenMessages
+        .map((message) => message.verse_id)
+        .filter((id): id is string => Boolean(id))
+    ),
+  ];
+
+  const { data: verseRows, error: verseError } = await adminSupabase
+    .from("bible_verses")
+    .select("id, reference, primary_topic, secondary_topics, principles, is_general_daily")
+    .eq("active", true)
+    .in("id", verseIds);
+
+  if (verseError) {
+    console.log("Verse lookup for unseen messages error:", verseError.message);
+    return null;
+  }
+
+  const verseMap = new Map<string, VerseRow>(
+    ((verseRows ?? []) as VerseRow[]).map((verse) => [verse.id, verse])
+  );
+
+  const { matchedThemes, matchedPrinciples } = getThemeSignals(recentEntries);
+
+  const scoredCandidates = unseenMessages
+    .map((message) => {
+      const verse = message.verse_id ? verseMap.get(message.verse_id) : null;
+
+      if (!verse?.reference || !message.message_text || !message.verse_id) {
+        return null;
+      }
+
       const secondaryTopics = Array.isArray(verse.secondary_topics)
         ? verse.secondary_topics
         : [];
@@ -281,118 +347,73 @@ if (error) {
 
       let score = 0;
 
-      if (matchedThemes.includes(verse.primary_topic)) score += 3;
+      if (matchedThemes.includes(verse.primary_topic ?? "")) score += 4;
 
-      score += secondaryTopics.filter((topic: string) =>
-        matchedThemes.includes(topic)
-      ).length;
+      score += secondaryTopics.filter((topic) => matchedThemes.includes(topic)).length * 2;
 
-      score += versePrinciples.filter((principle: string) =>
+      score += versePrinciples.filter((principle) =>
         matchedPrinciples.includes(principle)
       ).length;
 
-      if (matchedThemes.length === 0 && verse.is_general_daily) score += 2;
+      if (matchedThemes.length === 0 && verse.is_general_daily) score += 3;
 
-      return { verse, score };
+      score += Math.random();
+
+      return {
+        message,
+        verse,
+        score,
+      };
     })
-    .sort((a, b) => b.score - a.score);
+    .filter(Boolean) as Array<{
+      message: VerseMessageRow;
+      verse: VerseRow;
+      score: number;
+    }>;
 
-  const topCandidates = scoredCandidates.slice(0, 5).map((item) => item.verse);
-
-  let selected =
-    topCandidates[Math.floor(Math.random() * topCandidates.length)] ??
-    usableCandidates[0];
-
-   if (!selected) {
-    const { data: fallbackVerse } = await supabase
-      .from("bible_verses")
-      .select("*")
-      .eq("active", true)
-      .eq("reference", "Lamentations 3:22-23")
-      .maybeSingle();
-
-    selected = fallbackVerse ?? {
-      reference: "Lamentations 3:22-23",
-      verse_text: "Because of the Lord’s faithful love we do not perish, for his mercies never end. They are fresh every morning; your faithfulness is abundant!",
-      primary_topic: "hope",
-      secondary_topics: ["hope", "mercy", "steadiness"],
-      principles: ["grace", "hope", "God's faithfulness"],
-    };
+  if (scoredCandidates.length === 0) {
+    console.log("No scored unseen verse messages available for user:", userId);
+    return null;
   }
+
+  scoredCandidates.sort((a, b) => b.score - a.score);
+
+  const topCandidates = scoredCandidates.slice(0, Math.min(8, scoredCandidates.length));
+  const selected = topCandidates[Math.floor(Math.random() * topCandidates.length)];
 
   return {
-    verseReference: selected.reference,
-    verseText: selected.verse_text,
-    mode: matchedThemes.length > 0 ? "matched" as const : "general" as const,
-    themes: matchedThemes,
-    principles: Array.isArray(selected.principles) && selected.principles.length > 0
-      ? selected.principles
-      : matchedPrinciples,
+    verseMessageId: selected.message.id,
+    verseId: selected.message.verse_id as string,
+    messageText: selected.message.message_text as string,
+    verseReference: selected.verse.reference as string,
   };
 }
-function finalizeAITitle(originalText: string, aiTitle: string) {
-  const original = (originalText || "").trim();
-  const suggested = (aiTitle || "").trim();
 
-  if (!original && suggested) return suggested;
-  if (!original) return "New Entry";
-
-  const cleaned = suggested
-    .replace(/^["'“”‘’]+|["'“”‘’]+$/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  if (!cleaned) {
-    return "New Entry";
-  }
-
-  const lowerTitle = cleaned.toLowerCase();
-
-  const weakTitles = new Set([
-    "new entry",
-    "prayer",
-    "affirmation",
-    "goal",
-    "reminder",
-    "help me",
-    "help us",
-    "guide me",
-    "lord please",
-    "dear lord",
-    "dear god",
-  ]);
-
-  if (weakTitles.has(lowerTitle)) {
-    return "New Entry";
-  }
-
-  return cleaned;
-}
 serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
-const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
-const supabaseServiceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-const openAiKey = Deno.env.get("OPENAI_API_KEY") ?? "";
+    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+    const supabaseServiceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+    const openAiKey = Deno.env.get("OPENAI_API_KEY") ?? "";
 
-const authHeader = req.headers.get("Authorization") ?? "";
+    const authHeader = req.headers.get("Authorization") ?? "";
 
-const userSupabase = createClient(supabaseUrl, supabaseAnonKey, {
-  global: {
-    headers: {
-      Authorization: authHeader,
-    },
-  },
-});
+    const userSupabase = createClient(supabaseUrl, supabaseAnonKey, {
+      global: {
+        headers: {
+          Authorization: authHeader,
+        },
+      },
+    });
 
-const adminSupabase = createClient(supabaseUrl, supabaseServiceRoleKey);
+    const adminSupabase = createClient(supabaseUrl, supabaseServiceRoleKey);
 
-const token = authHeader.replace("Bearer ", "").trim();
+    const token = authHeader.replace("Bearer ", "").trim();
 
-const {
-  data: { user },
-  error: userError,
-} = await userSupabase.auth.getUser(token);
+    const {
+      data: { user },
+      error: userError,
+    } = await userSupabase.auth.getUser(token);
 
     if (userError || !user) {
       return new Response(
@@ -406,68 +427,74 @@ const {
       );
     }
 
-       const body = await req.json();
+    const body = await req.json();
     const mode = body?.mode ?? "write";
     const aiMode = (body?.aiMode ?? "prayer") as AIWriteMode;
     const text = body?.text ?? "";
     const forceRegenerate = body?.forceRegenerate === true;
     const activeEntries = Array.isArray(body?.activeEntries) ? body.activeEntries : [];
-    console.log("MM_REGENERATE_CHECK_V1", {
-  mode,
-  forceRegenerate,
-  hasActiveEntries: Array.isArray(activeEntries),
-  activeEntriesCount: activeEntries.length,
-});
 
-if (mode === "write") {
-  const sentenceLimit = countIntendedSentences(text);
-  const prompt = buildWritePrompt(aiMode, text, sentenceLimit);
+    if (mode === "write") {
+      if (!openAiKey) {
+        return new Response(
+          JSON.stringify({
+            error: "OpenAI key is missing",
+          }),
+          {
+            headers: { "Content-Type": "application/json" },
+            status: 500,
+          }
+        );
+      }
 
-  const polishResponse = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${openAiKey}`,
-    },
-    body: JSON.stringify({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content:
-            "You help users gently polish prayers, gratitude reflections, affirmations, goals, and personal writing while preserving their original intent and approximate length.",
+      const sentenceLimit = countIntendedSentences(text);
+      const prompt = buildWritePrompt(aiMode, text, sentenceLimit);
+
+      const polishResponse = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${openAiKey}`,
         },
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
-      temperature: 0.6,
-      max_tokens: 120,
-    }),
-  });
+        body: JSON.stringify({
+          model: "gpt-4o-mini",
+          messages: [
+            {
+              role: "system",
+              content:
+                "You help users gently polish prayers, gratitude reflections, affirmations, goals, and personal writing while preserving their original intent and approximate length.",
+            },
+            {
+              role: "user",
+              content: prompt,
+            },
+          ],
+          temperature: 0.6,
+          max_tokens: 120,
+        }),
+      });
 
-   const polishData = await polishResponse.json();
-  const rawTextOutput = polishData?.choices?.[0]?.message?.content?.trim() ?? "";
+      const polishData = await polishResponse.json();
+      const rawTextOutput = polishData?.choices?.[0]?.message?.content?.trim() ?? "";
 
-  const originalText = (text || "").trim();
-  const lowerRawOutput = rawTextOutput.toLowerCase();
+      const originalText = (text || "").trim();
+      const lowerRawOutput = rawTextOutput.toLowerCase();
 
-  const looksLikeBadFallback =
-    !rawTextOutput ||
-    lowerRawOutput.includes("there appears to be a mix up with your entry") ||
-    lowerRawOutput.includes("there appears to be a mix-up with your entry") ||
-    lowerRawOutput.includes("it seems like there might have been a mix up with your input") ||
-    lowerRawOutput.includes("it seems like there might have been a mix-up with your input") ||
-    lowerRawOutput.includes("please clarify") ||
-    lowerRawOutput.includes("i need more context") ||
-    lowerRawOutput.includes("i'm not sure what you mean") ||
-    lowerRawOutput.includes("unclear") ||
-    lowerRawOutput.includes("cannot determine");
+      const looksLikeBadFallback =
+        !rawTextOutput ||
+        lowerRawOutput.includes("there appears to be a mix up with your entry") ||
+        lowerRawOutput.includes("there appears to be a mix-up with your entry") ||
+        lowerRawOutput.includes("it seems like there might have been a mix up with your input") ||
+        lowerRawOutput.includes("it seems like there might have been a mix-up with your input") ||
+        lowerRawOutput.includes("please clarify") ||
+        lowerRawOutput.includes("i need more context") ||
+        lowerRawOutput.includes("i'm not sure what you mean") ||
+        lowerRawOutput.includes("unclear") ||
+        lowerRawOutput.includes("cannot determine");
 
-  const textOutput = looksLikeBadFallback ? originalText : rawTextOutput;
+      const textOutput = looksLikeBadFallback ? originalText : rawTextOutput;
 
-  const titlePrompt = `
+      const titlePrompt = `
 You are helping generate a short, meaningful title for a private app entry.
 
 Entry type:
@@ -481,9 +508,12 @@ ${textOutput || ""}
 
 Rules for the title:
 - Return only the title text.
+- Return 2 to 4 words.
+- Never return more than 4 words.
+- Do not write a sentence.
 - Do not use quotation marks.
 - Do not use markdown.
-- Prefer 2 to 6 words.
+- Do not use a colon, dash, subtitle, or tagline.
 - The title must name the concrete subject when one exists.
 - If the entry is about learning an instrument, skill, vehicle, job, relationship, health issue, or decision, include that thing directly.
 - Avoid generic titles like "New Entry", "Prayer", "Help Me", "My Goal", "Guide Me", or "Lord Please".
@@ -492,72 +522,247 @@ Rules for the title:
 - Keep it natural, clear, and human.
 `;
 
-  const titleResponse = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${openAiKey}`,
-    },
-    body: JSON.stringify({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content:
-            "You create short, meaningful titles for private journal entries.",
+      const titleResponse = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${openAiKey}`,
         },
-        {
-          role: "user",
-          content: titlePrompt,
-        },
-      ],
-      temperature: 0.4,
-      max_tokens: 30,
-    }),
-  });
+        body: JSON.stringify({
+          model: "gpt-4o-mini",
+          messages: [
+            {
+              role: "system",
+              content:
+                "You create short, meaningful titles for private journal entries.",
+            },
+            {
+              role: "user",
+              content: titlePrompt,
+            },
+          ],
+          temperature: 0.4,
+          max_tokens: 20,
+        }),
+      });
 
-  const titleData = await titleResponse.json();
-  const rawTitle = titleData?.choices?.[0]?.message?.content?.trim() ?? "";
+      const titleData = await titleResponse.json();
+      const rawTitle = titleData?.choices?.[0]?.message?.content?.trim() ?? "";
+      const titleOutput = finalizeAITitle(text, rawTitle);
 
-  const titleOutput = finalizeAITitle(text, rawTitle);
-
-console.log("WRITE_MODE_TITLE_DEBUG", {
-  originalText: text,
-  rawTitle,
-  finalTitle: titleOutput,
-});
-
-return new Response(JSON.stringify({ text: textOutput, title: titleOutput }), {
-  headers: { "Content-Type": "application/json" },
-  status: 200,
-});
-}
-
-   if (mode === "daily") {
-    const today = formatLocalDate(new Date());
-
-    const { data: existingMessages, error: existingError } = await userSupabase
-      .from("daily_messages")
-      .select("id, message_index, message_text, verse_reference, verse_query, is_primary")
-      .eq("user_id", user.id)
-      .eq("message_date", today)
-      .order("message_index", { ascending: true });
-
-    if (existingError) {
-      console.log("Existing daily messages lookup error:", existingError.message);
+      return new Response(JSON.stringify({ text: textOutput, title: titleOutput }), {
+        headers: { "Content-Type": "application/json" },
+        status: 200,
+      });
     }
 
-    if (!forceRegenerate && existingMessages && existingMessages.length > 0) {
-      const primaryMessage =
-        existingMessages.find((item) => item.is_primary) ?? existingMessages[0];
+    if (mode === "daily") {
+      const today = formatLocalDate(new Date());
+
+      const { data: existingMessages, error: existingError } = await userSupabase
+        .from("daily_messages")
+        .select(
+          "id, message_index, message_text, verse_reference, verse_query, verse_message_id, is_primary"
+        )
+        .eq("user_id", user.id)
+        .eq("message_date", today)
+        .order("message_index", { ascending: true });
+
+      if (existingError) {
+        console.log("Existing daily messages lookup error:", existingError.message);
+      }
+
+      if (!forceRegenerate && existingMessages && existingMessages.length > 0) {
+        const primaryMessage =
+          existingMessages.find((item) => item.is_primary) ?? existingMessages[0];
+
+        return new Response(
+          JSON.stringify({
+            message: primaryMessage.message_text,
+            verse_reference: primaryMessage.verse_reference,
+            verse_query: primaryMessage.verse_query,
+            message_index: primaryMessage.message_index ?? 0,
+            is_primary: primaryMessage.is_primary ?? true,
+          }),
+          {
+            headers: { "Content-Type": "application/json" },
+            status: 200,
+          }
+        );
+      }
+
+      const existingTodayVerseMessageIds = (existingMessages ?? [])
+        .map((item) => item.verse_message_id)
+        .filter(Boolean);
+
+      const { data: profileRow, error: profileError } = await userSupabase
+        .from("profiles")
+        .select("curated_day_index, last_home_message_date")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      if (profileError) {
+        console.log("Profile lookup error:", profileError.message);
+      }
+
+      const currentCuratedDayIndex = Number(profileRow?.curated_day_index ?? 0);
+      const lastHomeMessageDate = profileRow?.last_home_message_date ?? null;
+
+      const isNewHomeMessageDay = today !== lastHomeMessageDate;
+
+      const targetCuratedDayIndex = isNewHomeMessageDay
+        ? Math.min(currentCuratedDayIndex + 1, 31)
+        : currentCuratedDayIndex;
+
+      const shouldUpdateProfileProgress = isNewHomeMessageDay;
+
+      let selectedMessage: SelectedMorningMessage | null = null;
+
+      const usedIds = await getUsedVerseMessageIds(adminSupabase, user.id);
+      existingTodayVerseMessageIds.forEach((id) => usedIds.add(id));
+
+      if (targetCuratedDayIndex > 0 && targetCuratedDayIndex <= 30) {
+        const { data: curatedRow, error: curatedError } = await adminSupabase
+          .from("curated_daily_schedule")
+          .select("verse_message_id")
+          .eq("day_number", targetCuratedDayIndex)
+          .eq("active", true)
+          .maybeSingle();
+
+        if (curatedError) {
+          console.log("Curated schedule lookup error:", curatedError.message);
+        }
+
+        if (curatedRow?.verse_message_id && !usedIds.has(curatedRow.verse_message_id)) {
+          const { data: verseMessageRow, error: verseMessageError } = await adminSupabase
+            .from("verse_messages")
+            .select("id, verse_id, message_text")
+            .eq("id", curatedRow.verse_message_id)
+            .eq("active", true)
+            .maybeSingle();
+
+          if (verseMessageError) {
+            console.log("Curated verse message lookup error:", verseMessageError.message);
+          }
+
+          if (verseMessageRow?.verse_id && verseMessageRow?.message_text) {
+            const { data: verseRow, error: verseError } = await adminSupabase
+              .from("bible_verses")
+              .select("id, reference")
+              .eq("id", verseMessageRow.verse_id)
+              .eq("active", true)
+              .maybeSingle();
+
+            if (verseError) {
+              console.log("Curated verse lookup error:", verseError.message);
+            }
+
+            if (verseRow?.id && verseRow?.reference) {
+              selectedMessage = {
+                verseMessageId: verseMessageRow.id,
+                verseId: verseRow.id,
+                messageText: verseMessageRow.message_text,
+                verseReference: verseRow.reference,
+              };
+            }
+          }
+        }
+      }
+
+      if (!selectedMessage) {
+        const recentEntries = activeEntries
+          .filter(
+            (entry) =>
+              entry &&
+              typeof entry.content === "string" &&
+              entry.content.trim().length > 0
+          )
+          .slice(0, 8);
+
+        selectedMessage = await chooseUnseenVerseMessage({
+          adminSupabase,
+          userId: user.id,
+          recentEntries,
+          extraUsedIds: existingTodayVerseMessageIds,
+        });
+      }
+
+      if (!selectedMessage) {
+        return new Response(
+          JSON.stringify({
+            error:
+              "No unused Morning Message is available. Add more active verse_messages before generating another message.",
+          }),
+          {
+            headers: { "Content-Type": "application/json" },
+            status: 409,
+          }
+        );
+      }
+
+      const messageToSave = {
+        user_id: user.id,
+        message_date: today,
+        message_text: selectedMessage.messageText,
+        verse_reference: selectedMessage.verseReference,
+        verse_query: selectedMessage.verseReference,
+        verse_id: selectedMessage.verseId,
+        verse_message_id: selectedMessage.verseMessageId,
+        message_index: 0,
+        is_primary: true,
+      };
+
+      if (forceRegenerate && existingMessages && existingMessages.length > 0) {
+        const { error: replaceError } = await adminSupabase
+          .from("daily_messages")
+          .delete()
+          .eq("user_id", user.id)
+          .eq("message_date", today);
+
+        if (replaceError) {
+          console.log("Daily message replace delete error:", replaceError.message);
+        }
+      }
+
+      const { error: insertError } = await adminSupabase
+        .from("daily_messages")
+        .insert(messageToSave);
+
+      if (insertError) {
+        console.log("Daily message insert error:", insertError.message);
+
+        return new Response(
+          JSON.stringify({
+            error: "Could not save Morning Message",
+          }),
+          {
+            headers: { "Content-Type": "application/json" },
+            status: 500,
+          }
+        );
+      }
+
+      if (shouldUpdateProfileProgress) {
+        const { error: profileUpdateError } = await adminSupabase
+          .from("profiles")
+          .update({
+            curated_day_index: targetCuratedDayIndex,
+            last_home_message_date: today,
+          })
+          .eq("id", user.id);
+
+        if (profileUpdateError) {
+          console.log("Profile daily progress update error:", profileUpdateError.message);
+        }
+      }
 
       return new Response(
         JSON.stringify({
-          message: primaryMessage.message_text,
-          verse_reference: primaryMessage.verse_reference,
-          verse_query: primaryMessage.verse_query,
-          message_index: primaryMessage.message_index ?? 0,
-          is_primary: primaryMessage.is_primary ?? true,
+          message: messageToSave.message_text,
+          verse_reference: messageToSave.verse_reference,
+          verse_query: messageToSave.verse_query,
+          message_index: messageToSave.message_index,
+          is_primary: messageToSave.is_primary,
         }),
         {
           headers: { "Content-Type": "application/json" },
@@ -565,190 +770,6 @@ return new Response(JSON.stringify({ text: textOutput, title: titleOutput }), {
         }
       );
     }
-
-    const { data: profileRow, error: profileError } = await userSupabase
-      .from("profiles")
-      .select("curated_day_index, last_home_message_date")
-      .eq("id", user.id)
-      .maybeSingle();
-
-    if (profileError) {
-      console.log("Profile lookup error:", profileError.message);
-    }
-
- const currentCuratedDayIndex = Number(profileRow?.curated_day_index ?? 0);
-const lastHomeMessageDate = profileRow?.last_home_message_date ?? null;
-
-const isNewHomeMessageDay = today !== lastHomeMessageDate;
-
-// Days 1-30 use the curated schedule.
-// Day 31 and beyond use the personalized/tag-based path.
-const targetCuratedDayIndex = isNewHomeMessageDay
-  ? Math.min(currentCuratedDayIndex + 1, 31)
-  : currentCuratedDayIndex;
-
-const shouldUpdateProfileProgress = isNewHomeMessageDay;
-
-    let selectedMessageText: string | null = null;
-    let selectedVerseReference: string | null = null;
-
-    if (targetCuratedDayIndex > 0 && targetCuratedDayIndex <= 30) {
-      const { data: curatedRow, error: curatedError } = await adminSupabase
-        .from("curated_daily_schedule")
-        .select("verse_message_id")
-        .eq("day_number", targetCuratedDayIndex)
-        .eq("active", true)
-        .maybeSingle();
-
-      if (curatedError) {
-        console.log("Curated schedule lookup error:", curatedError.message);
-      }
-
-      if (curatedRow?.verse_message_id) {
-        const { data: verseMessageRow, error: verseMessageError } = await adminSupabase
-          .from("verse_messages")
-          .select("id, verse_id, message_text")
-          .eq("id", curatedRow.verse_message_id)
-          .eq("active", true)
-          .maybeSingle();
-
-        if (verseMessageError) {
-          console.log("Curated verse message lookup error:", verseMessageError.message);
-        }
-
-        if (verseMessageRow?.verse_id && verseMessageRow?.message_text) {
-          const { data: verseRow, error: verseError } = await adminSupabase
-            .from("bible_verses")
-            .select("reference")
-            .eq("id", verseMessageRow.verse_id)
-            .maybeSingle();
-
-          if (verseError) {
-            console.log("Curated verse lookup error:", verseError.message);
-          }
-
-          selectedMessageText = verseMessageRow.message_text;
-          selectedVerseReference = verseRow?.reference ?? null;
-        }
-      }
-    } else {
-      const recentEntries = activeEntries
-        .filter(
-          (entry) =>
-            entry &&
-            typeof entry.content === "string" &&
-            entry.content.trim().length > 0
-        )
-        .slice(0, 8);
-
-      const { data: recentMessages, error: recentMessagesError } = await userSupabase
-        .from("daily_messages")
-        .select("verse_reference")
-        .eq("user_id", user.id)
-        .not("verse_reference", "is", null)
-        .order("message_date", { ascending: false })
-        .limit(60);
-
-      if (recentMessagesError) {
-        console.log("Recent daily messages lookup error:", recentMessagesError.message);
-      }
-
-      const recentlyUsedVerses = (recentMessages ?? [])
-        .map((item) => item.verse_reference)
-        .filter(Boolean);
-
-      const selectedVerse = await chooseDailyVerse(
-        userSupabase,
-        recentEntries,
-        recentlyUsedVerses
-      );
-
-      const { data: verseRow, error: verseLookupError } = await adminSupabase
-        .from("bible_verses")
-        .select("id, reference")
-        .eq("reference", selectedVerse.verseReference)
-        .maybeSingle();
-
-      if (verseLookupError) {
-        console.log("Personalized verse lookup error:", verseLookupError.message);
-      }
-
-      if (verseRow?.id) {
-        const { data: verseMessageRow, error: verseMessageError } = await adminSupabase
-          .from("verse_messages")
-          .select("message_text")
-          .eq("verse_id", verseRow.id)
-          .eq("variant_key", "v1")
-          .eq("active", true)
-          .maybeSingle();
-
-        if (verseMessageError) {
-          console.log("Personalized verse message lookup error:", verseMessageError.message);
-        }
-
-        selectedMessageText = verseMessageRow?.message_text ?? null;
-        selectedVerseReference = verseRow.reference ?? selectedVerse.verseReference;
-      }
-    }
-
-    const fallbackMessage =
-      "God’s mercy is new this morning. Receive His grace, trust His presence, and take the next step in peace.";
-
-    const messageToSave = {
-      user_id: user.id,
-      message_date: today,
-      message_text: selectedMessageText ?? fallbackMessage,
-      verse_reference: selectedVerseReference,
-      verse_query: selectedVerseReference,
-      message_index: 0,
-      is_primary: true,
-    };
-
-    if (forceRegenerate && existingMessages && existingMessages.length > 0) {
-      const { error: replaceError } = await adminSupabase
-        .from("daily_messages")
-        .delete()
-        .eq("user_id", user.id)
-        .eq("message_date", today);
-
-      if (replaceError) {
-        console.log("Daily message replace delete error:", replaceError.message);
-      }
-    }
-
- const { error: insertError } = await adminSupabase
-  .from("daily_messages")
-  .insert(messageToSave);
-
-if (insertError) {
-  console.log("Daily message insert error:", insertError.message);
-} else if (shouldUpdateProfileProgress) {
-  const { error: profileUpdateError } = await adminSupabase
-    .from("profiles")
-    .update({
-      curated_day_index: targetCuratedDayIndex,
-      last_home_message_date: today,
-    })
-    .eq("id", user.id);
-
-  if (profileUpdateError) {
-    console.log("Profile daily progress update error:", profileUpdateError.message);
-  }
-}
-    return new Response(
-      JSON.stringify({
-        message: messageToSave.message_text,
-        verse_reference: messageToSave.verse_reference,
-        verse_query: messageToSave.verse_query,
-        message_index: messageToSave.message_index,
-        is_primary: messageToSave.is_primary,
-      }),
-      {
-        headers: { "Content-Type": "application/json" },
-        status: 200,
-      }
-    );
-  }
 
     return new Response(
       JSON.stringify({

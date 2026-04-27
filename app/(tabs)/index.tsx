@@ -58,98 +58,94 @@ type ShareFontKey =
 const shareBackgrounds: ShareBackground[] = [
   {
     id: "photo-5",
-    label: "Photo 5",
+    label: "",
     kind: "image",
     image: require("../../assets/images/morning-nature-5.jpg"),
   },
-  {
-    id: "photo-6",
-    label: "Photo 6",
-    kind: "image",
-    image: require("../../assets/images/morning-nature-6.jpg"),
-  },
+
   {
     id: "photo-11",
-    label: "Photo 11",
+    label: "",
     kind: "image",
     image: require("../../assets/images/morning-nature-11.jpg"),
   },
   {
     id: "photo-13",
-    label: "Photo 13",
+    label: "",
     kind: "image",
     image: require("../../assets/images/morning-nature-13.jpg"),
   },
   {
     id: "photo-17",
-    label: "Photo 17",
+    label: "",
     kind: "image",
     image: require("../../assets/images/morning-nature-17.jpg"),
   },
   {
     id: "photo-19",
-    label: "Photo 19",
+    label: "",
     kind: "image",
     image: require("../../assets/images/morning-nature-19.jpg"),
   },
   {
     id: "photo-20",
-    label: "Photo 20",
+    label: "",
     kind: "image",
     image: require("../../assets/images/morning-nature-20.jpg"),
   },
-  {
-    id: "photo-28",
-    label: "Photo 28",
+
+{
+    id: "photo-28N",
+    label: "",
     kind: "image",
-    image: require("../../assets/images/morning-nature-28.jpg"),
-  },
+    image: require("../../assets/images/morning-share-28.png"),
+      },
 
   {
     id: "sunrise",
-    label: "Sunrise",
+    label: "",
     kind: "gradient",
     colors: ["#f1d6a8", "#d8bd93", "#9fb4bd", "#5d6f7a"],
   },
   {
     id: "cloud-blue",
-    label: "Cloud Blue",
+    label: "",
     kind: "gradient",
     colors: ["#ead8bf", "#c9d4dc", "#8fa8b4", "#526a76"],
   },
   {
     id: "sage",
-    label: "Sage",
+    label: "",
     kind: "gradient",
     colors: ["#ece6d5", "#cfd8c6", "#9ead9b", "#5f7066"],
   },
   {
     id: "lavender",
-    label: "Lavender",
+    label: "",
     kind: "gradient",
     colors: ["#efe3ea", "#d8c8db", "#aca0bd", "#6c6f86"],
   },
   {
     id: "rose-gold",
-    label: "Rose Gold",
+    label: "",
     kind: "gradient",
     colors: ["#f3ddd2", "#dfbcae", "#b28f88", "#6f6a73"],
   },
   {
     id: "parchment",
-    label: "Parchment",
+    label: "",
     kind: "gradient",
     colors: ["#f2e2c6", "#dcc39d", "#b4a08b", "#697177"],
   },
   {
     id: "dawn",
-    label: "Dawn",
+    label: "",
     kind: "gradient",
     colors: ["#d9d9d2", "#b9c5c8", "#8295a0", "#4f6473"],
   },
   {
     id: "deep-blue",
-    label: "Deep Blue",
+    label: "",
     kind: "gradient",
     colors: ["#dbe4ea", "#a8bbc8", "#6f8898", "#415565"],
   },
@@ -219,7 +215,6 @@ type Entry = {
   updated_at?: string | null;
   resolution_note?: string | null;
   archived_at?: string | null;
-  retired_at?: string | null;
   needs_read: boolean;
   last_read_at: string | null;
   last_completed_at?: string | null;
@@ -236,8 +231,6 @@ type Entry = {
   annual_day?: number | null;
   anchor_date?: string | null;
   digest_assignment: "none" | "daily" | "weekly" | "monthly" | "quarterly" | "yearly";
-  last_surface_at?: string | null;
-  last_surface_window_key?: string | null;
   last_due_at?: string | null;
 };
 
@@ -277,22 +270,32 @@ function formatLocalDate(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
-function getShareMessageLines(message: string) {
+function getMorningMessageLines(message: string, isPlaceholder = false) {
   const cleaned = message.replace(/\s+/g, " ").trim();
   const words = cleaned.split(" ").filter(Boolean);
 
-  if (words.length < 6 || words.length > 10) {
+  if (isPlaceholder || words.length <= 2) {
     return null;
   }
 
-  const firstBreak = Math.ceil(words.length / 3);
-  const secondBreak = Math.ceil((words.length * 2) / 3);
+  if (words.length < 4) {
+    return words;
+  }
 
-  return [
-    words.slice(0, firstBreak).join(" "),
-    words.slice(firstBreak, secondBreak).join(" "),
-    words.slice(secondBreak).join(" "),
-  ].filter(Boolean);
+  if (words.length <= 12) {
+    const firstBreak = Math.max(1, Math.floor(words.length / 4));
+    const secondBreak = Math.max(firstBreak + 1, Math.floor(words.length / 2));
+    const thirdBreak = Math.max(secondBreak + 1, Math.floor((words.length * 3) / 4));
+
+    return [
+      words.slice(0, firstBreak).join(" "),
+      words.slice(firstBreak, secondBreak).join(" "),
+      words.slice(secondBreak, thirdBreak).join(" "),
+      words.slice(thirdBreak).join(" "),
+    ].filter(Boolean);
+  }
+
+  return null;
 }
 function isSameLocalDay(date: Date, compareDate: Date) {
   return (
@@ -949,8 +952,8 @@ export default function HomeScreen() {
   const [reminderSchedules, setReminderSchedules] = useState<ReminderScheduleRow[]>([]);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isRegeneratingMessage, setIsRegeneratingMessage] = useState(false);
-  const [handledCount, setHandledCount] = useState(0);
   const [showMorningMessage, setShowMorningMessage] = useState(false);
+  const [isPreparingDailyMessage, setIsPreparingDailyMessage] = useState(false);
   const [pendingNotificationData, setPendingNotificationData] = useState<{
     kind?: string;
     cadence?: string;
@@ -1109,29 +1112,7 @@ function goToNewerMessage() {
     setPendingUpcomingDays(String(nextValue));
     return nextValue;
   }
-  async function loadHandledCount() {
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser();
-
-    if (userError || !user) {
-      console.log("Load handled count user error:", userError?.message);
-      return;
-    }
-
-    const { count, error } = await supabase
-      .from("entry_completion_log")
-      .select("*", { count: "exact", head: true })
-      .eq("user_id", user.id);
-
-    if (error) {
-      console.log("Load handled count error:", error.message);
-      return;
-    }
-
-    setHandledCount(count ?? 0);
-  }
+ 
     async function saveHomeUpcomingDays() {
     const parsed = Number(pendingUpcomingDays);
 
@@ -1181,7 +1162,7 @@ function goToNewerMessage() {
     }
   }
 
-  async function loadMessage() {
+async function loadMessage(skipOlderMessagesIfTodayIsMissing = false) {
     const {
       data: { user },
     } = await supabase.auth.getUser();
@@ -1211,26 +1192,33 @@ function goToNewerMessage() {
       return false;
     }
 
-    if (data && data.length > 0) {
-      setDailyMessages(
-        data.map((item) => ({
-          ...item,
-          message: item.message_text,
-        }))
-      );
+if (data && data.length > 0) {
+  const hasToday = data.some((item) => item.message_date === todayString);
 
-      setCurrentMessageIndex(0);
+  if (skipOlderMessagesIfTodayIsMissing && !hasToday) {
+    setDailyMessages([]);
+    setCurrentMessageIndex(0);
+    return false;
+  }
 
-      requestAnimationFrame(() => {
-        messageScrollRef.current?.scrollTo({
-          x: 0,
-          animated: false,
-        });
-      });
+  setDailyMessages(
+    data.map((item) => ({
+      ...item,
+      message: item.message_text,
+    }))
+  );
 
-      const hasToday = data.some((item) => item.message_date === todayString);
-      return hasToday;
-    }
+  setCurrentMessageIndex(0);
+
+  requestAnimationFrame(() => {
+    messageScrollRef.current?.scrollTo({
+      x: 0,
+      animated: false,
+    });
+  });
+
+  return hasToday;
+}
 
     return false;
   }
@@ -1451,7 +1439,7 @@ async function handleShareImage() {
     const { data, error } = await supabase
       .from("entries")
       .select(
-        "id, title, content, type, status, created_at, updated_at, resolution_note, archived_at, retired_at, needs_read, last_read_at, last_completed_at, last_completed_due_at, next_due_at, schedule_mode, due_date, due_time, interval_value, interval_unit, annual_month, annual_day, anchor_date, digest_assignment, last_surface_at, last_surface_window_key, last_due_at"
+        "id, title, content, type, status, created_at, updated_at, resolution_note, archived_at, needs_read, last_read_at, last_completed_at, last_completed_due_at, next_due_at, schedule_mode, due_date, due_time, interval_value, interval_unit, annual_month, annual_day, anchor_date, digest_assignment, last_due_at"
       )
       .eq("id", entryId)
       .eq("status", "active")
@@ -1613,7 +1601,6 @@ async function handleShareImage() {
 );
 setPendingUndoIds((current) => current.filter((id) => id !== entry.id));
 setIsCompletingEntryId(entry.id);
-setHandledCount((current) => current + 1);
 
     try {
       const {
@@ -1637,7 +1624,6 @@ setHandledCount((current) => current + 1);
 
  if (error) {
   console.log("complete_entry_cycle error:", error.message);
-  setHandledCount((current) => Math.max(0, current - 1));
   Alert.alert("Unable to complete", error.message);
   return;
 }
@@ -1661,9 +1647,8 @@ setHandledCount((current) => current + 1);
         console.log("Complete entry notification sync error:", syncError);
       }
  } finally {
-  setPendingCompleteIds((current) => current.filter((id) => id !== entry.id));
-  setIsCompletingEntryId(null);
-  loadHandledCount();
+setPendingCompleteIds((current) => current.filter((id) => id !== entry.id));
+setIsCompletingEntryId(null);
 }
   };
 
@@ -1675,7 +1660,6 @@ setHandledCount((current) => current + 1);
 );
 setPendingCompleteIds((current) => current.filter((id) => id !== entry.id));
 setIsCompletingEntryId(entry.id);
-setHandledCount((current) => Math.max(0, current - 1));
 
     try {
       const {
@@ -1694,7 +1678,7 @@ setHandledCount((current) => Math.max(0, current - 1));
 
  if (error) {
   console.log("uncomplete_entry_cycle error:", error.message);
-  setHandledCount((current) => current + 1);
+
   Alert.alert("Unable to undo", error.message);
   return;
 }
@@ -1718,9 +1702,8 @@ setHandledCount((current) => Math.max(0, current - 1));
         console.log("Undo entry notification sync error:", syncError);
       }
  } finally {
-  setPendingUndoIds((current) => current.filter((id) => id !== entry.id));
-  setIsCompletingEntryId(null);
-  loadHandledCount();
+setPendingUndoIds((current) => current.filter((id) => id !== entry.id));
+setIsCompletingEntryId(null);
 }
   };
    useEffect(() => {
@@ -1833,15 +1816,15 @@ setHandledCount((current) => Math.max(0, current - 1));
 
    useEffect(() => {
     async function initialize() {
-      const foundMessage = await loadMessage();
+const foundMessage = await loadMessage(true);
 
-      if (!foundMessage) {
-        await generateDailyMessage();
-      }
-
+if (!foundMessage) {
+  setIsPreparingDailyMessage(true);
+  await generateDailyMessage();
+  setIsPreparingDailyMessage(false);
+}
         const initialUpcomingDays = await loadHomeUpcomingDays();
       await loadProfileDigestSettings();
-      await loadHandledCount();
       await loadHomeEntries(initialUpcomingDays);
 
       try {
@@ -1857,7 +1840,6 @@ setHandledCount((current) => Math.max(0, current - 1));
    useFocusEffect(
     useCallback(() => {
       loadProfileDigestSettings();
-      loadHandledCount();
       loadHomeEntries(homeUpcomingDays);
 
       requestAnimationFrame(() => {
@@ -1906,15 +1888,23 @@ const headerScrimOpacity = scrollY.interpolate({
   extrapolate: "clamp",
 });
 
- const fullMorningMessage =
+const fullMorningMessage =
   currentDailyMessage?.message_text ||
-  currentDailyMessage?.message ||
-  "";
+  (isPreparingDailyMessage ? "Preparing your message..." : "");
 
-const shareMessageLines = getShareMessageLines(fullMorningMessage);
+const morningMessageLines = getMorningMessageLines(
+  fullMorningMessage,
+  isPreparingDailyMessage
+);
+
+const homeMorningMessage = morningMessageLines
+  ? morningMessageLines.join("\n")
+  : fullMorningMessage;
+
+const shareMessageLines = getMorningMessageLines(fullMorningMessage);
+
 const selectedShareBackground =
-  shareBackgrounds.find((item) => item.id === selectedShareBackgroundId) ??
-  shareBackgrounds[0];
+  shareBackgrounds.find((item) => item.id === selectedShareBackgroundId) ?? null;
 const selectedShareFontFamily = getShareFontFamily(selectedShareFont);
    useEffect(() => {
     const nextMessage = fullMorningMessage.trim();
@@ -2307,20 +2297,23 @@ const selectedShareFontFamily = getShareFontFamily(selectedShareFont);
                   >
                     <Animated.Text
                       style={{
-                        fontSize: 40,
-                        lineHeight: 50,
-                        color: "white",
+                        fontSize: isPreparingDailyMessage ? 27 : 40,
+                        lineHeight: isPreparingDailyMessage ? 36 : 50,
+                        color: isPreparingDailyMessage ? "rgba(255,255,255,0.72)" : "white",
                         textAlign: "center",
-                        fontWeight: "700",
-                        letterSpacing: 0.12,
-                        textShadowColor: "rgba(0,0,0,0.60)",
+                        fontWeight: isPreparingDailyMessage ? "500" : "700",
+                        letterSpacing: isPreparingDailyMessage ? 0.2 : 0.12,
+                        fontStyle: isPreparingDailyMessage ? "italic" : "normal",
+                        textShadowColor: isPreparingDailyMessage
+                          ? "rgba(0,0,0,0.22)"
+                          : "rgba(0,0,0,0.60)",
                         textShadowOffset: { width: 0, height: 2 },
-                        textShadowRadius: 16,
+                        textShadowRadius: isPreparingDailyMessage ? 6 : 16,
                         opacity: messageRevealOpacity,
                         transform: [{ translateY: messageRevealTranslateY }],
                       }}
                     >
-                      {showMorningMessage ? fullMorningMessage : ""}
+                     {showMorningMessage ? homeMorningMessage : ""}
                     </Animated.Text>
                   </View>
                 </Pressable>
@@ -2651,58 +2644,30 @@ const selectedShareFontFamily = getShareFontFamily(selectedShareFont);
                           gap: 8,
                         }}
                       >
-                      <Pressable
-                        onPress={openShareCardModal}
-                        hitSlop={10}
-                        style={{
-                          width: 40,
-                          height: 40,
-                          alignItems: "center",
-                          justifyContent: "center",
-                        }}
-                      >
-                          <Text
+                        <Pressable
+                          onPress={openShareCardModal}
+                          hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+                          style={{
+                            width: 40,
+                            height: 40,
+                            borderRadius: 24,
+                            alignItems: "center",
+                            justifyContent: "center",
+                            backgroundColor: "rgba(17,24,39,0.28)",
+                            borderWidth: 1,
+                            borderColor: "rgba(255,255,255,0.16)",
+                          }}
+                        >
+                          <MaterialIcons
+                            name="share"
+                            size={22}
+                            color="white"
                             style={{
-                              color: "white",
-                              fontSize: 22,
-                              fontWeight: "700",
                               textShadowColor: "rgba(0,0,0,0.35)",
                               textShadowOffset: { width: 0, height: 1 },
                               textShadowRadius: 4,
                             }}
-                          >
-                            ↗
-                          </Text>
-                        </Pressable>
-
-                        <Pressable
-                          onPress={() =>
-                          Alert.alert(
-                            "Checked",
-                            `Checked count: ${handledCount}\n\nDetailed stats screen comes next.`
-                          )
-                          }
-                          hitSlop={10}
-                          style={{
-                            minWidth: 42,
-                            height: 30,
-                            paddingHorizontal: 10,
-                            alignItems: "center",
-                            justifyContent: "center",
-                          }}
-                        >
-                          <Text
-                            style={{
-                              color: "white",
-                              fontSize: 18,
-                              fontWeight: "800",
-                              textShadowColor: "rgba(0,0,0,0.25)",
-                              textShadowOffset: { width: 0, height: 1 },
-                              textShadowRadius: 3,
-                            }}
-                          >
-                            {handledCount}
-                          </Text>
+                          />
                         </Pressable>
                       </View>
                     </View>
@@ -3263,34 +3228,31 @@ const selectedShareFontFamily = getShareFontFamily(selectedShareFont);
                   </Text>
                 </Pressable>
 
-                <Pressable
-                  onPress={() => {
-                    setShowHomeMenu(false);
-                  Alert.alert(
-                    "Checked",
-                    `Checked count: ${handledCount}\n\nDetailed stats screen comes next.`
-                    );
-                  }}
-                  style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    paddingVertical: 14,
-                  }}
-                >
-                  <MaterialIcons name="bar-chart" size={22} color="white" />
-                  <Text
-                    style={{
-                      marginLeft: 16,
-                      fontSize: 18,
-                      fontWeight: "600",
-                      color: "white",
-                    }}
-                  >
-                    Count Report
-                  </Text>
-                </Pressable>
+                 <View style={{ height: 18 }} />
 
-                <View style={{ height: 18 }} />
+<Pressable
+  onPress={() => {
+    setShowHomeMenu(false);
+    router.push("/paywall");
+  }}
+  style={{
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 14,
+  }}
+>
+  <MaterialIcons name="workspace-premium" size={22} color="white" />
+  <Text
+    style={{
+      marginLeft: 16,
+      fontSize: 18,
+      fontWeight: "600",
+      color: "white",
+    }}
+  >
+    Premium
+  </Text>
+</Pressable>
 
                 <Pressable
                   onPress={() => {
@@ -3339,6 +3301,7 @@ const selectedShareFontFamily = getShareFontFamily(selectedShareFont);
                     Archive
                   </Text>
                 </Pressable>
+
 
                 <Pressable
                   onPress={() => {
@@ -3959,29 +3922,41 @@ const selectedShareFontFamily = getShareFontFamily(selectedShareFont);
           Share
         </Text>
 
-        <Pressable
-          onPress={() => setShowShareModal(false)}
-          hitSlop={10}
-          style={{
-            width: 32,
-            height: 32,
-            borderRadius: 16,
-            alignItems: "center",
-            justifyContent: "center",
-            backgroundColor: "rgba(255,255,255,0.10)",
-          }}
-        >
-          <Text
-            style={{
-              color: "white",
-              fontSize: 18,
-              fontWeight: "800",
-              lineHeight: 18,
-            }}
-          >
-            ×
-          </Text>
-        </Pressable>
+ <Pressable
+  onPress={() => setShowShareModal(false)}
+  hitSlop={{ top: 18, bottom: 18, left: 18, right: 18 }}
+  style={{
+    width: 56,
+    height: 56,
+    marginTop: -12,
+    marginRight: -10,
+    marginBottom: -12,
+    alignItems: "center",
+    justifyContent: "center",
+  }}
+>
+  <View
+    style={{
+      width: 38,
+      height: 38,
+      borderRadius: 19,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: "rgba(255,255,255,0.14)",
+    }}
+  >
+    <Text
+      style={{
+        color: "white",
+        fontSize: 22,
+        fontWeight: "800",
+        lineHeight: 22,
+      }}
+    >
+      ×
+    </Text>
+  </View>
+</Pressable>
       </View>
 
       <ScrollView
@@ -4005,27 +3980,50 @@ const selectedShareFontFamily = getShareFontFamily(selectedShareFont);
             borderColor: "rgba(255,255,255,0.28)",
           }}
         >
-          {selectedShareBackground.kind === "image" ? (
-            <ImageBackground
-              source={selectedShareBackground.image}
-              resizeMode="cover"
-              style={StyleSheet.absoluteFillObject}
-            >
-              <LinearGradient
-                colors={[
-                  "rgba(245,229,196,0.42)",
-                  "rgba(180,150,118,0.22)",
-                  "rgba(32,44,56,0.56)",
-                ]}
-                style={StyleSheet.absoluteFillObject}
-              />
-            </ImageBackground>
-          ) : (
-            <LinearGradient
-              colors={selectedShareBackground.colors}
-              style={StyleSheet.absoluteFillObject}
-            />
-          )}
+{selectedShareBackground?.kind === "image" ? (
+  <ImageBackground
+    key={`share-card-${selectedShareBackground.id}`}
+    source={selectedShareBackground.image}
+    resizeMode="cover"
+    style={StyleSheet.absoluteFillObject}
+  >
+    <LinearGradient
+      colors={[
+        "rgba(245,229,196,0.42)",
+        "rgba(180,150,118,0.22)",
+        "rgba(32,44,56,0.56)",
+      ]}
+      style={StyleSheet.absoluteFillObject}
+    />
+  </ImageBackground>
+) : selectedShareBackground?.kind === "gradient" ? (
+  <LinearGradient
+    key={`share-card-${selectedShareBackground.id}`}
+    colors={selectedShareBackground.colors}
+    style={StyleSheet.absoluteFillObject}
+  />
+) : (
+  <View
+    style={{
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: "#7f1d1d",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: 18,
+    }}
+  >
+    <Text
+      style={{
+        color: "white",
+        fontSize: 14,
+        fontWeight: "900",
+        textAlign: "center",
+      }}
+    >
+      Missing background: {selectedShareBackgroundId}
+    </Text>
+  </View>
+)}
 
           <View
             style={{
@@ -4174,62 +4172,85 @@ const selectedShareFontFamily = getShareFontFamily(selectedShareFont);
           </View>
         </View>
 
-        <View style={{ width: "100%", marginTop: 14 }}>
-          <Text
+  <View style={{ width: "100%", marginTop: 14 }}>
+  <Text
+    style={{
+      color: "rgba(255,255,255,0.78)",
+      fontSize: 12,
+      fontWeight: "800",
+      marginBottom: 8,
+    }}
+  >
+    Background
+  </Text>
+
+  <ScrollView
+    horizontal
+    showsHorizontalScrollIndicator={false}
+    contentContainerStyle={{
+      gap: 8,
+      paddingRight: 4,
+    }}
+  >
+    {shareBackgrounds.map((background) => {
+      const selected = selectedShareBackgroundId === background.id;
+
+      return (
+        <Pressable
+          key={background.id}
+          onPress={() => setSelectedShareBackgroundId(background.id)}
+          style={{
+            width: 44,
+            height: 69,
+            borderRadius: 12,
+            overflow: "hidden",
+            borderWidth: selected ? 2 : 1,
+            borderColor: selected
+              ? "#fff7e8"
+              : "rgba(255,255,255,0.18)",
+          }}
+        >
+{background.kind === "image" ? (
+  <ImageBackground
+    key={`thumb-${background.id}`}
+    source={background.image}
+    resizeMode="cover"
+    style={StyleSheet.absoluteFillObject}
+  />
+) : (
+  <LinearGradient
+    key={`thumb-${background.id}`}
+    colors={background.colors}
+    style={StyleSheet.absoluteFillObject}
+  />
+)}
+          <View
             style={{
-              color: "rgba(255,255,255,0.78)",
-              fontSize: 12,
-              fontWeight: "800",
-              marginBottom: 8,
+              position: "absolute",
+              left: 0,
+              right: 0,
+              bottom: 0,
+              paddingVertical: 3,
+              backgroundColor: "rgba(0,0,0,0.46)",
+              alignItems: "center",
             }}
           >
-            Background
-          </Text>
-
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{
-              gap: 8,
-              paddingRight: 4,
-            }}
-          >
-            {shareBackgrounds.map((background) => {
-              const selected = selectedShareBackgroundId === background.id;
-
-              return (
-                <Pressable
-                  key={background.id}
-                  onPress={() => setSelectedShareBackgroundId(background.id)}
-                  style={{
-                    width: 46,
-                    height: 54,
-                    borderRadius: 12,
-                    overflow: "hidden",
-                    borderWidth: selected ? 2 : 1,
-                    borderColor: selected
-                      ? "#fff7e8"
-                      : "rgba(255,255,255,0.18)",
-                  }}
-                >
-                  {background.kind === "image" ? (
-                    <ImageBackground
-                      source={background.image}
-                      resizeMode="cover"
-                      style={StyleSheet.absoluteFillObject}
-                    />
-                  ) : (
-                    <LinearGradient
-                      colors={background.colors}
-                      style={StyleSheet.absoluteFillObject}
-                    />
-                  )}
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-        </View>
-
+            <Text
+              numberOfLines={1}
+              style={{
+                color: "white",
+                fontSize: 8,
+                fontWeight: "800",
+              }}
+            >
+              {background.label}
+            </Text>
+          </View>
+        </Pressable>
+      );
+    })}
+  </ScrollView>
+</View>
  <View
   style={{
     width: "100%",

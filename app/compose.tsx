@@ -198,7 +198,7 @@ function getSuggestedTitle(text: string) {
     "their",
   ]);
 
-  let selected = words.slice(0, 6);
+  let selected = words.slice(0, 4);
 
   if (selected.length > 3) {
     while (
@@ -418,13 +418,14 @@ const hideSub = Keyboard.addListener(hideEvent, () => setIsKeyboardVisible(false
 
     setText(entry.content ?? "");
     setTitle(entry.title?.trim() || "");
-    setSelectedAIMode(
-      entry.type === "affirmation" ||
-        entry.type === "goal" ||
-        entry.type === "reminder"
-        ? entry.type
-        : "reminder"
-    );
+setSelectedAIMode(
+  entry.type === "prayer" ||
+    entry.type === "affirmation" ||
+    entry.type === "goal" ||
+    entry.type === "reminder"
+    ? entry.type
+    : "reminder"
+);
 
      if (
       entry.digest_assignment === "daily" ||

@@ -20,7 +20,7 @@ const archivedHeaderImage = require("../../assets/images/morning-nature-21.jpg")
 type CadenceFilter = "all" | "daily" | "weekly" | "monthly" | "yearly";
 
 function getArchivedText(entry: any) {
-  const eventDate = entry.archived_at || entry.retired_at;
+  const eventDate = entry.archived_at
 
   if (!eventDate) return "";
 
@@ -86,7 +86,6 @@ export default function CompletedScreen() {
         status,
         created_at,
         archived_at,
-        retired_at,
         resolution_note,
         digest_assignment,
         schedule_mode,
