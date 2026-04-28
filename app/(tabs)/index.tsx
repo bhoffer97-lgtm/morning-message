@@ -3183,7 +3183,7 @@ const selectedShareFontFamily = getShareFontFamily(selectedShareFont);
                  <Pressable
                   onPress={() => {
                     setShowHomeMenu(false);
-                    Alert.alert("Account", "Account screen coming soon.");
+                    router.push("/account");
                   }}
                   style={{
                     flexDirection: "row",
@@ -3203,56 +3203,6 @@ const selectedShareFontFamily = getShareFontFamily(selectedShareFont);
                     Account
                   </Text>
                 </Pressable>
-
-                <Pressable
-                  onPress={async () => {
-                    setShowHomeMenu(false);
-                    await loadRecentDeletedEntries();
-                  }}
-                  style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    paddingVertical: 14,
-                  }}
-                >
-                  <MaterialIcons name="restore-from-trash" size={22} color="white" />
-                  <Text
-                    style={{
-                      marginLeft: 16,
-                      fontSize: 18,
-                      fontWeight: "600",
-                      color: "white",
-                    }}
-                  >
-                    Restore Deleted Items
-                  </Text>
-                </Pressable>
-
-                 <View style={{ height: 18 }} />
-
-<Pressable
-  onPress={() => {
-    setShowHomeMenu(false);
-    router.push("/paywall");
-  }}
-  style={{
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 14,
-  }}
->
-  <MaterialIcons name="workspace-premium" size={22} color="white" />
-  <Text
-    style={{
-      marginLeft: 16,
-      fontSize: 18,
-      fontWeight: "600",
-      color: "white",
-    }}
-  >
-    Premium
-  </Text>
-</Pressable>
 
                 <Pressable
                   onPress={() => {
@@ -3324,6 +3274,29 @@ const selectedShareFontFamily = getShareFontFamily(selectedShareFont);
                     }}
                   >
                     Reminders
+                  </Text>
+                </Pressable>
+               <Pressable
+                  onPress={async () => {
+                    setShowHomeMenu(false);
+                    await loadRecentDeletedEntries();
+                  }}
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    paddingVertical: 14,
+                  }}
+                >
+                  <MaterialIcons name="restore-from-trash" size={22} color="white" />
+                  <Text
+                    style={{
+                      marginLeft: 16,
+                      fontSize: 18,
+                      fontWeight: "600",
+                      color: "white",
+                    }}
+                  >
+                    Restore Deleted Items
                   </Text>
                 </Pressable>
 

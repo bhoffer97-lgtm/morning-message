@@ -232,6 +232,25 @@ function formatShortInputDate(dateString: string) {
   });
 }
 
+function formatDateInputHeader(dateString: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+    return "";
+  }
+
+  const [year, month, day] = dateString.split("-").map(Number);
+
+  const formattedDate = `${String(month).padStart(2, "0")}/${String(day).padStart(
+    2,
+    "0"
+  )}/${year}`;
+
+  if (dateString === getLocalDateString()) {
+    return `${formattedDate} (Today)`;
+  }
+
+  return formattedDate;
+}
+
 function getCustomScheduleSummary(
   customScheduleMode: CustomScheduleMode,
   customScheduleTime: string,
@@ -1830,7 +1849,11 @@ const journalInputMinHeight = isKeyboardVisible
                     >
                       {getCustomScheduleSummary(
                         customScheduleMode,
-                        customScheduleTime,
+                        build24HourTime(
+                          customTimeHour || "12",
+                          customTimeMinute || "00",
+                          customTimePeriod
+                        ),
                         customDueDate,
                         customIntervalValue,
                         customIntervalUnit
@@ -2091,16 +2114,34 @@ const journalInputMinHeight = isKeyboardVisible
                   }}
                 >
                   <View style={{ marginBottom: 10 }}>
-                    <Text
+                     <View
                       style={{
-                        fontSize: 12,
-                        fontWeight: "700",
-                        color: "#334155",
+                        flexDirection: "row",
+                        alignItems: "center",
+                        justifyContent: "space-between",
                         marginBottom: 6,
                       }}
                     >
-                      Date
-                    </Text>
+                      <Text
+                        style={{
+                          fontSize: 12,
+                          fontWeight: "700",
+                          color: "#334155",
+                        }}
+                      >
+                        Date
+                      </Text>
+
+                      <Text
+                        style={{
+                          fontSize: 12,
+                          fontWeight: "700",
+                          color: "#64748b",
+                        }}
+                      >
+                        {formatDateInputHeader(customDueDate)}
+                      </Text>
+                    </View>
 
                     <TextInput
                       value={customDueDate}

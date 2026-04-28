@@ -146,12 +146,22 @@ try {
   const hasPremiumAccess = await getPremiumStatus();
 
   if (!hasPremiumAccess) {
-    router.replace("/paywall");
+router.replace({
+  pathname: "/paywall",
+  params: {
+    source: "gate",
+  },
+});
     return;
   }
 } catch (revenueCatError) {
   console.log("RevenueCat configure error:", revenueCatError);
-  router.replace("/paywall");
+router.replace({
+  pathname: "/paywall",
+  params: {
+    source: "gate",
+  },
+});
   return;
 }
 
@@ -188,6 +198,19 @@ const { error: ensureSchedulesError } = await supabase.rpc(
       <Stack>
         <Stack.Screen name="(auth)" options={{ headerShown: false }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen
+  name="paywall"
+  options={{
+    headerShown: false,
+    gestureEnabled: false,
+  }}
+/>
+<Stack.Screen
+  name="account"
+  options={{
+    headerShown: false,
+  }}
+/>
         <Stack.Screen
           name="compose"
           options={{

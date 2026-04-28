@@ -9,9 +9,23 @@ let configuredUserId: string | null = null;
 export function isPremiumCustomerInfo(customerInfo: CustomerInfo | null | undefined) {
   if (!customerInfo) return false;
 
-  return (
-    customerInfo.entitlements.active[PREMIUM_ENTITLEMENT_ID]?.isActive === true
-  );
+  return customerInfo.entitlements.active[PREMIUM_ENTITLEMENT_ID]?.isActive === true;
+}
+
+export function getPremiumEntitlement(customerInfo: CustomerInfo | null | undefined) {
+  if (!customerInfo) return null;
+
+  return customerInfo.entitlements.active[PREMIUM_ENTITLEMENT_ID] ?? null;
+}
+
+export function getRevenueCatManagementURL(customerInfo: CustomerInfo | null | undefined) {
+  if (!customerInfo) return null;
+
+  const managementURL = (customerInfo as any).managementURL;
+
+  return typeof managementURL === "string" && managementURL.length > 0
+    ? managementURL
+    : null;
 }
 
 export async function configureRevenueCat(userId: string) {
@@ -38,12 +52,16 @@ export async function configureRevenueCat(userId: string) {
   }
 }
 
-export async function getPremiumStatus() {
+export async function getRevenueCatCustomerInfo() {
   if (!hasConfiguredRevenueCat) {
-    return false;
+    return null;
   }
 
-  const customerInfo = await Purchases.getCustomerInfo();
+  return await Purchases.getCustomerInfo();
+}
+
+export async function getPremiumStatus() {
+  const customerInfo = await getRevenueCatCustomerInfo();
   return isPremiumCustomerInfo(customerInfo);
 }
 
@@ -75,6 +93,7 @@ export async function logRevenueCatOfferings() {
     })) ?? []
   );
 }
+
 export async function getCurrentRevenueCatOffering() {
   if (!hasConfiguredRevenueCat) {
     console.log("RevenueCat offering check skipped: not configured");

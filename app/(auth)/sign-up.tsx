@@ -1,3 +1,4 @@
+import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { router } from "expo-router";
 import { useState } from "react";
 import {
@@ -19,6 +20,8 @@ const authBackground = require("../../assets/images/morning-nature-10.jpg");
 export default function SignUpScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [confirmPassword, setConfirmPassword] = useState("");
   const [isWorking, setIsWorking] = useState(false);
 
@@ -32,11 +35,18 @@ export default function SignUpScreen() {
       Alert.alert("Passwords do not match", "Make sure both passwords match.");
       return;
     }
+if (password.length < 8) {
+  Alert.alert("Password too short", "Use at least 8 characters.");
+  return;
+}
 
-    if (password.length < 6) {
-      Alert.alert("Password too short", "Use at least 6 characters.");
-      return;
-    }
+if (!/[A-Za-z]/.test(password) || !/[0-9]/.test(password)) {
+  Alert.alert(
+    "Password needs more detail",
+    "Use at least 8 characters with at least one letter and one number."
+  );
+  return;
+}
 
     setIsWorking(true);
 
@@ -56,11 +66,16 @@ export default function SignUpScreen() {
         return;
       }
 
-      Alert.alert(
-        "Check your email",
-        "Your account was created. If email confirmation is enabled, verify your email and then sign in."
-      );
-      router.replace("/(auth)/sign-in");
+Alert.alert(
+  "Verify your email",
+  "We sent a verification link to your email. After you verify it, return to Morning Message and sign in.",
+  [
+    {
+      text: "Got it",
+      onPress: () => router.replace("/(auth)/sign-in"),
+    },
+  ]
+);
     } finally {
       setIsWorking(false);
     }
@@ -129,10 +144,11 @@ export default function SignUpScreen() {
                     }}
                   />
 
+                  <View style={{ position: "relative", marginBottom: 14 }}>
                   <TextInput
                     value={password}
                     onChangeText={setPassword}
-                    secureTextEntry
+                    secureTextEntry={!showPassword}
                     placeholder="Password"
                     placeholderTextColor="#8b7a67"
                     style={{
@@ -140,32 +156,73 @@ export default function SignUpScreen() {
                       borderColor: "rgba(139,111,71,0.28)",
                       borderRadius: 14,
                       paddingHorizontal: 14,
+                      paddingRight: 48,
                       paddingVertical: 13,
                       fontSize: 15,
                       color: "#2b2118",
-                      marginBottom: 12,
                       backgroundColor: "rgba(255,255,255,0.9)",
                     }}
                   />
 
-                  <TextInput
-                    value={confirmPassword}
-                    onChangeText={setConfirmPassword}
-                    secureTextEntry
-                    placeholder="Confirm Password"
-                    placeholderTextColor="#8b7a67"
+                  <Pressable
+                    onPress={() => setShowPassword((current) => !current)}
+                    hitSlop={8}
                     style={{
-                      borderWidth: 1,
-                      borderColor: "rgba(139,111,71,0.28)",
-                      borderRadius: 14,
-                      paddingHorizontal: 14,
-                      paddingVertical: 13,
-                      fontSize: 15,
-                      color: "#2b2118",
-                      marginBottom: 14,
-                      backgroundColor: "rgba(255,255,255,0.9)",
+                      position: "absolute",
+                      right: 12,
+                      top: 0,
+                      bottom: 0,
+                      justifyContent: "center",
+                      alignItems: "center",
                     }}
+                  >
+                    <MaterialIcons
+                      name={showPassword ? "visibility-off" : "visibility"}
+                      size={22}
+                      color="#8b7a67"
+                    />
+                  </Pressable>
+                </View>
+
+              <View style={{ position: "relative", marginBottom: 14 }}>
+                <TextInput
+                  value={confirmPassword}
+                  onChangeText={setConfirmPassword}
+                  secureTextEntry={!showConfirmPassword}
+                  placeholder="Confirm Password"
+                  placeholderTextColor="#8b7a67"
+                  style={{
+                    borderWidth: 1,
+                    borderColor: "rgba(139,111,71,0.28)",
+                    borderRadius: 14,
+                    paddingHorizontal: 14,
+                    paddingRight: 48,
+                    paddingVertical: 13,
+                    fontSize: 15,
+                    color: "#2b2118",
+                    backgroundColor: "rgba(255,255,255,0.9)",
+                  }}
+                />
+
+                <Pressable
+                  onPress={() => setShowConfirmPassword((current) => !current)}
+                  hitSlop={8}
+                  style={{
+                    position: "absolute",
+                    right: 12,
+                    top: 0,
+                    bottom: 0,
+                    justifyContent: "center",
+                    alignItems: "center",
+                  }}
+                >
+                  <MaterialIcons
+                    name={showConfirmPassword ? "visibility-off" : "visibility"}
+                    size={22}
+                    color="#8b7a67"
                   />
+                </Pressable>
+              </View>
 
                   <Pressable
                     onPress={handleSignUp}
