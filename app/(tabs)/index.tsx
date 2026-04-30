@@ -25,6 +25,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { captureRef } from "react-native-view-shot";
 import { syncLocalNotifications } from "../../lib/notifications/syncNotifications";
 import { supabase } from "../../lib/supabase";
+const SHARE_BACKGROUNDS_BUCKET = "share-backgrounds";
 
 const morningImages = [
   require("../../assets/images/morning-nature-10.jpg"),
@@ -45,7 +46,18 @@ type ShareImageBackground = {
   image: any;
 };
 
-type ShareBackground = ShareGradientBackground | ShareImageBackground;
+type RemoteShareImageBackground = {
+  id: string;
+  label: string;
+  kind: "remote-image";
+  imageUrl: string;
+  sourceKind: "photo" | "art";
+};
+
+type ShareBackground =
+  | ShareGradientBackground
+  | ShareImageBackground
+  | RemoteShareImageBackground;
 
 type ShareFontKey =
   | "classic"
@@ -98,7 +110,7 @@ const shareBackgrounds: ShareBackground[] = [
     id: "photo-28N",
     label: "",
     kind: "image",
-    image: require("../../assets/images/morning-share-28.png"),
+    image: require("../../assets/images/morning-share-28.jpg"),
       },
 
   {
@@ -238,6 +250,7 @@ type DailyMessage = {
   id: string;
   message: string;
   message_text?: string;
+  verse_message_id?: string | null;
   verse_reference: string | null;
   verse_query: string | null;
   message_date: string;
@@ -929,6 +942,7 @@ export default function HomeScreen() {
   const [showShareModal, setShowShareModal] = useState(false);
   const [shareVerseText, setShareVerseText] = useState<string | null>(null);
   const [isLoadingShareVerse, setIsLoadingShareVerse] = useState(false);
+  const [remoteShareBackgrounds, setRemoteShareBackgrounds] = useState<RemoteShareImageBackground[]>([]);
   const [selectedShareBackgroundId, setSelectedShareBackgroundId] = useState("photo-5");
   const [selectedShareFont, setSelectedShareFont] = useState<ShareFontKey>("classic");
   const [isSharingCard, setIsSharingCard] = useState(false);
@@ -1181,7 +1195,7 @@ async function loadMessage(skipOlderMessagesIfTodayIsMissing = false) {
 
     const { data, error } = await supabase
       .from("daily_messages")
-      .select("id, message_text, verse_reference, verse_query, message_date")
+.select("id, message_text, verse_message_id, verse_reference, verse_query, message_date")
       .eq("user_id", user.id)
       .gte("message_date", twoDaysAgoString)
       .lte("message_date", todayString)
@@ -1369,6 +1383,62 @@ async function loadProfileDigestSettings() {
   }
 }
 
+async function loadRemoteShareBackgrounds(verseMessageIds: string[]) {
+  const validVerseMessageIds = verseMessageIds.filter(Boolean);
+
+  if (validVerseMessageIds.length === 0) {
+    setRemoteShareBackgrounds([]);
+    return;
+  }
+
+  const messageOrder = new Map(
+    validVerseMessageIds.map((id, index) => [id, index])
+  );
+
+  const { data, error } = await supabase
+    .from("message_share_backgrounds")
+    .select("id, verse_message_id, kind, storage_path, label, sort_order")
+    .in("verse_message_id", validVerseMessageIds)
+    .eq("active", true);
+
+  if (error) {
+    console.log("Load share backgrounds error:", error.message);
+    setRemoteShareBackgrounds([]);
+    return;
+  }
+
+  const sortedRows = [...(data ?? [])].sort((a, b) => {
+    const messageA = messageOrder.get(a.verse_message_id) ?? 999;
+    const messageB = messageOrder.get(b.verse_message_id) ?? 999;
+
+    if (messageA !== messageB) {
+      return messageA - messageB;
+    }
+
+    return (a.sort_order ?? 0) - (b.sort_order ?? 0);
+  });
+
+  const nextBackgrounds = sortedRows.map((item) => {
+    const { data: publicUrlData } = supabase.storage
+      .from(SHARE_BACKGROUNDS_BUCKET)
+      .getPublicUrl(item.storage_path);
+
+    return {
+      id: `remote-${item.id}`,
+      label: item.label ?? "",
+      kind: "remote-image" as const,
+      imageUrl: publicUrlData.publicUrl,
+      sourceKind: item.kind as "photo" | "art",
+    };
+  });
+
+  setRemoteShareBackgrounds(nextBackgrounds);
+
+  if (nextBackgrounds.length > 0) {
+    setSelectedShareBackgroundId(nextBackgrounds[0].id);
+  }
+}
+
 async function openShareCardModal() {
   if (!currentDailyMessage) {
     Alert.alert("Nothing to share", "There is no Morning Message loaded yet.");
@@ -1377,6 +1447,12 @@ async function openShareCardModal() {
 
   setShowShareModal(true);
   setShareVerseText(null);
+await loadRemoteShareBackgrounds(
+  dailyMessages
+    .slice(currentMessageIndex, currentMessageIndex + 3)
+    .map((message) => message.verse_message_id)
+    .filter((id): id is string => typeof id === "string" && id.length > 0)
+);
 
   if (!currentDailyMessage.verse_reference) {
     return;
@@ -1903,8 +1979,16 @@ const homeMorningMessage = morningMessageLines
 
 const shareMessageLines = getMorningMessageLines(fullMorningMessage);
 
+const availableShareBackgrounds =
+  remoteShareBackgrounds.length > 0
+    ? [...remoteShareBackgrounds, ...shareBackgrounds.slice(0, 4)]
+    : shareBackgrounds;
+
 const selectedShareBackground =
-  shareBackgrounds.find((item) => item.id === selectedShareBackgroundId) ?? null;
+  availableShareBackgrounds.find((item) => item.id === selectedShareBackgroundId) ??
+  availableShareBackgrounds[0] ??
+  null;
+
 const selectedShareFontFamily = getShareFontFamily(selectedShareFont);
    useEffect(() => {
     const nextMessage = fullMorningMessage.trim();
@@ -3953,10 +4037,15 @@ const selectedShareFontFamily = getShareFontFamily(selectedShareFont);
             borderColor: "rgba(255,255,255,0.28)",
           }}
         >
-{selectedShareBackground?.kind === "image" ? (
+{selectedShareBackground?.kind === "image" ||
+selectedShareBackground?.kind === "remote-image" ? (
   <ImageBackground
     key={`share-card-${selectedShareBackground.id}`}
-    source={selectedShareBackground.image}
+    source={
+      selectedShareBackground.kind === "remote-image"
+        ? { uri: selectedShareBackground.imageUrl }
+        : selectedShareBackground.image
+    }
     resizeMode="cover"
     style={StyleSheet.absoluteFillObject}
   >
@@ -4165,7 +4254,7 @@ const selectedShareFontFamily = getShareFontFamily(selectedShareFont);
       paddingRight: 4,
     }}
   >
-    {shareBackgrounds.map((background) => {
+      {availableShareBackgrounds.map((background) => {
       const selected = selectedShareBackgroundId === background.id;
 
       return (
@@ -4183,42 +4272,25 @@ const selectedShareFontFamily = getShareFontFamily(selectedShareFont);
               : "rgba(255,255,255,0.18)",
           }}
         >
-{background.kind === "image" ? (
-  <ImageBackground
-    key={`thumb-${background.id}`}
-    source={background.image}
-    resizeMode="cover"
-    style={StyleSheet.absoluteFillObject}
-  />
-) : (
-  <LinearGradient
-    key={`thumb-${background.id}`}
-    colors={background.colors}
-    style={StyleSheet.absoluteFillObject}
-  />
-)}
-          <View
-            style={{
-              position: "absolute",
-              left: 0,
-              right: 0,
-              bottom: 0,
-              paddingVertical: 3,
-              backgroundColor: "rgba(0,0,0,0.46)",
-              alignItems: "center",
-            }}
-          >
-            <Text
-              numberOfLines={1}
-              style={{
-                color: "white",
-                fontSize: 8,
-                fontWeight: "800",
-              }}
-            >
-              {background.label}
-            </Text>
-          </View>
+          {background.kind === "image" || background.kind === "remote-image" ? (
+            <ImageBackground
+              key={`thumb-${background.id}`}
+              source={
+                background.kind === "remote-image"
+                  ? { uri: background.imageUrl }
+                  : background.image
+              }
+              resizeMode="cover"
+              style={StyleSheet.absoluteFillObject}
+            />
+          ) : (
+            <LinearGradient
+              key={`thumb-${background.id}`}
+              colors={background.colors}
+              style={StyleSheet.absoluteFillObject}
+            />
+          )}
+
         </Pressable>
       );
     })}

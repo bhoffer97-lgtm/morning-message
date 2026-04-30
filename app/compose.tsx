@@ -217,12 +217,76 @@ function getSuggestedTitle(text: string) {
   return title || "New Entry";
 }
 
-function formatShortInputDate(dateString: string) {
+function formatDateForInput(dateString: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
     return dateString;
   }
 
   const [year, month, day] = dateString.split("-").map(Number);
+
+  return `${String(month).padStart(2, "0")}/${String(day).padStart(2, "0")}/${year}`;
+}
+
+function getLocalDateInputString(date = new Date()) {
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const year = date.getFullYear();
+
+  return `${month}/${day}/${year}`;
+}
+
+function normalizeDateInput(dateString: string) {
+  const cleaned = dateString.trim();
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(cleaned)) {
+    return cleaned;
+  }
+
+  const match = cleaned.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+
+  if (!match) {
+    return "";
+  }
+
+  const month = Number(match[1]);
+  const day = Number(match[2]);
+  const year = Number(match[3]);
+
+  const date = new Date(year, month - 1, day);
+
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return "";
+  }
+
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function formatDateInputTyping(value: string) {
+  const digits = value.replace(/\D/g, "").slice(0, 8);
+
+  if (digits.length <= 2) {
+    return digits;
+  }
+
+  if (digits.length <= 4) {
+    return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  }
+
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+}
+
+function formatShortInputDate(dateString: string) {
+  const normalizedDate = normalizeDateInput(dateString);
+
+  if (!normalizedDate) {
+    return dateString;
+  }
+
+  const [year, month, day] = normalizedDate.split("-").map(Number);
   const date = new Date(year, month - 1, day);
 
   return date.toLocaleDateString([], {
@@ -233,18 +297,20 @@ function formatShortInputDate(dateString: string) {
 }
 
 function formatDateInputHeader(dateString: string) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+  const normalizedDate = normalizeDateInput(dateString);
+
+  if (!normalizedDate) {
     return "";
   }
 
-  const [year, month, day] = dateString.split("-").map(Number);
+  const [year, month, day] = normalizedDate.split("-").map(Number);
 
   const formattedDate = `${String(month).padStart(2, "0")}/${String(day).padStart(
     2,
     "0"
   )}/${year}`;
 
-  if (dateString === getLocalDateString()) {
+  if (normalizedDate === getLocalDateString()) {
     return `${formattedDate} (Today)`;
   }
 
@@ -332,7 +398,7 @@ const journalCardYRef = useRef(0);
   const [draftCustomTimeMinute, setDraftCustomTimeMinute] = useState("00");
   const [customIntervalValue, setCustomIntervalValue] = useState("1");
   const [customIntervalUnit, setCustomIntervalUnit] = useState<EntryIntervalUnit>("days");
-  const [customDueDate, setCustomDueDate] = useState(getLocalDateString());
+  const [customDueDate, setCustomDueDate] = useState(getLocalDateInputString());
   const [customAnnualMonth, setCustomAnnualMonth] = useState("1");
   const [customAnnualDay, setCustomAnnualDay] = useState("1");
 
@@ -406,7 +472,7 @@ const hideSub = Keyboard.addListener(hideEvent, () => setIsKeyboardVisible(false
       setCustomTimePeriod("AM");
       setCustomIntervalValue("1");
       setCustomIntervalUnit("days");
-      setCustomDueDate(getLocalDateString());
+      setCustomDueDate(getLocalDateInputString());
       setCustomAnnualMonth("1");
       setCustomAnnualDay("1");
     }
@@ -477,7 +543,7 @@ setSelectedAIMode(
       setCustomTimePeriod(form.period);
 
       const baseDate = entry.due_date || entry.anchor_date || getLocalDateString();
-      setCustomDueDate(baseDate);
+      setCustomDueDate(formatDateForInput(baseDate));
       setCustomIntervalValue(entry.interval_value ? String(entry.interval_value) : "1");
       setCustomIntervalUnit(
         entry.interval_unit === "days" ||
@@ -804,7 +870,7 @@ function handleEntryTextChange(value: string) {
     setCustomTimePeriod("AM");
     setCustomIntervalValue("1");
     setCustomIntervalUnit("days");
-    setCustomDueDate(getLocalDateString());
+    setCustomDueDate(getLocalDateInputString());
     setCustomAnnualMonth("1");
     setCustomAnnualDay("1");
   }
@@ -833,7 +899,8 @@ function handleEntryTextChange(value: string) {
       const parsedIntervalValue = parseInt(customIntervalValue, 10);
       const parsedAnnualMonth = parseInt(customAnnualMonth, 10);
       const parsedAnnualDay = parseInt(customAnnualDay, 10);
-      const anchorDate = customDueDate.trim() || getLocalDateString();
+      const normalizedCustomDueDate = normalizeDateInput(customDueDate);
+      const anchorDate = normalizedCustomDueDate || getLocalDateString();
 
       const payload: any = {
         title: titleToSave,
@@ -859,11 +926,12 @@ function handleEntryTextChange(value: string) {
         }
 
         if (customScheduleMode === "fixed_date") {
-          if (!customDueDate.trim()) {
-            Alert.alert("Choose a date", "Select a date before saving.");
+          if (!normalizedCustomDueDate) {
+            Alert.alert("Choose a date", "Enter a valid date before saving.");
             return;
           }
-          payload.due_date = customDueDate.trim();
+
+          payload.due_date = normalizedCustomDueDate;
           payload.due_time = normalizedTime;
         }
 
@@ -937,7 +1005,7 @@ function handleEntryTextChange(value: string) {
       setCustomTimePeriod("AM");
       setCustomIntervalValue("1");
       setCustomIntervalUnit("days");
-      setCustomDueDate(getLocalDateString());
+      setCustomDueDate(getLocalDateInputString());
       setCustomAnnualMonth("1");
       setCustomAnnualDay("1");
       Keyboard.dismiss();
@@ -2145,8 +2213,8 @@ const journalInputMinHeight = isKeyboardVisible
 
                     <TextInput
                       value={customDueDate}
-                      onChangeText={setCustomDueDate}
-                      placeholder="YYYY-MM-DD"
+                      onChangeText={(value) => setCustomDueDate(formatDateInputTyping(value))}
+                      placeholder="MM/DD/YYYY"
                       placeholderTextColor="#9ca3af"
                       style={{
                         borderWidth: 1,
@@ -2398,7 +2466,11 @@ const journalInputMinHeight = isKeyboardVisible
                   >
                     {getCustomScheduleSummary(
                       customScheduleMode,
-                      customScheduleTime,
+                      build24HourTime(
+                        customTimeHour || "12",
+                        customTimeMinute || "00",
+                        customTimePeriod
+                      ),
                       customDueDate,
                       customIntervalValue,
                       customIntervalUnit

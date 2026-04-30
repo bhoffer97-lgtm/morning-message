@@ -49,6 +49,144 @@ function formatLocalDate(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
+const protectedPrayerOpenings = [
+  "Dear Father in Heaven",
+  "Dear Heavenly Father",
+  "Dear Holy Spirit",
+  "Through Jesus Christ our Lord",
+  "Heavenly Father",
+  "Father God",
+  "Abba Father",
+  "Lord Jesus",
+  "Dear Father",
+  "Dear Daddy",
+  "Dear Jesus",
+  "Dear Lord",
+  "Dear God",
+  "Papa God",
+  "Almighty God",
+  "Gracious God",
+  "Merciful Father",
+  "Loving Father",
+  "Creator God",
+  "Good Father",
+  "King Jesus",
+  "My Savior",
+  "Our Father",
+  "My Father",
+  "Holy Spirit",
+  "Father",
+  "Daddy",
+  "Jesus",
+  "Savior",
+  "Abba",
+  "Lord",
+  "God",
+];
+
+const protectedPrayerClosingPatterns = [
+  /in\s+the\s+name\s+of\s+the\s+father,\s*son,\s*and\s+holy\s+spirit\s*,?\s*amen[.!?]*$/i,
+  /through\s+jesus\s+christ\s+our\s+lord\s*,?\s*amen[.!?]*$/i,
+  /through\s+christ\s+our\s+lord\s*,?\s*amen[.!?]*$/i,
+  /in\s+the\s+mighty\s+name\s+of\s+jesus\s*,?\s*amen[.!?]*$/i,
+  /in\s+the\s+name\s+of\s+jesus\s*,?\s*amen[.!?]*$/i,
+  /in\s+christ\s+jesus['’]?\s+name\s*,?\s*amen[.!?]*$/i,
+  /in\s+christ['’]?\s+name\s*,?\s*amen[.!?]*$/i,
+  /i\s+pray\s+this\s+in\s+jesus['’]?\s+name\s*,?\s*amen[.!?]*$/i,
+  /i\s+ask\s+this\s+in\s+jesus['’]?\s+name\s*,?\s*amen[.!?]*$/i,
+  /we\s+pray\s+in\s+jesus['’]?\s+name\s*,?\s*amen[.!?]*$/i,
+  /in\s+jesus['’]?\s+name\s*,?\s*amen[.!?]*$/i,
+  /in\s+your\s+heavenly\s+name\s+i\s+pray\s*,?\s*amen[.!?]*$/i,
+  /in\s+your\s+heavenly\s+name\s*,?\s*amen[.!?]*$/i,
+  /in\s+your\s+precious\s+name\s*,?\s*amen[.!?]*$/i,
+  /in\s+your\s+holy\s+name\s*,?\s*amen[.!?]*$/i,
+  /in\s+your\s+name\s*,?\s*amen[.!?]*$/i,
+  /thank\s+you,\s*lord\s*,?\s*amen[.!?]*$/i,
+  /thank\s+you,\s*father\s*,?\s*amen[.!?]*$/i,
+  /thank\s+you,\s*jesus\s*,?\s*amen[.!?]*$/i,
+  /in\s+jesus['’]?\s+name[.!?]*$/i,
+  /in\s+christ['’]?\s+name[.!?]*$/i,
+  /in\s+your\s+(?:holy|heavenly|precious)\s+name[.!?]*$/i,
+  /amen[.!?]*$/i,
+];
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function getProtectedPrayerOpening(originalText: string) {
+  const trimmed = originalText.trim();
+
+  for (const opening of protectedPrayerOpenings) {
+    const pattern = new RegExp(`^${escapeRegExp(opening).replace(/\\ /g, "\\s+")}\\s*,?`, "i");
+    const match = trimmed.match(pattern);
+
+    if (match?.[0]) {
+      return match[0].trimEnd();
+    }
+  }
+
+  return "";
+}
+
+function removeKnownPrayerOpening(text: string) {
+  let result = text.trim();
+
+  for (const opening of protectedPrayerOpenings) {
+    const pattern = new RegExp(`^${escapeRegExp(opening).replace(/\\ /g, "\\s+")}\\s*,?\\s*`, "i");
+    result = result.replace(pattern, "").trim();
+  }
+
+  return result;
+}
+
+function getProtectedPrayerClosing(originalText: string) {
+  const trimmed = originalText.trim();
+
+  for (const pattern of protectedPrayerClosingPatterns) {
+    const match = trimmed.match(pattern);
+
+    if (match?.[0]) {
+      return match[0].trim();
+    }
+  }
+
+  return "";
+}
+
+function removeKnownPrayerClosing(text: string) {
+  let result = text.trim();
+
+  for (const pattern of protectedPrayerClosingPatterns) {
+    result = result.replace(pattern, "").trim();
+  }
+
+  return result;
+}
+
+function protectPrayerBoundaries(originalText: string, polishedText: string, aiMode: AIWriteMode) {
+  if (aiMode !== "prayer") {
+    return polishedText;
+  }
+
+  const protectedOpening = getProtectedPrayerOpening(originalText);
+  const protectedClosing = getProtectedPrayerClosing(originalText);
+
+  let result = polishedText.trim();
+
+  if (protectedOpening && !result.toLowerCase().startsWith(protectedOpening.toLowerCase())) {
+    result = removeKnownPrayerOpening(result);
+    result = `${protectedOpening} ${result}`.trim();
+  }
+
+  if (protectedClosing && !result.toLowerCase().endsWith(protectedClosing.toLowerCase())) {
+    result = removeKnownPrayerClosing(result);
+    result = `${result} ${protectedClosing}`.trim();
+  }
+
+  return result;
+}
+
 function buildWritePrompt(aiMode: AIWriteMode, text: string, sentenceLimit: number) {
   const prayerOpeners = ["Lord,", "Dear God,", "Father,"];
   const selectedPrayerOpening =
@@ -58,7 +196,13 @@ function buildWritePrompt(aiMode: AIWriteMode, text: string, sentenceLimit: numb
       ? `
 For prayers:
 - Always return the result as a direct prayer addressed to God.
-- The prayer must begin exactly with "${selectedPrayerOpening}"
+- If the user's prayer already begins by addressing God, Jesus, the Father, the Holy Spirit, or another personal name for God, preserve that opening exactly as written.
+- Examples of prayer openings to preserve include: "Lord,", "Dear Lord,", "Dear God,", "God,", "Father,", "Dear Father,", "Heavenly Father,", "Dear Heavenly Father,", "Father God,", "Abba Father,", "Abba,", "Jesus,", "Dear Jesus,", "Lord Jesus,", "Holy Spirit,", "Dear Holy Spirit,", "Dear Father in Heaven,", "Our Father,", "My Father,", "Daddy,", "Dear Daddy,", "Papa God,", "Almighty God,", "Gracious God,", "Merciful Father,", "Loving Father,", "Creator God,", "Savior,", "My Savior,", "King Jesus,", and "Good Father,"
+- If the user's input does not already include a clear prayer opening, begin the prayer exactly with "${selectedPrayerOpening}"
+- If the user's prayer includes a closing, preserve that closing exactly as written.
+- Examples of prayer closings to preserve include: "Amen", "In Jesus' name, Amen", "In Jesus name, Amen", "In Jesus' name", "In Jesus name", "In Your name, Amen", "In Your holy name, Amen", "In Your heavenly name, Amen", "In Your heavenly name I pray, Amen", "In Your precious name, Amen", "In Christ's name, Amen", "In Christ Jesus' name, Amen", "In the name of Jesus, Amen", "In the mighty name of Jesus, Amen", "I pray this in Jesus' name, Amen", "I ask this in Jesus' name, Amen", "We pray in Jesus' name, Amen", "Through Christ our Lord, Amen", "Through Jesus Christ our Lord, Amen", "In the name of the Father, Son, and Holy Spirit, Amen", "Thank You, Lord, Amen", "Thank You, Father, Amen", and "Thank You, Jesus, Amen"
+- Treat the user's prayer opening and closing as sacred personal language. Do not rewrite, replace, delete, modernize, or simplify them.
+- Polish the middle of the prayer only.
 - If the user's input is not already written as a prayer, gently turn it into one.
 - Use first-person prayer language such as "help me," "guide me," "give me," "teach me," "lead me," or "remind me" when it fits.
 - Point the user gently toward God.
@@ -492,7 +636,9 @@ serve(async (req) => {
         lowerRawOutput.includes("unclear") ||
         lowerRawOutput.includes("cannot determine");
 
-      const textOutput = looksLikeBadFallback ? originalText : rawTextOutput;
+      const textOutput = looksLikeBadFallback
+        ? originalText
+        : protectPrayerBoundaries(originalText, rawTextOutput, aiMode);
 
       const titlePrompt = `
 You are helping generate a short, meaningful title for a private app entry.
