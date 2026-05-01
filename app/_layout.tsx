@@ -205,8 +205,15 @@ const { error: ensureSchedulesError } = await supabase.rpc(
     gestureEnabled: false,
   }}
 />
+
 <Stack.Screen
   name="account"
+  options={{
+    headerShown: false,
+  }}
+/>
+<Stack.Screen
+  name="share-background-preview"
   options={{
     headerShown: false,
   }}

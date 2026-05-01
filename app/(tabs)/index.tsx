@@ -59,13 +59,47 @@ type ShareBackground =
   | ShareImageBackground
   | RemoteShareImageBackground;
 
-type ShareFontKey =
-  | "classic"
-  | "refined"
-  | "soft"
-  | "elegant"
-  | "clean"
-  | "modern";
+type ShareTextColor = "dark" | "light";
+
+function getShareTextColor(color: ShareTextColor) {
+  return color === "light"
+    ? "rgba(255,255,255,0.96)"
+    : "rgba(46,38,30,0.88)";
+}
+
+function getShareTextShadow(color: ShareTextColor) {
+  return color === "light"
+    ? "rgba(0,0,0,0.48)"
+    : "rgba(255,255,255,0.24)";
+}
+
+function getShareVerseTextSize(fontKey: ShareFontKey) {
+  if (fontKey === "elegant") {
+    return {
+      fontSize: 12.5,
+      lineHeight: 18,
+    };
+  }
+
+  return {
+    fontSize: 14,
+    lineHeight: 21,
+  };
+}
+
+function getSharePositionStyle(position: "top" | "center" | "bottom") {
+  if (position === "top") {
+    return "flex-start";
+  }
+
+  if (position === "bottom") {
+    return "flex-end";
+  }
+
+  return "center";
+}
+
+type ShareFontKey = "classic" | "elegant";
 
 const shareBackgrounds: ShareBackground[] = [
   {
@@ -165,50 +199,14 @@ const shareBackgrounds: ShareBackground[] = [
 
 const shareFontOptions: { key: ShareFontKey; label: string }[] = [
   { key: "classic", label: "Classic" },
-  { key: "refined", label: "Refined" },
-  { key: "soft", label: "Soft" },
   { key: "elegant", label: "Elegant" },
-  { key: "clean", label: "Clean" },
-  { key: "modern", label: "Modern" },
 ];
 
 function getShareFontFamily(fontKey: ShareFontKey) {
-  if (fontKey === "refined") {
-    return Platform.select({
-      ios: "Avenir Next",
-      android: "sans-serif-medium",
-      default: undefined,
-    });
-  }
-
-  if (fontKey === "soft") {
-    return Platform.select({
-      ios: "Helvetica Neue",
-      android: "sans-serif-light",
-      default: undefined,
-    });
-  }
-
   if (fontKey === "elegant") {
     return Platform.select({
       ios: "Palatino",
       android: "serif",
-      default: undefined,
-    });
-  }
-
-  if (fontKey === "clean") {
-    return Platform.select({
-      ios: "Trebuchet MS",
-      android: "sans-serif",
-      default: undefined,
-    });
-  }
-
-  if (fontKey === "modern") {
-    return Platform.select({
-      ios: "Gill Sans",
-      android: "sans-serif-condensed",
       default: undefined,
     });
   }
@@ -945,6 +943,12 @@ export default function HomeScreen() {
   const [remoteShareBackgrounds, setRemoteShareBackgrounds] = useState<RemoteShareImageBackground[]>([]);
   const [selectedShareBackgroundId, setSelectedShareBackgroundId] = useState("photo-5");
   const [selectedShareFont, setSelectedShareFont] = useState<ShareFontKey>("classic");
+  const [shareMessageColor, setShareMessageColor] = useState<ShareTextColor>("light");
+  const [shareVerseColor, setShareVerseColor] = useState<ShareTextColor>("light");
+  const [hideShareMessage, setHideShareMessage] = useState(false);
+  const [hideShareVerse, setHideShareVerse] = useState(false);
+  const [shareMessagePosition, setShareMessagePosition] = useState<"top" | "center" | "bottom">("center");
+  const [shareVersePosition, setShareVersePosition] = useState<"top" | "center" | "bottom">("bottom");
   const [isSharingCard, setIsSharingCard] = useState(false);
   const [showHomeMenu, setShowHomeMenu] = useState(false);
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
@@ -1445,6 +1449,13 @@ async function openShareCardModal() {
     return;
   }
 
+  setSelectedShareFont("classic");
+  setShareMessageColor("light");
+  setShareVerseColor("light");
+  setHideShareMessage(false);
+  setHideShareVerse(false);
+  setShareMessagePosition("center");
+  setShareVersePosition("bottom");
   setShowShareModal(true);
   setShareVerseText(null);
 await loadRemoteShareBackgrounds(
@@ -1990,6 +2001,20 @@ const selectedShareBackground =
   null;
 
 const selectedShareFontFamily = getShareFontFamily(selectedShareFont);
+const showSharePositionOptions =
+  (hideShareMessage && !hideShareVerse) || (!hideShareMessage && hideShareVerse);
+
+const activeSharePosition = hideShareMessage
+  ? shareVersePosition
+  : shareMessagePosition;
+
+function setActiveSharePosition(position: "top" | "center" | "bottom") {
+  if (hideShareMessage) {
+    setShareVersePosition(position);
+  } else {
+    setShareMessagePosition(position);
+  }
+}
    useEffect(() => {
     const nextMessage = fullMorningMessage.trim();
 
@@ -2466,7 +2491,10 @@ const selectedShareFontFamily = getShareFontFamily(selectedShareFont);
                         <Text
                           style={{
                             fontSize: 15,
-                            color: "#fff7e8",
+                            color: getShareTextColor(shareVerseColor),
+                            textShadowColor: getShareTextShadow(shareMessageColor),
+                            textShadowOffset: { width: 0, height: 1 },
+                            textShadowRadius: 3,
                             textAlign: "center",
                             fontWeight: "800",
                             letterSpacing: 0.35,
@@ -3384,6 +3412,30 @@ const selectedShareFontFamily = getShareFontFamily(selectedShareFont);
                   </Text>
                 </Pressable>
 
+<Pressable
+  onPress={() => {
+    setShowHomeMenu(false);
+    router.push("/share-background-preview");
+  }}
+  style={{
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 14,
+  }}
+>
+  <MaterialIcons name="image-search" size={22} color="white" />
+  <Text
+    style={{
+      marginLeft: 16,
+      fontSize: 18,
+      fontWeight: "600",
+      color: "white",
+    }}
+  >
+    Preview Share Backgrounds
+  </Text>
+</Pressable>
+
                 <Pressable
                   onPress={handleSignOut}
                   style={{
@@ -3976,7 +4028,7 @@ const selectedShareFontFamily = getShareFontFamily(selectedShareFont);
             fontWeight: "800",
           }}
         >
-          Share
+          Share today's Message
         </Text>
 
  <Pressable
@@ -4016,13 +4068,8 @@ const selectedShareFontFamily = getShareFontFamily(selectedShareFont);
 </Pressable>
       </View>
 
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{
-          alignItems: "center",
-          paddingBottom: 4,
-        }}
-      >
+<View style={{ alignItems: "center" }}>
+  
         <View
           ref={shareCardRef}
           collapsable={false}
@@ -4091,46 +4138,53 @@ selectedShareBackground?.kind === "remote-image" ? (
             style={{
               flex: 1,
               paddingHorizontal: 14,
-              paddingTop: 24,
+              paddingTop: 12,
               paddingBottom: 16,
             }}
           >
-            <Text
-              style={{
-                color: "rgba(46,38,30,0.68)",
-                fontSize: 10,
-                fontWeight: "700",
-                letterSpacing: 6.5,
-                textAlign: "center",
-                textTransform: "uppercase",
-                marginBottom: 18,
-                fontFamily: selectedShareFontFamily,
-              }}
-            >
-              Morning Message
-            </Text>
+          <Text
+            style={{
+              color:
+                shareVerseColor === "light"
+                  ? "rgba(255,255,255,0.78)"
+                  : "rgba(46,38,30,0.68)",
+              fontSize: 10,
+              fontWeight: "700",
+              letterSpacing: 6.5,
+              textAlign: "center",
+              textTransform: "uppercase",
+              marginBottom: 24,
+              textShadowColor: getShareTextShadow(shareVerseColor),
+              textShadowOffset: { width: 0, height: 1 },
+              textShadowRadius: 3,
+              fontFamily: selectedShareFontFamily,
+            }}
+          >
+            Morning Message
+          </Text>
 
-            <View
-              style={{
-                flex: 1,
-                justifyContent: "center",
-                paddingHorizontal: 10,
-                paddingTop: 8,
-                paddingBottom: 8,
-              }}
-            >
-              {shareMessageLines ? (
+          <View
+            style={{
+              flex: hideShareVerse ? 1 : undefined,
+              justifyContent: getSharePositionStyle(shareMessagePosition),
+              paddingHorizontal: 10,
+              paddingTop: hideShareMessage ? 0 : 8,
+              paddingBottom: hideShareMessage ? 0 : 8,
+              minHeight: hideShareMessage ? 0 : hideShareVerse ? undefined : 190,
+            }}
+          >
+              {hideShareMessage ? null : shareMessageLines ? (
                 <View style={{ alignItems: "center" }}>
                   {shareMessageLines.map((line, index) => (
                     <Text
                       key={`${line}-${index}`}
                       style={{
-                        color: "rgba(46,38,30,0.86)",
+                        color: getShareTextColor(shareMessageColor),
                         fontSize: 31,
                         lineHeight: 40,
                         fontWeight: "850",
                         textAlign: "center",
-                        textShadowColor: "rgba(255,255,255,0.22)",
+                        textShadowColor: getShareTextShadow(shareMessageColor),
                         textShadowOffset: { width: 0, height: 1 },
                         textShadowRadius: 3,
                         fontFamily: selectedShareFontFamily,
@@ -4146,12 +4200,12 @@ selectedShareBackground?.kind === "remote-image" ? (
                   minimumFontScale={0.72}
                   numberOfLines={4}
                   style={{
-                    color: "rgba(46,38,30,0.86)",
-                    fontSize: 31,
-                    lineHeight: 40,
+                    color: getShareTextColor(shareMessageColor),
+                      fontSize: 31,
+                      lineHeight: 40,
                     fontWeight: "850",
                     textAlign: "center",
-                    textShadowColor: "rgba(255,255,255,0.22)",
+                    textShadowColor: getShareTextShadow(shareMessageColor),
                     textShadowOffset: { width: 0, height: 1 },
                     textShadowRadius: 3,
                     fontFamily: selectedShareFontFamily,
@@ -4162,21 +4216,35 @@ selectedShareBackground?.kind === "remote-image" ? (
               )}
             </View>
 
-            <View
-              style={{
-                marginTop: 8,
-                alignItems: "stretch",
-              }}
-            >
+              {!hideShareVerse ? (
+              <View
+                style={{
+                  flex: hideShareMessage ? 1 : undefined,
+                  marginTop: hideShareMessage ? 0 : 8,
+                  alignItems: "stretch",
+                  justifyContent: hideShareMessage
+                    ? getSharePositionStyle(shareVersePosition)
+                    : undefined,
+                  minHeight: hideShareMessage ? 0 : undefined,
+                }}
+              >
               <View
                 style={{
                   width: "100%",
-                  backgroundColor: "rgba(17,24,39,0.34)",
+                   backgroundColor: hideShareMessage
+                    ? "transparent"
+                    : shareVerseColor === "dark"
+                    ? "rgba(255,247,232,0.48)"
+                    : "rgba(17,24,39,0.34)",
                   borderRadius: 20,
-                  paddingVertical: 15,
-                  paddingHorizontal: 18,
-                  borderWidth: 1,
-                  borderColor: "rgba(255,255,255,0.13)",
+                  paddingTop: hideShareMessage ? 0 : 12,
+                  paddingBottom: hideShareMessage ? 26 : 12,
+                  paddingHorizontal: hideShareMessage ? 4 : 16,
+                  borderWidth: hideShareMessage ? 0 : 1,
+                  borderColor:
+                    shareVerseColor === "dark"
+                      ? "rgba(46,38,30,0.14)"
+                      : "rgba(255,255,255,0.13)",
                 }}
               >
                 <Text
@@ -4184,9 +4252,9 @@ selectedShareBackground?.kind === "remote-image" ? (
                   minimumFontScale={0.85}
                   numberOfLines={1}
                   style={{
-                    color: "#fff7e8",
+                    color: getShareTextColor(shareVerseColor),
                     fontSize: 14,
-                    fontWeight: "900",
+                    fontWeight: "850",
                     textAlign: "center",
                     letterSpacing: 0.45,
                     marginBottom: 10,
@@ -4201,9 +4269,11 @@ selectedShareBackground?.kind === "remote-image" ? (
                   minimumFontScale={0.72}
                   numberOfLines={7}
                   style={{
-                    color: "rgba(255,255,255,0.94)",
-                    fontSize: 14,
-                    lineHeight: 21,
+                    color: getShareTextColor(shareVerseColor),
+                    textShadowColor: getShareTextShadow(shareVerseColor),
+                    textShadowOffset: { width: 0, height: 1 },
+                    textShadowRadius: 3,
+                    ...getShareVerseTextSize(selectedShareFont),
                     fontWeight: "600",
                     textAlign: "center",
                     marginBottom: 8,
@@ -4214,149 +4284,35 @@ selectedShareBackground?.kind === "remote-image" ? (
                     ? "Loading verse..."
                     : shareVerseText || "Verse text will appear here."}
                 </Text>
+                </View>
+             </View>
+             ) : null}
 
-                <Text
-                  numberOfLines={2}
-                  adjustsFontSizeToFit
-                  minimumFontScale={0.85}
-                  style={{
-                    color: "rgba(255,255,255,0.52)",
-                    fontSize: 7.5,
-                    lineHeight: 10,
-                    textAlign: "center",
-                    fontFamily: selectedShareFontFamily,
-                  }}
-                >
-                  NET Bible® copyright ©1996–2019 Biblical Studies Press.
-                </Text>
-              </View>
-            </View>
+            {!hideShareVerse ? (
+              <Text
+                numberOfLines={2}
+                adjustsFontSizeToFit
+                minimumFontScale={0.85}
+                style={{
+                  position: "absolute",
+                  left: 18,
+                  right: 18,
+                  bottom: 8,
+                  color: "rgba(255,255,255,0.62)",
+                  fontSize: 7.5,
+                  lineHeight: 10,
+                  textAlign: "center",
+                  textShadowColor: "rgba(0,0,0,0.42)",
+                  textShadowOffset: { width: 0, height: 1 },
+                  textShadowRadius: 2,
+                  fontFamily: selectedShareFontFamily,
+                }}
+              >
+                NET Bible® copyright ©1996–2019 Biblical Studies Press.
+              </Text>
+            ) : null}
           </View>
         </View>
-
-  <View style={{ width: "100%", marginTop: 14 }}>
-  <Text
-    style={{
-      color: "rgba(255,255,255,0.78)",
-      fontSize: 12,
-      fontWeight: "800",
-      marginBottom: 8,
-    }}
-  >
-    Background
-  </Text>
-
-  <ScrollView
-    horizontal
-    showsHorizontalScrollIndicator={false}
-    contentContainerStyle={{
-      gap: 8,
-      paddingRight: 4,
-    }}
-  >
-      {availableShareBackgrounds.map((background) => {
-      const selected = selectedShareBackgroundId === background.id;
-
-      return (
-        <Pressable
-          key={background.id}
-          onPress={() => setSelectedShareBackgroundId(background.id)}
-          style={{
-            width: 44,
-            height: 69,
-            borderRadius: 12,
-            overflow: "hidden",
-            borderWidth: selected ? 2 : 1,
-            borderColor: selected
-              ? "#fff7e8"
-              : "rgba(255,255,255,0.18)",
-          }}
-        >
-          {background.kind === "image" || background.kind === "remote-image" ? (
-            <ImageBackground
-              key={`thumb-${background.id}`}
-              source={
-                background.kind === "remote-image"
-                  ? { uri: background.imageUrl }
-                  : background.image
-              }
-              resizeMode="cover"
-              style={StyleSheet.absoluteFillObject}
-            />
-          ) : (
-            <LinearGradient
-              key={`thumb-${background.id}`}
-              colors={background.colors}
-              style={StyleSheet.absoluteFillObject}
-            />
-          )}
-
-        </Pressable>
-      );
-    })}
-  </ScrollView>
-</View>
- <View
-  style={{
-    width: "100%",
-    marginTop: 14,
-  }}
->
-  <Text
-    style={{
-      color: "rgba(255,255,255,0.78)",
-      fontSize: 12,
-      fontWeight: "800",
-      marginBottom: 8,
-    }}
-  >
-    Font
-  </Text>
-
-  <View
-    style={{
-      flexDirection: "row",
-      flexWrap: "wrap",
-      gap: 8,
-    }}
-  >
-    {shareFontOptions.map((option) => {
-      const selected = selectedShareFont === option.key;
-
-      return (
-        <Pressable
-          key={option.key}
-          onPress={() => setSelectedShareFont(option.key)}
-          style={{
-            minWidth: "31%",
-            minHeight: 38,
-            paddingHorizontal: 12,
-            borderRadius: 12,
-            alignItems: "center",
-            justifyContent: "center",
-            backgroundColor: selected
-              ? "rgba(255,255,255,0.18)"
-              : "rgba(255,255,255,0.07)",
-            borderWidth: 1,
-            borderColor: selected
-              ? "rgba(255,255,255,0.28)"
-              : "rgba(255,255,255,0.08)",
-          }}
-        >
-          <Text
-            style={{
-              color: "white",
-              fontSize: 11,
-              fontWeight: "800",
-            }}
-          >
-            {option.label}
-          </Text>
-        </Pressable>
-      );
-    })}
-  </View>
-</View>
 
         <Pressable
           onPress={handleShareImage}
@@ -4371,7 +4327,7 @@ selectedShareBackground?.kind === "remote-image" ? (
               isSharingCard || isLoadingShareVerse
                 ? "rgba(255,255,255,0.16)"
                 : "#fff7e8",
-            marginTop: 16,
+            marginTop: 14,
             opacity: isSharingCard || isLoadingShareVerse ? 0.68 : 1,
           }}
         >
@@ -4385,7 +4341,359 @@ selectedShareBackground?.kind === "remote-image" ? (
             {isSharingCard ? "Preparing..." : "Share Image"}
           </Text>
         </Pressable>
-      </ScrollView>
+
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          style={{
+            width: "100%",
+            maxHeight: 260,
+            marginTop: 14,
+          }}
+          contentContainerStyle={{
+            paddingBottom: 4,
+          }}
+        >
+
+          <View style={{ width: "100%", marginTop: 14 }}>
+          <Text
+            style={{
+              color: "rgba(255,255,255,0.78)",
+              fontSize: 12,
+              fontWeight: "800",
+              marginBottom: 8,
+            }}
+          >
+            Background
+          </Text>
+
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{
+              gap: 8,
+              paddingRight: 4,
+            }}
+          >
+              {availableShareBackgrounds.map((background) => {
+              const selected = selectedShareBackgroundId === background.id;
+
+              return (
+                <Pressable
+                  key={background.id}
+                  onPress={() => setSelectedShareBackgroundId(background.id)}
+                  style={{
+                    width: 44,
+                    height: 69,
+                    borderRadius: 12,
+                    overflow: "hidden",
+                    borderWidth: selected ? 2 : 1,
+                    borderColor: selected
+                      ? "#fff7e8"
+                      : "rgba(255,255,255,0.18)",
+                  }}
+                >
+                  {background.kind === "image" || background.kind === "remote-image" ? (
+                    <ImageBackground
+                      key={`thumb-${background.id}`}
+                      source={
+                        background.kind === "remote-image"
+                          ? { uri: background.imageUrl }
+                          : background.image
+                      }
+                      resizeMode="cover"
+                      style={StyleSheet.absoluteFillObject}
+                    />
+                  ) : (
+                    <LinearGradient
+                      key={`thumb-${background.id}`}
+                      colors={background.colors}
+                      style={StyleSheet.absoluteFillObject}
+                    />
+                  )}
+
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </View>
+
+         <View style={{ width: "100%", marginTop: 14 }}>
+          <Text
+            style={{
+              color: "rgba(255,255,255,0.78)",
+              fontSize: 12,
+              fontWeight: "800",
+              marginBottom: 8,
+            }}
+          >
+            Message Options
+          </Text>
+
+          <View style={{ flexDirection: "row", gap: 8, marginBottom: 8 }}>
+            <Pressable
+              onPress={() => setShareMessageColor("dark")}
+              style={{
+                flex: 1,
+                minHeight: 40,
+                borderRadius: 14,
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor:
+                  shareMessageColor === "dark"
+                    ? "#fff7e8"
+                    : "rgba(255,255,255,0.12)",
+              }}
+            >
+              <Text
+                style={{
+                  color: shareMessageColor === "dark" ? "#111827" : "white",
+                  fontWeight: "850",
+                }}
+              >
+                Dark
+              </Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => setShareMessageColor("light")}
+              style={{
+                flex: 1,
+                minHeight: 40,
+                borderRadius: 14,
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor:
+                  shareMessageColor === "light"
+                    ? "#fff7e8"
+                    : "rgba(255,255,255,0.12)",
+              }}
+            >
+              <Text
+                style={{
+                  color: shareMessageColor === "light" ? "#111827" : "white",
+                  fontWeight: "850",
+                }}
+              >
+                White
+              </Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => setHideShareMessage((current) => !current)}
+              style={{
+                flex: 1,
+                minHeight: 40,
+                borderRadius: 14,
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: hideShareMessage
+                  ? "#fff7e8"
+                  : "rgba(255,255,255,0.12)",
+              }}
+            >
+              <Text
+                style={{
+                  color: hideShareMessage ? "#111827" : "white",
+                  fontWeight: "850",
+                }}
+              >
+                {hideShareMessage ? "Show" : "Hide"}
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+
+        <View style={{ width: "100%", marginTop: 14 }}>
+          <Text
+            style={{
+              color: "rgba(255,255,255,0.78)",
+              fontSize: 12,
+              fontWeight: "800",
+              marginBottom: 8,
+            }}
+          >
+            Verse Options
+          </Text>
+
+          <View style={{ flexDirection: "row", gap: 8, marginBottom: 8 }}>
+            <Pressable
+              onPress={() => setShareVerseColor("dark")}
+              style={{
+                flex: 1,
+                minHeight: 40,
+                borderRadius: 14,
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor:
+                  shareVerseColor === "dark"
+                    ? "#fff7e8"
+                    : "rgba(255,255,255,0.12)",
+              }}
+            >
+              <Text
+                style={{
+                  color: shareVerseColor === "dark" ? "#111827" : "white",
+                  fontWeight: "850",
+                }}
+              >
+                Dark
+              </Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => setShareVerseColor("light")}
+              style={{
+                flex: 1,
+                minHeight: 40,
+                borderRadius: 14,
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor:
+                  shareVerseColor === "light"
+                    ? "#fff7e8"
+                    : "rgba(255,255,255,0.12)",
+              }}
+            >
+              <Text
+                style={{
+                  color: shareVerseColor === "light" ? "#111827" : "white",
+                  fontWeight: "850",
+                }}
+              >
+                White
+              </Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => setHideShareVerse((current) => !current)}
+              style={{
+                flex: 1,
+                minHeight: 40,
+                borderRadius: 14,
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: hideShareVerse
+                  ? "#fff7e8"
+                  : "rgba(255,255,255,0.12)",
+              }}
+            >
+              <Text
+                style={{
+                  color: hideShareVerse ? "#111827" : "white",
+                  fontWeight: "850",
+                }}
+              >
+                {hideShareVerse ? "Show" : "Hide"}
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+
+        {showSharePositionOptions ? (
+          <View style={{ width: "100%", marginTop: 14 }}>
+            <Text
+              style={{
+                color: "rgba(255,255,255,0.78)",
+                fontSize: 12,
+                fontWeight: "800",
+                marginBottom: 8,
+              }}
+            >
+              Position Options
+            </Text>
+
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              {(["top", "center", "bottom"] as const).map((position) => {
+                const selected = activeSharePosition === position;
+
+                return (
+                  <Pressable
+                    key={`active-position-${position}`}
+                    onPress={() => setActiveSharePosition(position)}
+                    style={{
+                      flex: 1,
+                      minHeight: 40,
+                      borderRadius: 14,
+                      alignItems: "center",
+                      justifyContent: "center",
+                      backgroundColor: selected
+                        ? "#fff7e8"
+                        : "rgba(255,255,255,0.12)",
+                    }}
+                  >
+                    <Text
+                      style={{
+                        color: selected ? "#111827" : "white",
+                        fontWeight: "850",
+                        textTransform: "capitalize",
+                      }}
+                    >
+                      {position}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+        ) : null}
+
+        <View
+          style={{
+            width: "100%",
+            marginTop: 14,
+          }}
+        >
+          <Text
+            style={{
+              color: "rgba(255,255,255,0.78)",
+              fontSize: 12,
+              fontWeight: "800",
+              marginBottom: 8,
+            }}
+          >
+            Font
+          </Text>
+
+          <View
+            style={{
+              flexDirection: "row",
+              gap: 8,
+            }}
+          >
+            {shareFontOptions.map((option) => {
+              const selected = selectedShareFont === option.key;
+
+              return (
+                <Pressable
+                  key={option.key}
+                  onPress={() => setSelectedShareFont(option.key)}
+                  style={{
+                    flex: 1,
+                    minHeight: 40,
+                    borderRadius: 14,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    backgroundColor: selected
+                      ? "#fff7e8"
+                      : "rgba(255,255,255,0.12)",
+                  }}
+                >
+                  <Text
+                    style={{
+                      color: selected ? "#111827" : "white",
+                      fontSize: 12,
+                      fontWeight: "850",
+                    }}
+                  >
+                    {option.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+        </ScrollView>
+      </View>
     </View>
   </View>
 </Modal>
